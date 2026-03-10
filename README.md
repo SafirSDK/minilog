@@ -70,6 +70,7 @@ On some systems, binding to port 514 may require elevated privileges.
 - `--workers` Number of worker threads for processing packets (default: 4 or value from config).
 - `--show-ts` Include original timestamp field as `ts=...` (default: hidden).
 - `--show-src` Include source address as `src=ip:port` (default: hidden).
+- `--reuse-port` Allow multiple instances to bind the same UDP port (SO_REUSEPORT), if supported by the OS.
 - `--verbose` Print effective options before starting.
 
 ## Configuration file
@@ -88,6 +89,7 @@ no_stdout = true
 case_sensitive = true
 show_ts = true
 show_src = true
+reuse_port = true
 workers = 8
 exclude = foo, bar
 exclude = ^ignore-this$

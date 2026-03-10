@@ -17,6 +17,7 @@ Note: On Windows, binding to port 514 may require Administrator privileges depen
 import argparse
 import datetime as _dt
 import re
+import socket
 import socketserver
 import configparser
 from pathlib import Path
@@ -232,8 +233,20 @@ class SyslogUDPServer(socketserver.UDPServer):
     max_packet_size = 65507
     _executor: Optional[ThreadPoolExecutor] = None
 
-    def __init__(self, server_address, RequestHandlerClass, *, bind_and_activate=True):
-        super().__init__(server_address, RequestHandlerClass, bind_and_activate=bind_and_activate)
+    def __init__(self, server_address, RequestHandlerClass, *, bind_and_activate=True, reuse_port: bool = False):
+        # Delay binding so we can set socket options like SO_REUSEPORT
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate=False)
+        self.reuse_port: bool = bool(reuse_port)
+        # Try to enable SO_REUSEPORT if requested and supported
+        if self.reuse_port and hasattr(socket, "SO_REUSEPORT"):
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except OSError:
+                # If the OS refuses SO_REUSEPORT, continue without it
+                pass
+        if bind_and_activate:
+            self.server_bind()
+            self.server_activate()
         # The following attributes will be injected from main():
         # - patterns: List[re.Pattern]
         # - sink: OutputSink
@@ -348,7 +361,7 @@ def _load_config() -> dict:
     """
     Load INI config from syslog-server.conf next to this script.
     Returns a dict with optional keys: host, port, encoding, output, no_stdout,
-    case_sensitive, show_ts, show_src, workers, exclude (list).
+    case_sensitive, show_ts, show_src, reuse_port, workers, exclude (list).
     """
     cfg = {}
     try:
@@ -402,6 +415,11 @@ def _load_config() -> dict:
     if "show_src" in sec:
         try:
             cfg["show_src"] = _parse_bool(sec.get("show_src", fallback="false"))
+        except Exception:
+            pass
+    if "reuse_port" in sec:
+        try:
+            cfg["reuse_port"] = _parse_bool(sec.get("reuse_port", fallback="false"))
         except Exception:
             pass
     if "workers" in sec:
@@ -469,6 +487,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--workers", type=int, default=None, help="Number of worker threads for processing packets.")
     parser.add_argument("--show-ts", action="store_true", default=None, help="Include original timestamp field as ts=...")
     parser.add_argument("--show-src", action="store_true", default=None, help="Include source address as src=ip:port")
+    parser.add_argument("--reuse-port", action="store_true", default=None, help="Allow multiple instances to bind the same UDP port (SO_REUSEPORT) if supported by the OS.")
     parser.add_argument("--verbose", action="store_true", help="Show effective options before starting.")
 
     args = parser.parse_args(argv)
@@ -486,6 +505,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     no_stdout = args.no_stdout if args.no_stdout is not None else cfg.get("no_stdout", False)
     show_ts = args.show_ts if args.show_ts is not None else cfg.get("show_ts", False)
     show_src = args.show_src if args.show_src is not None else cfg.get("show_src", False)
+    reuse_port = args.reuse_port if args.reuse_port is not None else cfg.get("reuse_port", False)
 
     exclude_cfg = cfg.get("exclude", [])
     exclude_cli = args.exclude if args.exclude is not None else []
@@ -504,6 +524,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  case_sensitive : {case_sensitive}", flush=True)
         print(f"  show_ts        : {show_ts}", flush=True)
         print(f"  show_src       : {show_src}", flush=True)
+        print(f"  reuse_port     : {reuse_port}", flush=True)
         print(f"  workers        : {workers}", flush=True)
         print(f"  exclude_count  : {len(exclude_all)}", flush=True)
         if exclude_all:
@@ -512,7 +533,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     sink = OutputSink(to_stdout=not no_stdout, file_path=output, encoding=encoding)
 
-    server = SyslogUDPServer((host, port), SyslogUDPHandler)
+    server = SyslogUDPServer((host, port), SyslogUDPHandler, reuse_port=reuse_port)
     server.patterns = patterns
     server.sink = sink
     server.encoding = encoding
