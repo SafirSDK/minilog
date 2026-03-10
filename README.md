@@ -68,6 +68,8 @@ On some systems, binding to port 514 may require elevated privileges.
 - `--no-stdout` Do not write to stdout.
 - `--encoding` Decode incoming bytes with this encoding (default: utf-8).
 - `--workers` Number of worker threads for processing packets (default: 4 or value from config).
+- `--show-ts` Include original timestamp field as `ts=...` (default: hidden).
+- `--show-src` Include source address as `src=ip:port` (default: hidden).
 - `--verbose` Print effective options before starting.
 
 ## Configuration file
@@ -84,6 +86,8 @@ encoding = latin-1
 output = test.log
 no_stdout = true
 case_sensitive = true
+show_ts = true
+show_src = true
 workers = 8
 exclude = foo, bar
 exclude = ^ignore-this$
@@ -98,17 +102,18 @@ Notes:
 Each line is emitted as a single line (newlines are replaced with spaces). A typical line contains:
 
 ```
-<utc-received-iso> <protocol> <facility.severity or pri=N> <hostname?> <app[procid]?> <msgid?> ts=<timestamp?> src=<ip:port> -- <message?>
+<utc-received-iso> <protocol> <facility.severity or pri=N> <hostname?> <app[procid]?> <msgid?> -- <message?>
 ```
 
 Examples:
-- RFC3164: `2024-10-07T12:34:56Z RFC3164 user.INFO myhost app[99] ts=Oct 11 22:14:15 src=127.0.0.1:56324 -- hello`
-- RFC5424: `2024-10-07T12:34:56Z RFC5424 auth.CRITICAL mymachine su ID47 ts=2003-10-11T22:14:15.003Z src=127.0.0.1:56324 -- [exampleSDID@32473 iut="3"] 'su root' failed ...`
+- RFC3164: `2024-10-07T12:34:56Z RFC3164 user.INFO myhost app[99] -- hello`
+- RFC5424: `2024-10-07T12:34:56Z RFC5424 auth.CRITICAL mymachine su ID47 -- [exampleSDID@32473 iut="3"] 'su root' failed ...`
 
 Notes:
 - For RFC5424, structured data is not parsed but preserved in the message text.
 - When facility/severity are not available, `pri=N` is shown instead.
-- `src=` is always included.
+- `ts=` appears only when `--show-ts` is enabled.
+- `src=` appears only when `--show-src` is enabled.
 - Maximum UDP packet size accepted is 65507 bytes.
 
 ## Limitations

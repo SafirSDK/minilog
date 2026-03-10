@@ -241,6 +241,8 @@ class SyslogUDPServer(socketserver.UDPServer):
         self.patterns: List[re.Pattern] = []
         self.sink: OutputSink = OutputSink()
         self.encoding: str = "utf-8"
+        self.show_ts: bool = False
+        self.show_src: bool = False
         self._executor: Optional[ThreadPoolExecutor] = None
 
     def set_worker_pool(self, max_workers: int) -> None:
@@ -324,11 +326,12 @@ class SyslogUDPHandler(socketserver.BaseRequestHandler):
         if tag_parts:
             parts.append(" ".join(tag_parts))
 
-        if msg.timestamp:
+        if self.server.show_ts and msg.timestamp:
             parts.append(f"ts={msg.timestamp}")
 
-        # Always include source address
-        parts.append(f"src={self.client_address[0]}:{self.client_address[1]}")
+        # Optionally include source address
+        if self.server.show_src:
+            parts.append(f"src={self.client_address[0]}:{self.client_address[1]}")
 
         if msg.message:
             safe_msg = msg.message.replace("\r", " ").replace("\n", " ")
@@ -345,7 +348,7 @@ def _load_config() -> dict:
     """
     Load INI config from syslog-server.conf next to this script.
     Returns a dict with optional keys: host, port, encoding, output, no_stdout,
-    case_sensitive, workers, exclude (list).
+    case_sensitive, show_ts, show_src, workers, exclude (list).
     """
     cfg = {}
     try:
@@ -389,6 +392,16 @@ def _load_config() -> dict:
     if "case_sensitive" in sec:
         try:
             cfg["case_sensitive"] = _parse_bool(sec.get("case_sensitive", fallback="false"))
+        except Exception:
+            pass
+    if "show_ts" in sec:
+        try:
+            cfg["show_ts"] = _parse_bool(sec.get("show_ts", fallback="false"))
+        except Exception:
+            pass
+    if "show_src" in sec:
+        try:
+            cfg["show_src"] = _parse_bool(sec.get("show_src", fallback="false"))
         except Exception:
             pass
     if "workers" in sec:
@@ -454,6 +467,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--no-stdout", action="store_true", default=None, help="Do not write to stdout.")
     parser.add_argument("--encoding", default=None, help="Decode incoming bytes with this encoding.")
     parser.add_argument("--workers", type=int, default=None, help="Number of worker threads for processing packets.")
+    parser.add_argument("--show-ts", action="store_true", default=None, help="Include original timestamp field as ts=...")
+    parser.add_argument("--show-src", action="store_true", default=None, help="Include source address as src=ip:port")
     parser.add_argument("--verbose", action="store_true", help="Show effective options before starting.")
 
     args = parser.parse_args(argv)
@@ -469,6 +484,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Default to case-insensitive matching unless overridden
     case_sensitive = args.case_sensitive if args.case_sensitive is not None else cfg.get("case_sensitive", False)
     no_stdout = args.no_stdout if args.no_stdout is not None else cfg.get("no_stdout", False)
+    show_ts = args.show_ts if args.show_ts is not None else cfg.get("show_ts", False)
+    show_src = args.show_src if args.show_src is not None else cfg.get("show_src", False)
 
     exclude_cfg = cfg.get("exclude", [])
     exclude_cli = args.exclude if args.exclude is not None else []
@@ -485,6 +502,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  output         : {output if output else '-'}", flush=True)
         print(f"  no_stdout      : {no_stdout}", flush=True)
         print(f"  case_sensitive : {case_sensitive}", flush=True)
+        print(f"  show_ts        : {show_ts}", flush=True)
+        print(f"  show_src       : {show_src}", flush=True)
         print(f"  workers        : {workers}", flush=True)
         print(f"  exclude_count  : {len(exclude_all)}", flush=True)
         if exclude_all:
@@ -497,6 +516,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     server.patterns = patterns
     server.sink = sink
     server.encoding = encoding
+    server.show_ts = show_ts
+    server.show_src = show_src
     server.set_worker_pool(workers)
 
     try:

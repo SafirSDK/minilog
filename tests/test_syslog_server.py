@@ -143,10 +143,9 @@ def test_server_receives_and_formats_rfc3164():
         # - hostname and tag
         assert "myhost" in out
         assert "app[99]" in out
-        # - ts=...
-        assert "ts=Oct 11 22:14:15" in out
-        # - src=...
-        assert f"src={host}:" in out
+        # - ts and src are hidden by default
+        assert "ts=" not in out
+        assert "src=" not in out
         # - message text
         assert out.endswith("-- hello") or " -- hello" in out
     finally:
