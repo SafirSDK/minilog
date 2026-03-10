@@ -302,7 +302,7 @@ class SyslogUDPHandler(socketserver.BaseRequestHandler):
 
     def _format_line(self, msg: SyslogMessage) -> str:
         # RFC3339 UTC receive time
-        received_at = _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        received_at = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         parts = [received_at, msg.protocol]
 
         if msg.facility_name is not None and msg.severity_name is not None:
