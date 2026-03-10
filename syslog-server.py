@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 UDP-only Syslog server for Windows supporting RFC3164 and RFC5424 message formats (transport RFC5426).
 - UDP only (no TCP/TLS).
