@@ -16,8 +16,11 @@
 #include "udp_server.hpp"
 
 #include "parser/syslog_parser.hpp"
+#include "platform/os_log.hpp"
 
 #include <boost/asio/post.hpp>
+
+#include <stdexcept>
 
 namespace minilog
 {
@@ -37,9 +40,20 @@ void UdpServer::start()
     const auto address = boost::asio::ip::make_address(m_cfg.host);
     const udp::endpoint ep(address, m_cfg.udpPort);
 
-    m_socket.open(ep.protocol());
-    m_socket.set_option(boost::asio::socket_base::reuse_address(true));
-    m_socket.bind(ep);
+    try
+    {
+        m_socket.open(ep.protocol());
+        m_socket.set_option(boost::asio::socket_base::reuse_address(true));
+        m_socket.bind(ep);
+    }
+    catch (const boost::system::system_error& e)
+    {
+        const std::string msg =
+            "minilog: failed to bind UDP port " + std::to_string(m_cfg.udpPort) +
+            ": " + e.what();
+        os_log_error(msg);
+        throw std::runtime_error(msg);
+    }
 
     receive();
 }

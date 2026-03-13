@@ -376,3 +376,51 @@ BOOST_AUTO_TEST_CASE(forward_to_self)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Port-busy error handling ─────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(port_busy, Fixture)
+
+BOOST_AUTO_TEST_CASE(start_throws_when_port_is_in_use)
+{
+    // Occupy a port with a plain socket so the server cannot bind to it.
+    boost::asio::ip::udp::socket blocker(
+        ioc,
+        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const uint16_t busyPort = blocker.local_endpoint().port();
+
+    auto cfg = makeConfig(false, false);
+    cfg.udpPort = busyPort;
+
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+
+    BOOST_CHECK_THROW(server.start(), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(start_exception_message_contains_port_number)
+{
+    boost::asio::ip::udp::socket blocker(
+        ioc,
+        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const uint16_t busyPort = blocker.local_endpoint().port();
+
+    auto cfg = makeConfig(false, false);
+    cfg.udpPort = busyPort;
+
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+
+    try
+    {
+        server.start();
+        BOOST_FAIL("expected std::runtime_error");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what(e.what());
+        BOOST_CHECK(what.find(std::to_string(busyPort)) != std::string::npos);
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
