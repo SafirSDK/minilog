@@ -79,19 +79,27 @@ struct Fixture
         sock.send_to(boost::asio::buffer(data), ep);
     }
 
-    // Start the io_context on a background thread.  Returns when run() exits.
-    // Call after server.stop() / om.close() to join cleanly.
-    std::thread startIoc()
+    // Start the io_context on `n` background threads.
+    std::vector<std::thread> startIoc(int n = 1)
     {
-        return std::thread([this]() { ioc.run(); });
+        std::vector<std::thread> threads;
+        threads.reserve(static_cast<std::size_t>(n));
+        for (int i = 0; i < n; ++i)
+        {
+            threads.emplace_back([this]() { ioc.run(); });
+        }
+        return threads;
     }
 
-    // Drain all pending work: stop the server, close outputs, join the thread.
-    void shutdown(UdpServer& server, OutputManager& om, std::thread& ioThread)
+    // Drain all pending work: stop the server, close outputs, join all threads.
+    void shutdown(UdpServer& server, OutputManager& om, std::vector<std::thread>& ioThreads)
     {
         server.stop();
         om.close();
-        ioThread.join();
+        for (auto& t : ioThreads)
+        {
+            t.join();
+        }
     }
 
     static int countLines(const fs::path& p)
@@ -131,7 +139,7 @@ BOOST_AUTO_TEST_CASE(ten_thousand_messages_no_loss)
     server.start();
     const uint16_t port = server.localPort();
 
-    auto ioThread = startIoc();
+    auto ioThreads = startIoc();
 
     constexpr int N = 10'000;
     for (int i = 0; i < N; ++i)
@@ -140,7 +148,7 @@ BOOST_AUTO_TEST_CASE(ten_thousand_messages_no_loss)
     }
 
     BOOST_CHECK(waitForLines(dir / "syslog.log", N, std::chrono::seconds(10)));
-    shutdown(server, om, ioThread);
+    shutdown(server, om, ioThreads);
 
     BOOST_CHECK_EQUAL(countLines(dir / "syslog.log"), N);
 }
@@ -159,10 +167,10 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
     server.start();
     const uint16_t port = server.localPort();
 
-    auto ioThread = startIoc();
+    auto ioThreads = startIoc(4);
 
     constexpr int N_THREADS    = 8;
-    constexpr int N_PER_THREAD = 100; // 800 total
+    constexpr int N_PER_THREAD = 1000; // 8 000 total
 
     std::vector<std::thread> senders;
     senders.reserve(N_THREADS);
@@ -184,12 +192,11 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         t.join();
     }
 
-    // Give the io_context time to process whatever was received.  Some
-    // datagrams may be dropped by the kernel if the socket buffer fills up
-    // under burst load — that is expected UDP behaviour.  The important
-    // invariant is that every *received* line is complete (no torn writes).
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    shutdown(server, om, ioThread);
+    // Wait for all messages to be processed.  With 4 io_context threads this
+    // should be well within the timeout even on a slow CI machine.
+    constexpr int N_TOTAL = N_THREADS * N_PER_THREAD;
+    BOOST_CHECK(waitForLines(dir / "syslog.log", N_TOTAL, std::chrono::seconds(10)));
+    shutdown(server, om, ioThreads);
 
     std::ifstream f(dir / "syslog.log");
     std::string line;
@@ -201,7 +208,7 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         const auto pos = line.rfind(": t");
         BOOST_CHECK_MESSAGE(pos != std::string::npos, "torn line: " << line);
     }
-    BOOST_CHECK_GT(lineCount, 0);
+    BOOST_CHECK_EQUAL(lineCount, N_TOTAL);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -218,7 +225,7 @@ BOOST_AUTO_TEST_CASE(max_udp_payload_no_crash)
     server.start();
     const uint16_t port = server.localPort();
 
-    auto ioThread = startIoc();
+    auto ioThreads = startIoc();
 
     // 65507 = max valid UDP payload (65535 − 20 IP header − 8 UDP header).
     // Send two: one is sufficient to prove no crash; two adds a bit more
@@ -228,7 +235,7 @@ BOOST_AUTO_TEST_CASE(max_udp_payload_no_crash)
     sendUdp(payload, port);
 
     BOOST_CHECK(waitForLines(dir / "syslog.log", 1, std::chrono::seconds(5)));
-    shutdown(server, om, ioThread);
+    shutdown(server, om, ioThreads);
     // At least one must arrive — exact count depends on socket buffer.
     BOOST_CHECK_GE(countLines(dir / "syslog.log"), 1);
 }
@@ -247,7 +254,7 @@ BOOST_AUTO_TEST_CASE(degenerate_payloads_do_not_crash)
     server.start();
     const uint16_t port = server.localPort();
 
-    auto ioThread = startIoc();
+    auto ioThreads = startIoc();
 
     // Empty datagram — not valid to send a zero-byte UDP payload via send_to
     // on all platforms, so skip; exercise all others.
@@ -260,7 +267,7 @@ BOOST_AUTO_TEST_CASE(degenerate_payloads_do_not_crash)
     sendUdp(std::string(256, 'A'), port);   // plain ASCII, no PRI
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    shutdown(server, om, ioThread);
+    shutdown(server, om, ioThreads);
 
     // Server must still be alive (no exception propagated to io_context).
     // The file may or may not exist depending on include_malformed, but we
@@ -286,7 +293,7 @@ BOOST_AUTO_TEST_CASE(correct_file_count_after_flood)
     server.start();
     const uint16_t port = server.localPort();
 
-    auto ioThread = startIoc();
+    auto ioThreads = startIoc();
 
     constexpr int N = 500;
     for (int i = 0; i < N; ++i)
@@ -295,7 +302,7 @@ BOOST_AUTO_TEST_CASE(correct_file_count_after_flood)
     }
 
     BOOST_CHECK(waitForLines(dir / "syslog.log", 1, std::chrono::seconds(5)));
-    shutdown(server, om, ioThread);
+    shutdown(server, om, ioThreads);
 
     // Count rotated files — must not exceed max_files.
     int rotated = 0;
@@ -348,7 +355,7 @@ BOOST_AUTO_TEST_CASE(server_keeps_running_when_forward_target_is_down)
     server.start();
     const uint16_t port = server.localPort();
 
-    auto ioThread = startIoc();
+    auto ioThreads = startIoc();
 
     constexpr int N = 20;
     for (int i = 0; i < N; ++i)
@@ -357,7 +364,7 @@ BOOST_AUTO_TEST_CASE(server_keeps_running_when_forward_target_is_down)
     }
 
     BOOST_CHECK(waitForLines(dir / "syslog.log", N, std::chrono::seconds(5)));
-    shutdown(server, om, ioThread);
+    shutdown(server, om, ioThreads);
 
     // All messages must have been written locally despite the failing forwarding.
     BOOST_CHECK_EQUAL(countLines(dir / "syslog.log"), N);

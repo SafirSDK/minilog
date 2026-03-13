@@ -43,6 +43,11 @@ void UdpServer::start()
     try
     {
         m_socket.open(ep.protocol());
+
+        // Request a large kernel receive buffer to absorb syslog bursts.
+        // The OS silently caps this at net.core.rmem_max, so no error check.
+        m_socket.set_option(boost::asio::socket_base::receive_buffer_size(4 * 1024 * 1024));
+
 #ifdef _WIN32
         // Windows allows UDP port-sharing by default; SO_EXCLUSIVEADDRUSE
         // prevents any other process from binding the same port.
