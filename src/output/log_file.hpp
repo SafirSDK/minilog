@@ -20,6 +20,10 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/strand.hpp>
 
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+
 namespace minilog
 {
 
@@ -48,7 +52,11 @@ private:
     OutputConfig m_cfg;
     boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
 
-    // File handles and current sizes tracked here (accessed only on strand)
+    // All fields below are accessed only on m_strand.
+    std::ofstream m_textStream;
+    std::ofstream m_jsonlStream;
+    uint64_t m_textSize  = 0;
+    uint64_t m_jsonlSize = 0;
 };
 
 } // namespace minilog
