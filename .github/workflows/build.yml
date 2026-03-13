@@ -2,7 +2,7 @@ name: Build & Test
 
 on:
   push:
-    branches: [ master, 'private/**' ]
+    branches: [ master, cpp-rewrite ]
   pull_request:
     branches: [ master ]
 
