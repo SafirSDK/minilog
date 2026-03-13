@@ -52,7 +52,7 @@
       "binaryDir": "${sourceDir}/build/linux-coverage",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_FLAGS": "--coverage -fno-inline",
+        "CMAKE_CXX_FLAGS": "--coverage -fno-inline -fprofile-update=atomic",
         "CMAKE_EXE_LINKER_FLAGS": "--coverage",
         "MINILOG_STRESS_MULTIPLIER": "10"
       }
