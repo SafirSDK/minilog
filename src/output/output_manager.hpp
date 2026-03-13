@@ -33,14 +33,23 @@ class OutputManager
 public:
     OutputManager(boost::asio::io_context& ioc, const Config& cfg);
 
-    // Dispatch message to all matching sinks.
+    // Dispatch message to all matching sinks (non-blocking for caller).
     void dispatch(const SyslogMessage& msg);
 
     // Shut down all sinks.
     void close();
 
 private:
-    std::vector<std::unique_ptr<LogFile>> m_sinks;
+    struct Sink
+    {
+        std::vector<int> facilities; // empty = wildcard (matches all)
+        std::unique_ptr<LogFile> file;
+    };
+
+    static bool facilityMatches(const std::vector<int>& filter,
+                                const std::optional<int>& msgFacility);
+
+    std::vector<Sink> m_sinks;
 };
 
 } // namespace minilog

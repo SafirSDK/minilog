@@ -15,6 +15,7 @@
 
 #define BOOST_TEST_MODULE test_output
 #include "output/log_file.hpp"
+#include "output/output_manager.hpp"
 
 #include <boost/json.hpp>
 #include <boost/test/unit_test.hpp>
@@ -384,6 +385,108 @@ BOOST_AUTO_TEST_CASE(max_size_zero_never_rotates)
 
     BOOST_CHECK(!fs::exists(dir / "syslog.1.log"));
     BOOST_CHECK_EQUAL(readAll(dir / "syslog.log").size(), 10u * 2u); // "x\n" × 10
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── OutputManager routing ───────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(output_manager_routing, Fixture)
+
+namespace
+{
+
+// Build a three-sink Config: "main" (wildcard), "auth" (auth+authpriv), "mail" (mail only).
+// Facility numbers per RFC5424: mail=2, auth=4, authpriv=10.
+Config makeRoutingConfig(const fs::path& base)
+{
+    Config cfg;
+
+    OutputConfig mainOut;
+    mainOut.name            = "main";
+    mainOut.textFile        = (base / "main.log").string();
+    mainOut.includeMalformed = true;
+    // facilities empty = wildcard
+
+    OutputConfig authOut;
+    authOut.name            = "auth";
+    authOut.textFile        = (base / "auth.log").string();
+    authOut.includeMalformed = true;
+    authOut.facilities      = {4, 10}; // auth, authpriv
+
+    OutputConfig mailOut;
+    mailOut.name            = "mail";
+    mailOut.textFile        = (base / "mail.log").string();
+    mailOut.includeMalformed = true;
+    mailOut.facilities      = {2}; // mail
+
+    cfg.outputs = {mainOut, authOut, mailOut};
+    return cfg;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(wildcard_receives_all_facilities)
+{
+    auto cfg = makeRoutingConfig(dir);
+    OutputManager om(ioc, cfg);
+
+    auto msg     = rfc3164Msg("hello");
+    msg.facility = 4; // auth
+    ioc.restart();
+    om.dispatch(msg);
+    ioc.poll();
+
+    BOOST_CHECK(!readAll(dir / "main.log").empty()); // wildcard
+    BOOST_CHECK(!readAll(dir / "auth.log").empty()); // auth matches
+    BOOST_CHECK(readAll(dir / "mail.log").empty());  // mail does not
+}
+
+BOOST_AUTO_TEST_CASE(facility_specific_sink_not_reached_by_other_facility)
+{
+    auto cfg = makeRoutingConfig(dir);
+    OutputManager om(ioc, cfg);
+
+    auto msg     = rfc3164Msg("hello");
+    msg.facility = 2; // mail
+    ioc.restart();
+    om.dispatch(msg);
+    ioc.poll();
+
+    BOOST_CHECK(!readAll(dir / "main.log").empty()); // wildcard
+    BOOST_CHECK(readAll(dir / "auth.log").empty());  // auth does not match
+    BOOST_CHECK(!readAll(dir / "mail.log").empty()); // mail matches
+}
+
+BOOST_AUTO_TEST_CASE(unknown_protocol_reaches_only_wildcard)
+{
+    auto cfg = makeRoutingConfig(dir);
+    OutputManager om(ioc, cfg);
+
+    ioc.restart();
+    om.dispatch(unknownMsg("garbage")); // no facility on UNKNOWN messages
+    ioc.poll();
+
+    BOOST_CHECK(!readAll(dir / "main.log").empty()); // wildcard
+    BOOST_CHECK(readAll(dir / "auth.log").empty());  // no facility → no match
+    BOOST_CHECK(readAll(dir / "mail.log").empty());  // no facility → no match
+}
+
+BOOST_AUTO_TEST_CASE(include_malformed_false_blocks_unknown)
+{
+    Config cfg;
+    OutputConfig out;
+    out.name             = "main";
+    out.textFile         = (dir / "main.log").string();
+    out.includeMalformed = false;
+    cfg.outputs          = {out};
+
+    OutputManager om(ioc, cfg);
+    ioc.restart();
+    om.dispatch(unknownMsg("garbage"));
+    ioc.poll();
+
+    BOOST_CHECK(!fs::exists(dir / "main.log"));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -15,6 +15,8 @@
 
 #include "output_manager.hpp"
 
+#include <algorithm>
+
 namespace minilog
 {
 
@@ -22,7 +24,10 @@ OutputManager::OutputManager(boost::asio::io_context& ioc, const Config& cfg)
 {
     for (const auto& outCfg : cfg.outputs)
     {
-        m_sinks.push_back(std::make_unique<LogFile>(ioc, outCfg));
+        Sink sink;
+        sink.facilities = outCfg.facilities;
+        sink.file       = std::make_unique<LogFile>(ioc, outCfg);
+        m_sinks.push_back(std::move(sink));
     }
 }
 
@@ -30,8 +35,10 @@ void OutputManager::dispatch(const SyslogMessage& msg)
 {
     for (auto& sink : m_sinks)
     {
-        // TODO: facility matching, includeMalformed check
-        sink->write(msg);
+        if (facilityMatches(sink.facilities, msg.facility))
+        {
+            sink.file->write(msg);
+        }
     }
 }
 
@@ -39,8 +46,23 @@ void OutputManager::close()
 {
     for (auto& sink : m_sinks)
     {
-        sink->close();
+        sink.file->close();
     }
+}
+
+// static
+bool OutputManager::facilityMatches(const std::vector<int>& filter,
+                                    const std::optional<int>& msgFacility)
+{
+    if (filter.empty())
+    {
+        return true; // wildcard — matches everything
+    }
+    if (!msgFacility)
+    {
+        return false; // message has no facility; only wildcard sinks receive it
+    }
+    return std::find(filter.begin(), filter.end(), *msgFacility) != filter.end();
 }
 
 } // namespace minilog
