@@ -1,14 +1,15 @@
 #include "config/config.hpp"
-#include "output/output_manager.hpp"
 #include "forwarder/forwarder.hpp"
-#include "server/udp_server.hpp"
+#include "output/output_manager.hpp"
 #include "platform/os_log.hpp"
+#include "server/udp_server.hpp"
+
 #include <boost/asio/io_context.hpp>
+
 #include <thread>
 #include <vector>
 
-int main(int /*argc*/, char* /*argv*/[])
-{
+int main(int /*argc*/, char* /*argv*/[]) {
     // TODO: parse CLI args (--install, --uninstall, config path)
     // TODO: detect Windows service vs console mode
     // TODO: load config

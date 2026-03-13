@@ -5,8 +5,7 @@
 
 BOOST_AUTO_TEST_SUITE(integration_skeleton)
 
-BOOST_AUTO_TEST_CASE(placeholder)
-{
+BOOST_AUTO_TEST_CASE(placeholder) {
     BOOST_TEST(true);
 }
 

@@ -1,8 +1,11 @@
 #pragma once
 #include "log_file.hpp"
+
 #include "config/config.hpp"
 #include "parser/syslog_message.hpp"
+
 #include <boost/asio/io_context.hpp>
+
 #include <memory>
 #include <vector>
 

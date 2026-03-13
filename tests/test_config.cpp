@@ -1,6 +1,7 @@
 #define BOOST_TEST_MODULE test_config
-#include <boost/test/unit_test.hpp>
 #include "config/config.hpp"
+
+#include <boost/test/unit_test.hpp>
 
 #include <atomic>
 #include <cstdio>
@@ -17,10 +18,9 @@ namespace {
 // The file is NOT automatically deleted — callers clean up if they care.
 std::string write_temp(const std::string& content) {
     static std::atomic<int> counter{0};
-    const auto path =
-        (std::filesystem::temp_directory_path() /
-         ("minilog_cfg_test_" + std::to_string(counter++) + ".ini"))
-            .string();
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("minilog_cfg_test_" + std::to_string(counter++) + ".ini"))
+                          .string();
     std::ofstream f(path, std::ios::binary);
     BOOST_REQUIRE_MESSAGE(f, "Could not open temp file: " + path);
     f << content;
@@ -41,26 +41,25 @@ BOOST_AUTO_TEST_SUITE(defaults)
 
 BOOST_AUTO_TEST_CASE(struct_defaults) {
     Config cfg;
-    BOOST_TEST(cfg.host     == "0.0.0.0");
+    BOOST_TEST(cfg.host == "0.0.0.0");
     BOOST_TEST(cfg.udp_port == 514);
     BOOST_TEST(cfg.encoding == "utf-8");
-    BOOST_TEST(cfg.workers  == 4);
+    BOOST_TEST(cfg.workers == 4);
     BOOST_TEST(cfg.outputs.empty());
     BOOST_TEST(!cfg.forwarding.enabled);
 }
 
 BOOST_AUTO_TEST_CASE(minimal_config_uses_defaults) {
-    TempFile tmp(
-        "[server]\n"
-        "udp_port = 5514\n"
-        "\n"
-        "[output.main]\n"
-        "text_file = /tmp/syslog.log\n");
+    TempFile tmp("[server]\n"
+                 "udp_port = 5514\n"
+                 "\n"
+                 "[output.main]\n"
+                 "text_file = /tmp/syslog.log\n");
     Config cfg = load_config(tmp.path);
-    BOOST_TEST(cfg.host     == "0.0.0.0");
+    BOOST_TEST(cfg.host == "0.0.0.0");
     BOOST_TEST(cfg.udp_port == 5514);
     BOOST_TEST(cfg.encoding == "utf-8");
-    BOOST_TEST(cfg.workers  == 4);
+    BOOST_TEST(cfg.workers == 4);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -70,56 +69,55 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(full_config)
 
 BOOST_AUTO_TEST_CASE(all_fields_parsed) {
-    TempFile tmp(
-        "[server]\n"
-        "host = 127.0.0.1\n"
-        "udp_port = 5514\n"
-        "encoding = latin-1\n"
-        "workers = 8\n"
-        "\n"
-        "[output.main]\n"
-        "text_file = /var/log/syslog.log\n"
-        "jsonl_file = /var/log/syslog.jsonl\n"
-        "max_size = 100MB\n"
-        "max_files = 10\n"
-        "facility = *\n"
-        "include_malformed = true\n"
-        "\n"
-        "[output.auth]\n"
-        "text_file = /var/log/auth.log\n"
-        "max_size = 50MB\n"
-        "max_files = 5\n"
-        "facility = auth,authpriv\n"
-        "include_malformed = false\n"
-        "\n"
-        "[forwarding]\n"
-        "enabled = true\n"
-        "host = 10.0.0.5\n"
-        "port = 1514\n"
-        "max_message_size = 4096\n"
-        "facility = *\n");
+    TempFile tmp("[server]\n"
+                 "host = 127.0.0.1\n"
+                 "udp_port = 5514\n"
+                 "encoding = latin-1\n"
+                 "workers = 8\n"
+                 "\n"
+                 "[output.main]\n"
+                 "text_file = /var/log/syslog.log\n"
+                 "jsonl_file = /var/log/syslog.jsonl\n"
+                 "max_size = 100MB\n"
+                 "max_files = 10\n"
+                 "facility = *\n"
+                 "include_malformed = true\n"
+                 "\n"
+                 "[output.auth]\n"
+                 "text_file = /var/log/auth.log\n"
+                 "max_size = 50MB\n"
+                 "max_files = 5\n"
+                 "facility = auth,authpriv\n"
+                 "include_malformed = false\n"
+                 "\n"
+                 "[forwarding]\n"
+                 "enabled = true\n"
+                 "host = 10.0.0.5\n"
+                 "port = 1514\n"
+                 "max_message_size = 4096\n"
+                 "facility = *\n");
     Config cfg = load_config(tmp.path);
 
-    BOOST_TEST(cfg.host     == "127.0.0.1");
+    BOOST_TEST(cfg.host == "127.0.0.1");
     BOOST_TEST(cfg.udp_port == 5514);
     BOOST_TEST(cfg.encoding == "latin-1");
-    BOOST_TEST(cfg.workers  == 8);
+    BOOST_TEST(cfg.workers == 8);
 
     BOOST_REQUIRE(cfg.outputs.size() == 2);
 
     const auto& main = cfg.outputs[0];
-    BOOST_TEST(main.name       == "main");
-    BOOST_TEST(main.text_file  == "/var/log/syslog.log");
+    BOOST_TEST(main.name == "main");
+    BOOST_TEST(main.text_file == "/var/log/syslog.log");
     BOOST_TEST(main.jsonl_file == "/var/log/syslog.jsonl");
-    BOOST_TEST(main.max_size   == 100ULL * 1024 * 1024);
-    BOOST_TEST(main.max_files  == 10);
+    BOOST_TEST(main.max_size == 100ULL * 1024 * 1024);
+    BOOST_TEST(main.max_files == 10);
     BOOST_TEST(main.facilities.empty()); // * → all
     BOOST_TEST(main.include_malformed);
 
     const auto& auth = cfg.outputs[1];
-    BOOST_TEST(auth.name      == "auth");
+    BOOST_TEST(auth.name == "auth");
     BOOST_TEST(auth.text_file == "/var/log/auth.log");
-    BOOST_TEST(auth.max_size  == 50ULL * 1024 * 1024);
+    BOOST_TEST(auth.max_size == 50ULL * 1024 * 1024);
     BOOST_TEST(auth.max_files == 5);
     BOOST_TEST(!auth.include_malformed);
     BOOST_REQUIRE(auth.facilities.size() == 2);
@@ -231,12 +229,11 @@ BOOST_AUTO_TEST_CASE(missing_facility_defaults_to_wildcard) {
 BOOST_AUTO_TEST_CASE(all_named_facilities) {
     // One per canonical numeric code (0–23)
     const std::pair<std::string, int> cases[] = {
-        {"kern", 0}, {"user", 1}, {"mail", 2}, {"daemon", 3},
-        {"auth", 4}, {"syslog", 5}, {"lpr", 6}, {"news", 7},
-        {"uucp", 8}, {"clock", 9}, {"authpriv", 10}, {"ftp", 11},
-        {"ntp", 12}, {"audit", 13}, {"alert", 14}, {"clock2", 15},
-        {"local0", 16}, {"local1", 17}, {"local2", 18}, {"local3", 19},
-        {"local4", 20}, {"local5", 21}, {"local6", 22}, {"local7", 23},
+        {"kern", 0},      {"user", 1},    {"mail", 2},    {"daemon", 3},  {"auth", 4},
+        {"syslog", 5},    {"lpr", 6},     {"news", 7},    {"uucp", 8},    {"clock", 9},
+        {"authpriv", 10}, {"ftp", 11},    {"ntp", 12},    {"audit", 13},  {"alert", 14},
+        {"clock2", 15},   {"local0", 16}, {"local1", 17}, {"local2", 18}, {"local3", 19},
+        {"local4", 20},   {"local5", 21}, {"local6", 22}, {"local7", 23},
     };
     for (auto& [name, code] : cases) {
         TempFile tmp("[output.m]\ntext_file=/tmp/f\nfacility=" + name + "\n");
@@ -323,8 +320,7 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(file_io)
 
 BOOST_AUTO_TEST_CASE(missing_file_throws) {
-    BOOST_CHECK_THROW(load_config("/nonexistent/path/minilog.conf"),
-                      std::runtime_error);
+    BOOST_CHECK_THROW(load_config("/nonexistent/path/minilog.conf"), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_CASE(crlf_line_endings_parsed) {
@@ -365,9 +361,8 @@ BOOST_AUTO_TEST_CASE(forwarding_absent_gives_defaults) {
 }
 
 BOOST_AUTO_TEST_CASE(forwarding_facility_filter) {
-    TempFile tmp(
-        "[output.m]\ntext_file=/tmp/f\n"
-        "[forwarding]\nfacility=local0,local1\n");
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
+                 "[forwarding]\nfacility=local0,local1\n");
     const auto facs = load_config(tmp.path).forwarding.facilities;
     BOOST_REQUIRE(facs.size() == 2);
     BOOST_TEST(facs[0] == 16);

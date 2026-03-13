@@ -1,0 +1,73 @@
+---
+Language: Cpp
+Standard: c++20
+
+# Base style — then we override specifics
+BasedOnStyle: LLVM
+
+ColumnLimit: 100
+
+# Indentation
+IndentWidth:            4
+ContinuationIndentWidth: 4
+AccessModifierOffset:  -4
+NamespaceIndentation:  None
+
+# Braces
+BreakBeforeBraces: Attach
+
+# Pointer / reference style  (const std::string&, not const std::string &)
+PointerAlignment: Left
+
+# Short constructs — allow on one line
+AllowShortBlocksOnASingleLine:     Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine:  Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine:      true
+
+# Function / call argument alignment
+AlignAfterOpenBracket:           Align
+BinPackArguments:                false
+BinPackParameters:               false
+
+# Trailing comments — align columns of // comments within a block
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 1
+
+# Align consecutive assignments / declarations (struct member init blocks)
+AlignConsecutiveAssignments:
+  Enabled:          true
+  AcrossEmptyLines: false
+  AcrossComments:   false
+AlignConsecutiveDeclarations:
+  Enabled:          false
+
+# Include sorting
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # 1. Matching header (e.g. "foo.hpp" from "foo.cpp")
+  - Regex:    '^"[^/]*\.hpp"'
+    Priority: 1
+  # 2. Project headers
+  - Regex:    '^"'
+    Priority: 2
+  # 3. Boost
+  - Regex:    '^<boost/'
+    Priority: 3
+  # 4. Standard library
+  - Regex:    '^<'
+    Priority: 4
+
+# Misc
+SpaceBeforeParens:        ControlStatements
+SpacesInParentheses:      false
+SpaceInEmptyParentheses:  false
+SpaceAfterCStyleCast:     false
+Cpp11BracedListStyle:     true
+ReflowComments:           true
+
+# Trailing commas in parameter lists
+InsertTrailingCommas: None

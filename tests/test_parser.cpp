@@ -1,12 +1,15 @@
 #define BOOST_TEST_MODULE test_parser
-#include <boost/test/unit_test.hpp>
 #include "parser/syslog_parser.hpp"
+
+#include <boost/test/unit_test.hpp>
 
 using namespace minilog;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-static SyslogMessage parse(std::string_view s) { return parse_syslog(s); }
+static SyslogMessage parse(std::string_view s) {
+    return parse_syslog(s);
+}
 
 // ─── RFC5424 ─────────────────────────────────────────────────────────────────
 
@@ -15,18 +18,18 @@ BOOST_AUTO_TEST_SUITE(rfc5424)
 BOOST_AUTO_TEST_CASE(basic) {
     const auto m = parse("<34>1 2026-03-12T14:30:22Z mymachine su 123 ID47 - message text");
     BOOST_TEST((m.protocol == Protocol::RFC5424));
-    BOOST_TEST(*m.pri      == 34);
-    BOOST_TEST(*m.facility == 4);   // 34/8 = 4 (auth)
-    BOOST_TEST(*m.severity == 2);   // 34%8 = 2 (critical)
+    BOOST_TEST(*m.pri == 34);
+    BOOST_TEST(*m.facility == 4); // 34/8 = 4 (auth)
+    BOOST_TEST(*m.severity == 2); // 34%8 = 2 (critical)
     BOOST_TEST(*m.facility_name == "auth");
     BOOST_TEST(*m.severity_name == "CRITICAL");
-    BOOST_TEST(*m.version   == 1);
+    BOOST_TEST(*m.version == 1);
     BOOST_TEST(*m.timestamp == "2026-03-12T14:30:22Z");
-    BOOST_TEST(*m.hostname  == "mymachine");
-    BOOST_TEST(*m.app_name  == "su");
-    BOOST_TEST(*m.proc_id   == "123");
-    BOOST_TEST(*m.msg_id    == "ID47");
-    BOOST_TEST(m.message    == "- message text");
+    BOOST_TEST(*m.hostname == "mymachine");
+    BOOST_TEST(*m.app_name == "su");
+    BOOST_TEST(*m.proc_id == "123");
+    BOOST_TEST(*m.msg_id == "ID47");
+    BOOST_TEST(m.message == "- message text");
 }
 
 BOOST_AUTO_TEST_CASE(all_nil_fields) {
@@ -67,7 +70,7 @@ BOOST_AUTO_TEST_CASE(version_not_1_falls_through) {
 BOOST_AUTO_TEST_CASE(pri_zero) {
     const auto m = parse("<0>1 2026-01-01T00:00:00Z h a - - - m");
     BOOST_TEST((m.protocol == Protocol::RFC5424));
-    BOOST_TEST(*m.pri      == 0);
+    BOOST_TEST(*m.pri == 0);
     BOOST_TEST(*m.facility == 0);
     BOOST_TEST(*m.severity == 0);
 }
@@ -75,7 +78,7 @@ BOOST_AUTO_TEST_CASE(pri_zero) {
 BOOST_AUTO_TEST_CASE(pri_191_max_valid) {
     const auto m = parse("<191>1 2026-01-01T00:00:00Z h a - - - m");
     BOOST_TEST((m.protocol == Protocol::RFC5424));
-    BOOST_TEST(*m.pri      == 191);
+    BOOST_TEST(*m.pri == 191);
     BOOST_TEST(*m.facility == 23);
     BOOST_TEST(*m.severity == 7);
 }
@@ -99,7 +102,7 @@ BOOST_AUTO_TEST_CASE(trailing_crlf_stripped) {
 
 BOOST_AUTO_TEST_CASE(raw_field_preserved) {
     const std::string s = "<34>1 2026-01-01T00:00:00Z h a - - - msg";
-    const auto m = parse(s);
+    const auto m        = parse(s);
     BOOST_TEST(m.raw == s);
 }
 
@@ -117,14 +120,14 @@ BOOST_AUTO_TEST_SUITE(rfc3164)
 BOOST_AUTO_TEST_CASE(basic) {
     const auto m = parse("<34>Jan 12 15:04:05 mymachine su[123]: this is the message");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
-    BOOST_TEST(*m.pri      == 34);
+    BOOST_TEST(*m.pri == 34);
     BOOST_TEST(*m.facility == 4);
     BOOST_TEST(*m.severity == 2);
     BOOST_TEST(*m.timestamp == "Jan 12 15:04:05");
-    BOOST_TEST(*m.hostname  == "mymachine");
-    BOOST_TEST(*m.app_name  == "su");
-    BOOST_TEST(*m.proc_id   == "123");
-    BOOST_TEST(m.message    == "this is the message");
+    BOOST_TEST(*m.hostname == "mymachine");
+    BOOST_TEST(*m.app_name == "su");
+    BOOST_TEST(*m.proc_id == "123");
+    BOOST_TEST(m.message == "this is the message");
 }
 
 BOOST_AUTO_TEST_CASE(single_digit_day_space_padded) {
@@ -138,7 +141,7 @@ BOOST_AUTO_TEST_CASE(no_pid) {
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.app_name == "myapp");
     BOOST_TEST(!m.proc_id.has_value());
-    BOOST_TEST(m.message   == "message body");
+    BOOST_TEST(m.message == "message body");
 }
 
 BOOST_AUTO_TEST_CASE(no_colon_in_tag) {
@@ -146,20 +149,20 @@ BOOST_AUTO_TEST_CASE(no_colon_in_tag) {
     const auto m = parse("<13>Feb 28 10:20:30 myhost myapp rest of message");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.app_name == "myapp");
-    BOOST_TEST(m.message   == "rest of message");
+    BOOST_TEST(m.message == "rest of message");
 }
 
 BOOST_AUTO_TEST_CASE(empty_message_after_tag) {
     const auto m = parse("<13>Mar  1 00:00:00 host app:");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.app_name == "app");
-    BOOST_TEST(m.message   == "");
+    BOOST_TEST(m.message == "");
 }
 
 BOOST_AUTO_TEST_CASE(pri_zero) {
     const auto m = parse("<0>Jan  1 00:00:00 host app: msg");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
-    BOOST_TEST(*m.pri      == 0);
+    BOOST_TEST(*m.pri == 0);
     BOOST_TEST(*m.facility == 0);
     BOOST_TEST(*m.severity == 0);
 }
@@ -167,7 +170,7 @@ BOOST_AUTO_TEST_CASE(pri_zero) {
 BOOST_AUTO_TEST_CASE(pri_191_max_valid) {
     const auto m = parse("<191>Jan  1 00:00:00 host app: msg");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
-    BOOST_TEST(*m.pri      == 191);
+    BOOST_TEST(*m.pri == 191);
     BOOST_TEST(*m.facility == 23);
     BOOST_TEST(*m.severity == 7);
 }
@@ -197,12 +200,10 @@ BOOST_AUTO_TEST_CASE(facility_names_mapped) {
 
 BOOST_AUTO_TEST_CASE(all_months_accepted) {
     const char* months[] = {
-        "Jan","Feb","Mar","Apr","May","Jun",
-        "Jul","Aug","Sep","Oct","Nov","Dec"
-    };
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     for (const char* mon : months) {
         const std::string s = std::string("<13>") + mon + "  1 00:00:00 h a: m";
-        const auto msg = parse(s);
+        const auto msg      = parse(s);
         BOOST_TEST_MESSAGE("month=" << mon);
         BOOST_TEST((msg.protocol == Protocol::RFC3164));
     }
@@ -220,7 +221,7 @@ BOOST_AUTO_TEST_CASE(bad_time_format_falls_through) {
 
 BOOST_AUTO_TEST_CASE(raw_field_preserved) {
     const std::string s = "<34>Jan 12 15:04:05 h su[1]: msg";
-    const auto m = parse(s);
+    const auto m        = parse(s);
     BOOST_TEST(m.raw == s);
 }
 
@@ -228,7 +229,7 @@ BOOST_AUTO_TEST_CASE(hostname_only_no_tag_body) {
     const auto m = parse("<13>Jan 12 15:04:05 myhost");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.hostname == "myhost");
-    BOOST_TEST(m.message   == "");
+    BOOST_TEST(m.message == "");
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -240,7 +241,7 @@ BOOST_AUTO_TEST_SUITE(unknown)
 BOOST_AUTO_TEST_CASE(empty_input) {
     const auto m = parse("");
     BOOST_TEST((m.protocol == Protocol::Unknown));
-    BOOST_TEST(m.raw     == "");
+    BOOST_TEST(m.raw == "");
     BOOST_TEST(m.message == "");
 }
 
@@ -263,14 +264,16 @@ BOOST_AUTO_TEST_CASE(random_binary_no_crash) {
 
 BOOST_AUTO_TEST_CASE(null_bytes_no_crash) {
     std::string s = "<13>";
-    s += '\x00'; s += '\x01'; s += '\x02';
+    s += '\x00';
+    s += '\x01';
+    s += '\x02';
     BOOST_CHECK_NO_THROW(parse(s));
 }
 
 BOOST_AUTO_TEST_CASE(only_cr_lf) {
     const auto m = parse("\r\n");
     BOOST_TEST((m.protocol == Protocol::Unknown));
-    BOOST_TEST(m.raw     == "");
+    BOOST_TEST(m.raw == "");
     BOOST_TEST(m.message == "");
 }
 
@@ -289,34 +292,34 @@ BOOST_AUTO_TEST_CASE(linux_kernel) {
     const auto m = parse("<4>Jan  1 00:00:04 myhost kernel: Oops: general protection fault");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.app_name == "kernel");
-    BOOST_TEST(m.message   == "Oops: general protection fault");
+    BOOST_TEST(m.message == "Oops: general protection fault");
 }
 
 BOOST_AUTO_TEST_CASE(openssh) {
     const auto m = parse("<38>Mar 12 14:22:01 server sshd[12345]: Accepted publickey for lars");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.app_name == "sshd");
-    BOOST_TEST(*m.proc_id  == "12345");
-    BOOST_TEST(m.message   == "Accepted publickey for lars");
+    BOOST_TEST(*m.proc_id == "12345");
+    BOOST_TEST(m.message == "Accepted publickey for lars");
 }
 
 BOOST_AUTO_TEST_CASE(rfc5424_with_structured_data) {
-    const auto m = parse(
-        "<165>1 2026-03-12T14:30:22.123456Z mymachine evntslog 556 ID47"
-        " [exampleSDID@32473 iut=\"3\" eventSource=\"Application\"] BOMAn event");
+    const auto m = parse("<165>1 2026-03-12T14:30:22.123456Z mymachine evntslog 556 ID47"
+                         " [exampleSDID@32473 iut=\"3\" eventSource=\"Application\"] BOMAn event");
     BOOST_TEST((m.protocol == Protocol::RFC5424));
     BOOST_TEST(*m.app_name == "evntslog");
-    BOOST_TEST(*m.proc_id  == "556");
-    BOOST_TEST(*m.msg_id   == "ID47");
+    BOOST_TEST(*m.proc_id == "556");
+    BOOST_TEST(*m.msg_id == "ID47");
     BOOST_TEST(m.message.find("[exampleSDID@32473") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(cisco_ios_style) {
-    const auto m = parse("<189>Jan  1 00:00:00 192.168.1.1 %SYS-5-CONFIG_I: Configured from console");
+    const auto m =
+        parse("<189>Jan  1 00:00:00 192.168.1.1 %SYS-5-CONFIG_I: Configured from console");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.hostname == "192.168.1.1");
     BOOST_TEST(m.app_name.has_value());
-    BOOST_TEST(m.message   == "Configured from console");
+    BOOST_TEST(m.message == "Configured from console");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -1,6 +1,7 @@
 #pragma once
 #include "config/config.hpp"
 #include "parser/syslog_message.hpp"
+
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/strand.hpp>
 

@@ -1,4 +1,5 @@
 #include "os_log.hpp"
+
 #include <csignal>
 
 namespace minilog {

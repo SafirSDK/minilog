@@ -1,4 +1,5 @@
 #include "os_log.hpp"
+
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>
@@ -6,8 +7,7 @@
 
 namespace minilog {
 
-void os_log_error(const std::string& message)
-{
+void os_log_error(const std::string& message) {
 #ifdef _WIN32
     HANDLE h = RegisterEventSourceA(nullptr, "minilog");
     if (h) {
@@ -19,8 +19,7 @@ void os_log_error(const std::string& message)
     std::cerr << "[ERROR] " << message << "\n";
 }
 
-void os_log_info(const std::string& message)
-{
+void os_log_info(const std::string& message) {
 #ifdef _WIN32
     HANDLE h = RegisterEventSourceA(nullptr, "minilog");
     if (h) {
