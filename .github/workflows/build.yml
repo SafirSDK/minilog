@@ -77,7 +77,7 @@ jobs:
           conan install . `
             --output-folder=build/windows-release `
             --build=missing `
-            --settings=build_type=Release
+            --settings=build_type=RelWithDebInfo
 
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1

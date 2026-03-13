@@ -45,12 +45,12 @@
     },
     {
       "name": "windows-release",
-      "displayName": "Windows Release (MSVC + Ninja)",
+      "displayName": "Windows RelWithDebInfo (MSVC + Ninja)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/windows-release",
       "toolchainFile": "${sourceDir}/build/windows-release/conan_toolchain.cmake",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     }
   ],
