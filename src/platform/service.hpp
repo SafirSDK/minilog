@@ -18,6 +18,7 @@
 #include <boost/asio/io_context.hpp>
 
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace minilog
@@ -36,12 +37,12 @@ void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop);
 //
 // Windows: calls StartServiceCtrlDispatcher; if this process was started by
 //          the SCM, serviceMain is invoked from the service thread and this
-//          function returns true when the service exits.
-//          Returns false if the process was started interactively
+//          function returns the serviceMain exit code when the service exits.
+//          Returns std::nullopt if the process was started interactively
 //          (ERROR_FAILED_SERVICE_CONTROLLER_CONNECT).
 //
-// Linux:   always returns false immediately.
-bool tryRunAsService(const std::function<int()>& serviceMain);
+// Linux:   always returns std::nullopt immediately.
+std::optional<int> tryRunAsService(const std::function<int()>& serviceMain);
 
 // Install minilog as a Windows NT auto-start service.
 // exePath    - full path to the minilog executable

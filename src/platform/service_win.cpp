@@ -21,6 +21,7 @@
 #include <boost/asio/signal_set.hpp>
 
 #include <csignal>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -129,7 +130,7 @@ void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop)
     }
 }
 
-bool tryRunAsService(const std::function<int()>& serviceMain)
+std::optional<int> tryRunAsService(const std::function<int()>& serviceMain)
 {
     g_serviceMain = serviceMain;
 
@@ -143,13 +144,13 @@ bool tryRunAsService(const std::function<int()>& serviceMain)
         if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT)
         {
             // Not started by the SCM — running interactively.
-            return false;
+            return std::nullopt;
         }
         throw std::runtime_error("StartServiceCtrlDispatcher failed: " +
                                  std::to_string(GetLastError()));
     }
 
-    return true; // SCM invoked us as a service; serviceMain has already run.
+    return g_serviceExitCode; // SCM invoked us as a service; serviceMain has already run.
 }
 
 void installService(const std::string& exePath, const std::string& configPath)

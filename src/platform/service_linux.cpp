@@ -19,6 +19,7 @@
 
 #include <csignal>
 #include <memory>
+#include <optional>
 
 namespace minilog
 {
@@ -36,9 +37,9 @@ void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop)
         });
 }
 
-bool tryRunAsService(const std::function<int()>& /*serviceMain*/)
+std::optional<int> tryRunAsService(const std::function<int()>& /*serviceMain*/)
 {
-    return false;
+    return std::nullopt;
 }
 
 void installService(const std::string& /*exePath*/, const std::string& /*configPath*/) {}
