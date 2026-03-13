@@ -1,7 +1,7 @@
 # minilog
 
 [![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
-[![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/master/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
+[![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/cpp-rewrite/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
 
 > **Note:** This project is currently being rewritten from Python to C++. The Python
 > implementation (`syslog-server.py`) remains fully functional in the meantime. The C++ rewrite
