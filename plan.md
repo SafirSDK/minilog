@@ -342,21 +342,41 @@ Ported from Python plus significantly extended:
 11. Platform layer (OS log, Windows service, Linux signal handling)
 12. main.cpp wiring
 13. Inno Setup installer
-14. Dockerfile + docker-compose.yml + Docker CI job
-15. Stress & robustness tests:
+14. Remove Python implementation (`syslog-server.py`, `syslog-server.conf`, `tests/test_syslog_server.py`)
+15. Stress, robustness, and binary-level tests:
+
+    Binary smoke tests (Python script — `tests/test_binary.py`; wired into CTest via `find_package(Python3)`; binary path passed as argv[1]):
+    - Smoke: write config to temp dir, spawn binary, send one UDP message, verify output file, SIGTERM → clean exit
+    - CLI errors: wrong arg count → non-zero exit; bad config path → non-zero exit
+    - Startup failure: port already in use → non-zero exit, no hang
+    - Graceful shutdown: messages in flight complete before process exits (check file line count)
+    - Forward-to-self: spawn two binary instances (A → B); send messages to A; verify both output files
+      contain the messages; SIGTERM both; verify clean exit
+      (replaces the in-process `forwarding_integration/forward_to_self` test in `test_integration.cpp`)
+    - Multi-worker: config with workers=4, flood with concurrent senders — verify no corruption
+
+    In-process stress tests (existing framework, higher load):
     - Flood: 10 000 messages as fast as possible from a single sender — verify line count matches, no corruption
     - Concurrent senders: 8 threads sending simultaneously — no torn/interleaved lines
     - Max-size datagrams: 65507-byte UDP payload — no crash, no buffer overrun
     - Adversarial input: empty datagram, 1-byte, all-zero, all-0xFF, random binary — server must not crash
     - Rotation under flood: tiny max_size + high message rate — no corruption, correct file count
     - Forwarding unreachable: target host down — server keeps running, no hang
-16. libFuzzer target for the syslog parser (Linux/Clang only):
+16. Installer testing (Windows CI job):
+    - Run `cmake --build --target package` to produce the installer .exe
+    - Run the installer silently (`/VERYSILENT /SUPPRESSMSGBOXES`)
+    - Verify service is registered and running (`sc query minilog`)
+    - Send a UDP syslog message to port 514, verify it appears in the output file
+    - Run the installer again (upgrade path): verify service restarts cleanly, config not overwritten
+    - Uninstall silently, verify service is gone and binary is removed
+17. Dockerfile + docker-compose.yml + Docker CI job
+18. libFuzzer target for the syslog parser (Linux/Clang only):
     - Fuzz entry point over `parseSyslog()` with random + semi-valid corpus
     - Goal: no crashes, no sanitizer findings
     - Add `linux-fuzz` CMake preset and a CI job that runs the fuzzer for a fixed duration
-17. Remove Python implementation (`syslog-server.py`, `syslog-server.conf`, `tests/test_syslog_server.py`)
-18. Update README and write documentation:
+19. Update README and write documentation:
     - Rewrite README.md for the C++ version (build instructions, configuration reference, output format, Windows service install/uninstall)
     - Write `syslog-server.conf.example` with all options documented and commented
     - Add `BUILDING.md`: how to build on Linux (nix-shell + CMake) and Windows (Conan + MSVC + CMake)
     - Add `CHANGELOG.md` with initial release notes
+    - Note in README: Linux deployment is intended to run under systemd (no PID file needed; systemd tracks the process itself)
