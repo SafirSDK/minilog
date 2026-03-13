@@ -49,8 +49,7 @@ void UdpServer::start()
     catch (const boost::system::system_error& e)
     {
         const std::string msg =
-            "minilog: failed to bind UDP port " + std::to_string(m_cfg.udpPort) +
-            ": " + e.what();
+            "minilog: failed to bind UDP port " + std::to_string(m_cfg.udpPort) + ": " + e.what();
         os_log_error(msg);
         throw std::runtime_error(msg);
     }

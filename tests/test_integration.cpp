@@ -385,11 +385,10 @@ BOOST_AUTO_TEST_CASE(start_throws_when_port_is_in_use)
 {
     // Occupy a port with a plain socket so the server cannot bind to it.
     boost::asio::ip::udp::socket blocker(
-        ioc,
-        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+        ioc, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
     const uint16_t busyPort = blocker.local_endpoint().port();
 
-    auto cfg = makeConfig(false, false);
+    auto cfg    = makeConfig(false, false);
     cfg.udpPort = busyPort;
 
     OutputManager om(ioc, cfg);
@@ -401,11 +400,10 @@ BOOST_AUTO_TEST_CASE(start_throws_when_port_is_in_use)
 BOOST_AUTO_TEST_CASE(start_exception_message_contains_port_number)
 {
     boost::asio::ip::udp::socket blocker(
-        ioc,
-        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+        ioc, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
     const uint16_t busyPort = blocker.local_endpoint().port();
 
-    auto cfg = makeConfig(false, false);
+    auto cfg    = makeConfig(false, false);
     cfg.udpPort = busyPort;
 
     OutputManager om(ioc, cfg);

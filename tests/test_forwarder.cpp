@@ -37,8 +37,7 @@ struct Receiver
     boost::asio::io_context ioc;
     boost::asio::ip::udp::socket sock;
 
-    Receiver()
-        : sock(ioc, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0))
+    Receiver() : sock(ioc, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0))
     {
         sock.non_blocking(true);
     }
@@ -179,7 +178,7 @@ BOOST_AUTO_TEST_CASE(no_facility_on_message_forwarded_by_wildcard_filter)
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {})); // wildcard
 
-    fwd.forward(makeMsg("malformed msg")); // facility = nullopt
+    fwd.forward(makeMsg("malformed msg"));               // facility = nullopt
     drain(ioc);
 
     BOOST_CHECK_EQUAL(rx.receive(), "malformed msg");

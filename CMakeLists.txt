@@ -64,3 +64,17 @@ endif()
 
 enable_testing()
 add_subdirectory(tests)
+
+# clang-format compliance check (warning only, does not break the build).
+find_program(CLANG_FORMAT clang-format)
+if(CLANG_FORMAT)
+    add_custom_target(clang-format-check ALL
+        COMMAND "${CMAKE_COMMAND}"
+            "-DCLANG_FORMAT=${CLANG_FORMAT}"
+            "-DSRC_DIR=${CMAKE_SOURCE_DIR}/src"
+            "-DTEST_DIR=${CMAKE_SOURCE_DIR}/tests"
+            -P "${CMAKE_SOURCE_DIR}/cmake/clang_format_check.cmake"
+        COMMENT "Checking clang-format..."
+        VERBATIM
+    )
+endif()

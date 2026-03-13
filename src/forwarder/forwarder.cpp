@@ -26,8 +26,8 @@ Forwarder::Forwarder(boost::asio::io_context& ioc, const ForwardingConfig& cfg)
     if (m_cfg.enabled)
     {
         m_socket.open(boost::asio::ip::udp::v4());
-        m_endpoint = boost::asio::ip::udp::endpoint(
-            boost::asio::ip::make_address(m_cfg.host), m_cfg.port);
+        m_endpoint =
+            boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(m_cfg.host), m_cfg.port);
     }
 }
 
