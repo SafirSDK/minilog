@@ -13,6 +13,10 @@ set(MINILOG_STRESS_MULTIPLIER "100" CACHE STRING
 set(MINILOG_STRESS_LOSSY "0" CACHE STRING
     "Set to 1 to enable lossy soak tests (extended ASan/TSan presets)")
 
+# Duration (seconds) of each soak test when MINILOG_STRESS_LOSSY=1.
+set(MINILOG_STRESS_SOAK_SECONDS "10" CACHE STRING
+    "Soak window in seconds per lossy test case (default 10, extended presets use 1800)")
+
 cmake_policy(SET CMP0167 NEW)
 
 set(CMAKE_CXX_STANDARD 20)

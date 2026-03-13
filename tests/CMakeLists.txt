@@ -65,7 +65,13 @@ endif()
 add_boost_test(test_stress test_stress.cpp)
 target_compile_definitions(test_stress PRIVATE
     MINILOG_STRESS_MULTIPLIER=${MINILOG_STRESS_MULTIPLIER}
-    MINILOG_STRESS_LOSSY=${MINILOG_STRESS_LOSSY})
+    MINILOG_STRESS_LOSSY=${MINILOG_STRESS_LOSSY}
+    MINILOG_STRESS_SOAK_SECONDS=${MINILOG_STRESS_SOAK_SECONDS})
+if(MINILOG_STRESS_LOSSY)
+    # Each soak test case runs for SOAK_SECONDS; two cases = 2×SOAK_SECONDS minimum.
+    math(EXPR _soak_timeout "${MINILOG_STRESS_SOAK_SECONDS} * 3")
+    set_tests_properties(test_stress PROPERTIES TIMEOUT ${_soak_timeout})
+endif()
 target_sources(test_stress PRIVATE
     ../src/config/config.cpp
     ../src/parser/syslog_parser.cpp

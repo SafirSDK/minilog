@@ -345,29 +345,19 @@ BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Soak tests (extended / lossy mode only) ─────────────────────────────────
 // Compiled only when MINILOG_STRESS_LOSSY=1 (the linux-*-extended presets).
-// Each test fires a large burst via a single reused socket (fast sender),
-// then soaks for a fixed window while sanitizers observe concurrent activity.
+// Each test continuously sends messages for the full SOAK_DURATION window using
+// a single reused socket per sender thread, so the server stays busy the entire
+// time and sanitizers observe concurrent activity throughout.
 // Message loss is expected and not checked.
+
+#ifndef MINILOG_STRESS_SOAK_SECONDS
+#define MINILOG_STRESS_SOAK_SECONDS 10
+#endif
 
 namespace
 {
 
-constexpr std::chrono::seconds SOAK_DURATION{10};
-
-// Send n datagrams on a single reused socket.  Creating a new io_context and
-// socket per datagram (as sendUdp() does) is too slow for high-volume soaking
-// because ASan/TSan instrument every allocation in the constructor.
-void sendUdpBatch(const std::string& prefix, int n, uint16_t port)
-{
-    boost::asio::io_context senderIoc;
-    boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
-    const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), port);
-    for (int i = 0; i < n; ++i)
-    {
-        const std::string msg = prefix + std::to_string(i);
-        sock.send_to(boost::asio::buffer(msg), ep);
-    }
-}
+constexpr std::chrono::seconds SOAK_DURATION{MINILOG_STRESS_SOAK_SECONDS};
 
 } // namespace
 
@@ -383,12 +373,21 @@ BOOST_AUTO_TEST_CASE(flood_no_crash)
 
     auto ioThreads = startIoc();
 
-    // 2000×N intentionally saturates the kernel receive buffer; the server
-    // stays busy processing from it throughout the full soak window.
-    constexpr int N = 2000 * MINILOG_STRESS_MULTIPLIER;
-    sendUdpBatch("<34>Oct 11 22:14:15 host app[1]: soak flood ", N, port);
+    // Send continuously for the entire soak window so the receive path stays
+    // active and sanitizers can observe the full concurrent life cycle.
+    {
+        boost::asio::io_context senderIoc;
+        boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
+        const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), port);
+        const auto deadline = std::chrono::steady_clock::now() + SOAK_DURATION;
+        for (int i = 0; std::chrono::steady_clock::now() < deadline; ++i)
+        {
+            const std::string msg =
+                "<34>Oct 11 22:14:15 host app[1]: soak flood " + std::to_string(i);
+            sock.send_to(boost::asio::buffer(msg), ep);
+        }
+    }
 
-    std::this_thread::sleep_for(SOAK_DURATION);
     shutdown(server, om, ioThreads);
     // No count assertion — message loss is expected under overload.
 }
@@ -407,9 +406,9 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
 
     auto ioThreads = startIoc(4);
 
-    constexpr int N_THREADS    = 8;
-    constexpr int N_PER_THREAD = 250 * MINILOG_STRESS_MULTIPLIER;
+    constexpr int N_THREADS = 8;
 
+    // Each sender thread runs continuously for SOAK_DURATION.
     std::vector<std::thread> senders;
     senders.reserve(N_THREADS);
     for (int t = 0; t < N_THREADS; ++t)
@@ -421,7 +420,8 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
                 boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
                 const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"),
                                                         port);
-                for (int i = 0; i < N_PER_THREAD; ++i)
+                const auto deadline = std::chrono::steady_clock::now() + SOAK_DURATION;
+                for (int i = 0; std::chrono::steady_clock::now() < deadline; ++i)
                 {
                     const std::string msg = "<34>Oct 11 22:14:15 host app[" + std::to_string(t) +
                                             "]: t" + std::to_string(t) + "m" + std::to_string(i);
@@ -434,7 +434,6 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         t.join();
     }
 
-    std::this_thread::sleep_for(SOAK_DURATION);
     shutdown(server, om, ioThreads);
 
     // Every line that did arrive must be structurally complete.
