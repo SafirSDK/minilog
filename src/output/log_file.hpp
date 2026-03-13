@@ -53,6 +53,7 @@ private:
     boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
 
     // All fields below are accessed only on m_strand.
+    bool m_closed = false;
     std::ofstream m_textStream;
     std::ofstream m_jsonlStream;
     uint64_t m_textSize  = 0;

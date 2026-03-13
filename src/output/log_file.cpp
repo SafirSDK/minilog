@@ -96,11 +96,21 @@ void LogFile::write(const SyslogMessage& msg)
 
 void LogFile::close()
 {
-    boost::asio::post(m_strand, [this]() { closeFiles(); });
+    boost::asio::post(m_strand,
+                      [this]()
+                      {
+                          m_closed = true;
+                          closeFiles();
+                      });
 }
 
 void LogFile::doWrite(const SyslogMessage& msg)
 {
+    if (m_closed)
+    {
+        return;
+    }
+
     if (msg.protocol == Protocol::Unknown && !m_cfg.includeMalformed)
     {
         return;
