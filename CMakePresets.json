@@ -48,7 +48,7 @@
       "displayName": "Windows Release (MSVC)",
       "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/build/windows-release",
-      "toolchainFile": "${sourceDir}/build/windows-release/generators/conan_toolchain.cmake",
+      "toolchainFile": "${sourceDir}/build/windows-release/conan_toolchain.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
