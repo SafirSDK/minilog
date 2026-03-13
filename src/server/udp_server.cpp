@@ -73,8 +73,12 @@ void UdpServer::start()
 
 void UdpServer::stop()
 {
-    boost::system::error_code ec;
-    m_socket.close(ec);
+    boost::asio::post(m_socket.get_executor(),
+                      [this]()
+                      {
+                          boost::system::error_code ec;
+                          m_socket.close(ec);
+                      });
 }
 
 uint16_t UdpServer::localPort() const
