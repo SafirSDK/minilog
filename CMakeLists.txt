@@ -65,6 +65,27 @@ endif()
 enable_testing()
 add_subdirectory(tests)
 
+# Inno Setup installer (Windows only).
+if(WIN32)
+    find_program(ISCC ISCC HINTS
+        "C:/Program Files (x86)/Inno Setup 6"
+        "C:/Program Files/Inno Setup 6"
+    )
+    if(ISCC)
+        add_custom_target(package
+            COMMAND "${ISCC}"
+                "/DSourceDir=$<TARGET_FILE_DIR:minilog>"
+                "/DConfigDir=${CMAKE_SOURCE_DIR}/installer"
+                "/DAppVersion=${PROJECT_VERSION}"
+                "/DOutputDir=${CMAKE_BINARY_DIR}"
+                "${CMAKE_SOURCE_DIR}/installer/setup.iss"
+            DEPENDS minilog
+            COMMENT "Building Inno Setup installer..."
+            VERBATIM
+        )
+    endif()
+endif()
+
 # clang-format compliance check (warning only, does not break the build).
 find_program(CLANG_FORMAT clang-format)
 if(CLANG_FORMAT)
