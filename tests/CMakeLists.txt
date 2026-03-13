@@ -5,7 +5,9 @@ function(add_boost_test name source)
     add_executable(${name} ${source})
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
     target_compile_definitions(${name} PRIVATE
-        BOOST_TEST_DYN_LINK
+        # DYN_LINK only on Linux where system Boost is a shared library;
+        # on Windows Conan provides a static lib and this macro must be absent.
+        $<$<NOT:$<PLATFORM_ID:Windows>>:BOOST_TEST_DYN_LINK>
         $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0601>
     )
     target_link_libraries(${name} PRIVATE

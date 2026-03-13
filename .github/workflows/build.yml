@@ -72,7 +72,7 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          lcov --capture --directory build/linux-coverage --output-file coverage.info
+          lcov --capture --directory build/linux-coverage --output-file coverage.info --ignore-errors mismatch
           lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
           lcov --list coverage.info
 
