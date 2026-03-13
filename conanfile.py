@@ -12,6 +12,7 @@ class MinilogConan(ConanFile):
         "json",         # JSONL output
         "test",         # unit tests (unit_test_framework)
         "container",    # required by json
+        "exception",    # required by test
     }
 
     # All compiled Boost libraries that have a without_* option in the recipe
