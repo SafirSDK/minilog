@@ -17,6 +17,8 @@
 
 #include "parser/syslog_parser.hpp"
 
+#include <boost/asio/post.hpp>
+
 namespace minilog
 {
 
@@ -31,13 +33,26 @@ UdpServer::UdpServer(boost::asio::io_context& ioc,
 
 void UdpServer::start()
 {
-    // TODO: open socket, bind to m_cfg.host:m_cfg.udpPort, call receive()
+    using udp = boost::asio::ip::udp;
+    const auto address = boost::asio::ip::make_address(m_cfg.host);
+    const udp::endpoint ep(address, m_cfg.udpPort);
+
+    m_socket.open(ep.protocol());
+    m_socket.set_option(boost::asio::socket_base::reuse_address(true));
+    m_socket.bind(ep);
+
+    receive();
 }
 
 void UdpServer::stop()
 {
     boost::system::error_code ec;
     m_socket.close(ec);
+}
+
+uint16_t UdpServer::localPort() const
+{
+    return m_socket.local_endpoint().port();
 }
 
 void UdpServer::receive()
@@ -59,12 +74,21 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
     std::string data(m_recvBuffer.data(), bytes);
     std::string srcIp = m_senderEndpoint.address().to_string();
 
-    // Re-arm receive before processing
+    // Re-arm immediately so the next datagram isn't missed.
     receive();
 
-    // TODO: decode encoding, parse, dispatch
-    (void)data;
-    (void)srcIp;
+    // Post the parse + dispatch work so it can run on any io_context thread.
+    boost::asio::post(m_socket.get_executor(),
+                      [this, data = std::move(data), srcIp = std::move(srcIp)]()
+                      {
+                          SyslogMessage msg = parseSyslog(data);
+                          msg.srcIp         = srcIp;
+                          m_outputMgr.dispatch(msg);
+                          if (m_forwarder != nullptr)
+                          {
+                              m_forwarder->forward(msg);
+                          }
+                      });
 }
 
 } // namespace minilog

@@ -337,13 +337,14 @@ Ported from Python plus significantly extended:
 6. LogFile (write + rotation) + unit tests
 7. OutputManager (routing) + unit tests
 8. UDP server (Boost.Asio) + integration tests
-9. Forwarder + unit tests
-10. Platform layer (OS log, Windows service, Linux signal handling)
-11. main.cpp wiring
-12. Inno Setup installer
-13. Dockerfile + docker-compose.yml + Docker CI job
-14. Remove Python implementation (`syslog-server.py`, `syslog-server.conf`, `tests/test_syslog_server.py`)
-15. Update README and write documentation:
+9. Add CI check that every .cpp/.hpp has the correct file header
+10. Forwarder + unit tests
+11. Platform layer (OS log, Windows service, Linux signal handling)
+12. main.cpp wiring
+13. Inno Setup installer
+14. Dockerfile + docker-compose.yml + Docker CI job
+15. Remove Python implementation (`syslog-server.py`, `syslog-server.conf`, `tests/test_syslog_server.py`)
+16. Update README and write documentation:
     - Rewrite README.md for the C++ version (build instructions, configuration reference, output format, Windows service install/uninstall)
     - Write `syslog-server.conf.example` with all options documented and commented
     - Add `BUILDING.md`: how to build on Linux (nix-shell + CMake) and Windows (Conan + MSVC + CMake)

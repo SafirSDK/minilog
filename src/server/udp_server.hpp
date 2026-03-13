@@ -39,6 +39,9 @@ public:
     void start();
     void stop();
 
+    // Returns the actual bound port (useful when udpPort=0 was requested).
+    uint16_t localPort() const;
+
 private:
     void receive();
     void onReceive(const boost::system::error_code& ec, std::size_t bytes);

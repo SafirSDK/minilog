@@ -14,15 +14,299 @@
 ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_integration
+#include "output/output_manager.hpp"
+#include "server/udp_server.hpp"
+
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/json.hpp>
 #include <boost/test/unit_test.hpp>
 
-// Tests will be implemented in step 7.
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 
-BOOST_AUTO_TEST_SUITE(integration_skeleton)
+using namespace minilog;
+namespace bj = boost::json;
+namespace fs = std::filesystem;
 
-BOOST_AUTO_TEST_CASE(placeholder)
+namespace
 {
-    BOOST_TEST(true);
+
+struct Fixture
+{
+    fs::path dir;
+    boost::asio::io_context ioc;
+
+    Fixture()
+    {
+        static int counter = 0;
+        dir = fs::temp_directory_path() / ("minilog_itest_" + std::to_string(++counter));
+        fs::create_directories(dir);
+    }
+
+    ~Fixture()
+    {
+        fs::remove_all(dir);
+    }
+
+    Config makeConfig(bool textOut = true, bool jsonlOut = true, bool inclMalformed = true) const
+    {
+        Config cfg;
+        cfg.host    = "127.0.0.1";
+        cfg.udpPort = 0; // OS assigns an ephemeral port
+
+        OutputConfig out;
+        out.name             = "main";
+        out.includeMalformed = inclMalformed;
+        if (textOut)
+        {
+            out.textFile = (dir / "syslog.log").string();
+        }
+        if (jsonlOut)
+        {
+            out.jsonlFile = (dir / "syslog.jsonl").string();
+        }
+        cfg.outputs = {out};
+        return cfg;
+    }
+
+    static void sendUdp(const std::string& data, uint16_t port)
+    {
+        boost::asio::io_context senderIoc;
+        boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
+        const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), port);
+        sock.send_to(boost::asio::buffer(data), ep);
+    }
+
+    // Run the ioc long enough to receive and fully process all sent messages,
+    // then stop the server and drain remaining strand work.
+    void drain(UdpServer& server, OutputManager& om)
+    {
+        ioc.run_for(std::chrono::milliseconds(100));
+        server.stop();
+        om.close();
+        ioc.restart();
+        ioc.run_for(std::chrono::milliseconds(50));
+    }
+
+    std::string readAll(const fs::path& p) const
+    {
+        std::ifstream f(p, std::ios::binary);
+        return {std::istreambuf_iterator<char>(f), {}};
+    }
+
+    bj::object parseJsonl(const std::string& content) const
+    {
+        return bj::parse(std::string(content.begin(), content.end() - 1)).as_object();
+    }
+};
+
+} // namespace
+
+// ─── RFC3164 pipeline ────────────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(rfc3164_pipeline, Fixture)
+
+BOOST_AUTO_TEST_CASE(text_file_contains_raw_payload)
+{
+    auto cfg = makeConfig(/*textOut=*/true, /*jsonlOut=*/false);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    const std::string msg = "<34>Oct 11 22:14:15 mymachine su[123]: hello world";
+    sendUdp(msg, server.localPort());
+    drain(server, om);
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), msg + "\n");
+}
+
+BOOST_AUTO_TEST_CASE(jsonl_fields_correct)
+{
+    auto cfg = makeConfig(/*textOut=*/false, /*jsonlOut=*/true);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    sendUdp("<34>Oct 11 22:14:15 mymachine su[123]: hello world", server.localPort());
+    drain(server, om);
+
+    auto obj = parseJsonl(readAll(dir / "syslog.jsonl"));
+
+    BOOST_CHECK_EQUAL(obj["proto"].as_string(),    "RFC3164");
+    BOOST_CHECK_EQUAL(obj["src"].as_string(),      "127.0.0.1");
+    BOOST_CHECK_EQUAL(obj["hostname"].as_string(), "mymachine");
+    BOOST_CHECK_EQUAL(obj["app"].as_string(),      "su");
+    BOOST_CHECK_EQUAL(obj["pid"].as_string(),      "123");
+    BOOST_CHECK_EQUAL(obj["message"].as_string(),  "hello world");
+    BOOST_CHECK(obj["msgid"].is_null());
+}
+
+BOOST_AUTO_TEST_CASE(jsonl_rcv_is_iso8601_utc)
+{
+    auto cfg = makeConfig(false, true);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    sendUdp("<34>Oct 11 22:14:15 mymachine su[123]: test", server.localPort());
+    drain(server, om);
+
+    const auto rcv = std::string(parseJsonl(readAll(dir / "syslog.jsonl"))["rcv"].as_string());
+
+    // YYYY-MM-DDTHH:MM:SSZ
+    BOOST_REQUIRE_EQUAL(rcv.size(), 20u);
+    BOOST_CHECK_EQUAL(rcv[4],  '-');
+    BOOST_CHECK_EQUAL(rcv[7],  '-');
+    BOOST_CHECK_EQUAL(rcv[10], 'T');
+    BOOST_CHECK_EQUAL(rcv[13], ':');
+    BOOST_CHECK_EQUAL(rcv[16], ':');
+    BOOST_CHECK_EQUAL(rcv[19], 'Z');
+}
+
+BOOST_AUTO_TEST_CASE(jsonl_src_is_sender_ip)
+{
+    auto cfg = makeConfig(false, true);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    sendUdp("<34>Oct 11 22:14:15 mymachine su[123]: test", server.localPort());
+    drain(server, om);
+
+    BOOST_CHECK_EQUAL(parseJsonl(readAll(dir / "syslog.jsonl"))["src"].as_string(), "127.0.0.1");
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── RFC5424 pipeline ────────────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(rfc5424_pipeline, Fixture)
+
+BOOST_AUTO_TEST_CASE(text_file_contains_raw_payload)
+{
+    auto cfg = makeConfig(true, false);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    const std::string msg = "<34>1 2026-03-12T14:30:22Z mymachine su 123 ID47 - hello";
+    sendUdp(msg, server.localPort());
+    drain(server, om);
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), msg + "\n");
+}
+
+BOOST_AUTO_TEST_CASE(jsonl_fields_correct)
+{
+    auto cfg = makeConfig(false, true);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    sendUdp("<34>1 2026-03-12T14:30:22Z mymachine su 123 ID47 - hello world",
+            server.localPort());
+    drain(server, om);
+
+    auto obj = parseJsonl(readAll(dir / "syslog.jsonl"));
+
+    BOOST_CHECK_EQUAL(obj["proto"].as_string(),    "RFC5424");
+    BOOST_CHECK_EQUAL(obj["hostname"].as_string(), "mymachine");
+    BOOST_CHECK_EQUAL(obj["app"].as_string(),      "su");
+    BOOST_CHECK_EQUAL(obj["pid"].as_string(),      "123");
+    BOOST_CHECK_EQUAL(obj["msgid"].as_string(),    "ID47");
+    // Parser keeps STRUCTURED-DATA verbatim in message (status quo).
+    // Nil SD "-" is included as a prefix before the MSG text.
+    BOOST_CHECK_EQUAL(obj["message"].as_string(), "- hello world");
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Mixed session ───────────────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(mixed_session, Fixture)
+
+BOOST_AUTO_TEST_CASE(rfc3164_and_rfc5424_both_written)
+{
+    auto cfg = makeConfig(true, false);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    const uint16_t port = server.localPort();
+    sendUdp("<34>Oct 11 22:14:15 mymachine su[123]: from3164", port);
+    sendUdp("<34>1 2026-03-12T14:30:22Z mymachine su 123 - - from5424", port);
+    drain(server, om);
+
+    const std::string content = readAll(dir / "syslog.log");
+    BOOST_CHECK(content.find("from3164") != std::string::npos);
+    BOOST_CHECK(content.find("from5424") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Malformed messages ──────────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(malformed_messages, Fixture)
+
+BOOST_AUTO_TEST_CASE(include_malformed_true_writes_unknown)
+{
+    auto cfg = makeConfig(true, false, /*inclMalformed=*/true);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    sendUdp("not a syslog message at all", server.localPort());
+    drain(server, om);
+
+    BOOST_CHECK(!readAll(dir / "syslog.log").empty());
+}
+
+BOOST_AUTO_TEST_CASE(include_malformed_false_drops_unknown)
+{
+    auto cfg = makeConfig(true, false, /*inclMalformed=*/false);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    sendUdp("not a syslog message at all", server.localPort());
+    drain(server, om);
+
+    BOOST_CHECK(!fs::exists(dir / "syslog.log"));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Graceful shutdown ───────────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(graceful_shutdown, Fixture)
+
+BOOST_AUTO_TEST_CASE(all_messages_written_before_stop)
+{
+    auto cfg = makeConfig(true, false);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+
+    const uint16_t port = server.localPort();
+    for (int i = 0; i < 5; ++i)
+    {
+        sendUdp("<34>Oct 11 22:14:15 mymachine su[123]: msg" + std::to_string(i), port);
+    }
+    drain(server, om);
+
+    int lineCount         = 0;
+    for (char c : readAll(dir / "syslog.log"))
+    {
+        if (c == '\n')
+        {
+            ++lineCount;
+        }
+    }
+    BOOST_CHECK_EQUAL(lineCount, 5);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
