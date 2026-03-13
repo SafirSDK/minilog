@@ -16,7 +16,7 @@ struct SyslogMessage
 {
     Protocol protocol = Protocol::Unknown;
     std::string raw;    // original datagram bytes (as string)
-    std::string src_ip; // sender IP address
+    std::string srcIp; // sender IP address
 
     // PRI
     std::optional<int> pri;
@@ -24,16 +24,16 @@ struct SyslogMessage
     std::optional<int> severity;
 
     // Named facility/severity (e.g. "daemon", "NOTICE")
-    std::optional<std::string> facility_name;
-    std::optional<std::string> severity_name;
+    std::optional<std::string> facilityName;
+    std::optional<std::string> severityName;
 
     // Header fields
     std::optional<int> version; // RFC5424 only
     std::optional<std::string> timestamp;
     std::optional<std::string> hostname;
-    std::optional<std::string> app_name;
-    std::optional<std::string> proc_id;
-    std::optional<std::string> msg_id; // RFC5424 only
+    std::optional<std::string> appName;
+    std::optional<std::string> procId;
+    std::optional<std::string> msgId; // RFC5424 only
 
     // Message text
     std::string message;

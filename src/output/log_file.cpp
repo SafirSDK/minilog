@@ -10,25 +10,25 @@ LogFile::LogFile(boost::asio::io_context& ioc, OutputConfig cfg)
 
 LogFile::~LogFile()
 {
-    close_files();
+    closeFiles();
 }
 
 void LogFile::write(const SyslogMessage& msg)
 {
-    boost::asio::post(m_strand, [this, msg]() { do_write(msg); });
+    boost::asio::post(m_strand, [this, msg]() { doWrite(msg); });
 }
 
 void LogFile::close()
 {
-    boost::asio::post(m_strand, [this]() { close_files(); });
+    boost::asio::post(m_strand, [this]() { closeFiles(); });
 }
 
-void LogFile::do_write(const SyslogMessage& /*msg*/)
+void LogFile::doWrite(const SyslogMessage& /*msg*/)
 {
     // TODO: implement rotation check, text write, jsonl write
 }
 
-void LogFile::rotate_if_needed()
+void LogFile::rotateIfNeeded()
 {
     // TODO: check file sizes, trigger rotate() if needed
 }
@@ -38,12 +38,12 @@ void LogFile::rotate()
     // TODO: close, shift .N files, reopen
 }
 
-void LogFile::open_files()
+void LogFile::openFiles()
 {
-    // TODO: open text_file and jsonl_file for append
+    // TODO: open textFile and jsonlFile for append
 }
 
-void LogFile::close_files()
+void LogFile::closeFiles()
 {
     // TODO: flush and close open file handles
 }

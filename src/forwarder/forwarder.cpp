@@ -10,10 +10,10 @@ Forwarder::Forwarder(boost::asio::io_context& ioc, const ForwardingConfig& cfg)
 
 void Forwarder::forward(const SyslogMessage& msg)
 {
-    boost::asio::post(m_strand, [this, msg]() { do_forward(msg); });
+    boost::asio::post(m_strand, [this, msg]() { doForward(msg); });
 }
 
-void Forwarder::do_forward(const SyslogMessage& /*msg*/)
+void Forwarder::doForward(const SyslogMessage& /*msg*/)
 {
     // TODO: truncate if needed, send UDP datagram
 }

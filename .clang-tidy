@@ -14,3 +14,17 @@ CheckOptions:
     value: camelBack
   - key: readability-identifier-naming.ProtectedMemberPrefix
     value: m_
+
+  # Local variables: lowerCamelCase
+  - key: readability-identifier-naming.LocalVariableCase
+    value: camelBack
+
+  # Function parameters: lowerCamelCase
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+
+  # Free functions and member functions (non-virtual): lowerCamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.MemberCase
+    value: camelBack

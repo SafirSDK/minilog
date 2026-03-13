@@ -27,7 +27,7 @@ const std::unordered_map<std::string, int> kFacilityNames = {
     {"local3", 19},   {"local4", 20}, {"local5", 21},  {"local6", 22},   {"local7", 23},
 };
 
-std::string to_lower(std::string s)
+std::string toLower(std::string s)
 {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
     return s;
@@ -44,7 +44,7 @@ std::string trim(const std::string& s)
 }
 
 // Parse "auth,authpriv,*" → deduplicated vector<int>; empty vector = all (wildcard)
-std::vector<int> parse_facilities(const std::string& raw)
+std::vector<int> parseFacilities(const std::string& raw)
 {
     if (raw.empty())
     {
@@ -56,7 +56,7 @@ std::vector<int> parse_facilities(const std::string& raw)
     std::string token;
     while (std::getline(ss, token, ','))
     {
-        token = to_lower(trim(token));
+        token = toLower(trim(token));
         if (token == "*")
         {
             return {}; // wildcard → empty = all
@@ -76,7 +76,7 @@ std::vector<int> parse_facilities(const std::string& raw)
 }
 
 // Parse "100MB", "50KB", "2GB", "512B" → bytes
-uint64_t parse_size(const std::string& raw)
+uint64_t parseSize(const std::string& raw)
 {
     if (raw.empty())
     {
@@ -99,7 +99,7 @@ uint64_t parse_size(const std::string& raw)
         throw std::runtime_error("Size must be > 0: '" + raw + "'");
     }
 
-    const std::string unit = to_lower(trim(raw.substr(i)));
+    const std::string unit = toLower(trim(raw.substr(i)));
     uint64_t mult          = 1;
     if (unit == "b" || unit.empty())
     {
@@ -125,40 +125,40 @@ uint64_t parse_size(const std::string& raw)
     return num * mult;
 }
 
-OutputConfig parse_output(const std::string& name, const boost::property_tree::ptree& sec)
+OutputConfig parseOutput(const std::string& name, const boost::property_tree::ptree& sec)
 {
-    OutputConfig out;
-    out.name       = name;
-    out.text_file  = sec.get<std::string>("text_file", "");
-    out.jsonl_file = sec.get<std::string>("jsonl_file", "");
+    OutputConfig outCfg;
+    outCfg.name      = name;
+    outCfg.textFile  = sec.get<std::string>("text_file", "");
+    outCfg.jsonlFile = sec.get<std::string>("jsonl_file", "");
 
-    if (out.text_file.empty() && out.jsonl_file.empty())
+    if (outCfg.textFile.empty() && outCfg.jsonlFile.empty())
     {
         throw std::runtime_error("[output." + name +
                                  "] must specify text_file, jsonl_file, or both");
     }
 
-    const auto size_str = sec.get<std::string>("max_size", "");
-    if (!size_str.empty())
+    const auto sizeStr = sec.get<std::string>("max_size", "");
+    if (!sizeStr.empty())
     {
-        out.max_size = parse_size(size_str);
+        outCfg.maxSize = parseSize(sizeStr);
     }
 
-    out.max_files = sec.get<int>("max_files", out.max_files);
-    if (out.max_files < 0)
+    outCfg.maxFiles = sec.get<int>("max_files", outCfg.maxFiles);
+    if (outCfg.maxFiles < 0)
     {
         throw std::runtime_error("[output." + name + "] max_files must be >= 0");
     }
 
-    out.facilities        = parse_facilities(sec.get<std::string>("facility", "*"));
-    out.include_malformed = sec.get<bool>("include_malformed", out.include_malformed);
+    outCfg.facilities       = parseFacilities(sec.get<std::string>("facility", "*"));
+    outCfg.includeMalformed = sec.get<bool>("include_malformed", outCfg.includeMalformed);
 
-    return out;
+    return outCfg;
 }
 
 } // namespace
 
-Config load_config(const std::string& path)
+Config loadConfig(const std::string& path)
 {
     namespace pt = boost::property_tree;
 
@@ -179,12 +179,12 @@ Config load_config(const std::string& path)
     cfg.encoding = tree.get<std::string>("server.encoding", cfg.encoding);
 
     {
-        const int port = tree.get<int>("server.udp_port", static_cast<int>(cfg.udp_port));
+        const int port = tree.get<int>("server.udp_port", static_cast<int>(cfg.udpPort));
         if (port <= 0 || port > 65535)
         {
             throw std::runtime_error("Invalid udp_port: " + std::to_string(port));
         }
-        cfg.udp_port = static_cast<uint16_t>(port);
+        cfg.udpPort = static_cast<uint16_t>(port);
     }
     {
         const int w = tree.get<int>("server.workers", cfg.workers);
@@ -212,19 +212,19 @@ Config load_config(const std::string& path)
             {
                 throw std::runtime_error("Duplicate output section name: '" + name + "'");
             }
-            cfg.outputs.push_back(parse_output(name, sec));
+            cfg.outputs.push_back(parseOutput(name, sec));
         }
     }
 
     // [forwarding]
-    if (auto fwd_node = tree.get_child_optional("forwarding"))
+    if (auto fwdNode = tree.get_child_optional("forwarding"))
     {
-        auto& f                = *fwd_node;
+        auto& f                = *fwdNode;
         cfg.forwarding.enabled = f.get<bool>("enabled", false);
         cfg.forwarding.host    = f.get<std::string>("host", "");
-        cfg.forwarding.max_message_size =
-            f.get<uint32_t>("max_message_size", cfg.forwarding.max_message_size);
-        cfg.forwarding.facilities = parse_facilities(f.get<std::string>("facility", "*"));
+        cfg.forwarding.maxMessageSize =
+            f.get<uint32_t>("max_message_size", cfg.forwarding.maxMessageSize);
+        cfg.forwarding.facilities = parseFacilities(f.get<std::string>("facility", "*"));
 
         const int port = f.get<int>("port", static_cast<int>(cfg.forwarding.port));
         if (port <= 0 || port > 65535)

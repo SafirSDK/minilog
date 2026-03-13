@@ -19,7 +19,7 @@ public:
     void forward(const SyslogMessage& msg);
 
 private:
-    void do_forward(const SyslogMessage& msg);
+    void doForward(const SyslogMessage& msg);
 
     ForwardingConfig m_cfg;
     boost::asio::strand<boost::asio::io_context::executor_type> m_strand;

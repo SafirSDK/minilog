@@ -18,7 +18,7 @@ class UdpServer
 public:
     UdpServer(boost::asio::io_context& ioc,
               const Config& cfg,
-              OutputManager& output_mgr,
+              OutputManager& outputMgr,
               Forwarder* forwarder); // forwarder may be nullptr if disabled
 
     void start();
@@ -26,16 +26,16 @@ public:
 
 private:
     void receive();
-    void on_receive(const boost::system::error_code& ec, std::size_t bytes);
+    void onReceive(const boost::system::error_code& ec, std::size_t bytes);
 
     const Config& m_cfg;
     boost::asio::ip::udp::socket m_socket;
-    boost::asio::ip::udp::endpoint m_sender_endpoint;
-    OutputManager& m_output_mgr;
+    boost::asio::ip::udp::endpoint m_senderEndpoint;
+    OutputManager& m_outputMgr;
     Forwarder* m_forwarder;
 
     static constexpr std::size_t BUFFER_SIZE = 65507;
-    std::vector<char> m_recv_buffer;
+    std::vector<char> m_recvBuffer;
 };
 
 } // namespace minilog

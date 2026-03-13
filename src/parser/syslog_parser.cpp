@@ -18,23 +18,23 @@ const std::array<const char*, 24> kFacilityNames = {
     "uucp",   "clock",  "authpriv", "ftp",    "ntp",    "audit",  "alert",  "cron",
     "local0", "local1", "local2",   "local3", "local4", "local5", "local6", "local7"};
 
-void apply_pri(SyslogMessage& msg, int pri)
+void applyPri(SyslogMessage& msg, int pri)
 {
     msg.pri      = pri;
     msg.facility = pri / 8;
     msg.severity = pri % 8;
     if (*msg.facility < static_cast<int>(kFacilityNames.size()))
     {
-        msg.facility_name = kFacilityNames[static_cast<std::size_t>(*msg.facility)];
+        msg.facilityName = kFacilityNames[static_cast<std::size_t>(*msg.facility)];
     }
     if (*msg.severity < static_cast<int>(kSeverityNames.size()))
     {
-        msg.severity_name = kSeverityNames[static_cast<std::size_t>(*msg.severity)];
+        msg.severityName = kSeverityNames[static_cast<std::size_t>(*msg.severity)];
     }
 }
 
 // Parse <NNN>. Returns PRI (0–191) and advances sv past '>'. Returns -1 on failure.
-int parse_pri(std::string_view& sv)
+int parsePri(std::string_view& sv)
 {
     if (sv.empty() || sv[0] != '<')
     {
@@ -61,7 +61,7 @@ int parse_pri(std::string_view& sv)
 }
 
 // Parse next whitespace-delimited token. Returns nullopt for "-" or empty sv.
-std::optional<std::string> parse_nilable(std::string_view& sv)
+std::optional<std::string> parseNilable(std::string_view& sv)
 {
     if (sv.empty())
     {
@@ -86,7 +86,7 @@ std::optional<std::string> parse_nilable(std::string_view& sv)
     return std::string(tok);
 }
 
-bool is_month_prefix(std::string_view sv)
+bool isMonthPrefix(std::string_view sv)
 {
     static constexpr const char* kMonths[] = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -105,9 +105,9 @@ bool is_month_prefix(std::string_view sv)
 }
 
 // Parse RFC3164 timestamp "Mon [D]D HH:MM:SS". Advances sv. Returns nullopt on mismatch.
-std::optional<std::string> parse_3164_timestamp(std::string_view& sv)
+std::optional<std::string> parse3164Timestamp(std::string_view& sv)
 {
-    if (!is_month_prefix(sv))
+    if (!isMonthPrefix(sv))
     {
         return std::nullopt;
     }
@@ -160,28 +160,28 @@ std::optional<std::string> parse_3164_timestamp(std::string_view& sv)
 
 // Parse RFC3164 tag (e.g. "app[pid]:") and advance sv to message body.
 std::pair<std::optional<std::string>, std::optional<std::string>>
-parse_3164_tag(std::string_view& sv)
+parse3164Tag(std::string_view& sv)
 {
     const auto colon = sv.find(':');
-    std::string_view tag_part;
+    std::string_view tagPart;
     if (colon == std::string_view::npos)
     {
         // No colon: first word is tag, rest is message
         const auto sp = sv.find(' ');
         if (sp == std::string_view::npos)
         {
-            tag_part = sv;
-            sv       = {};
+            tagPart = sv;
+            sv      = {};
         }
         else
         {
-            tag_part = sv.substr(0, sp);
+            tagPart = sv.substr(0, sp);
             sv.remove_prefix(sp + 1);
         }
     }
     else
     {
-        tag_part = sv.substr(0, colon);
+        tagPart = sv.substr(0, colon);
         sv.remove_prefix(colon + 1);
         if (!sv.empty() && sv[0] == ' ')
         {
@@ -190,26 +190,26 @@ parse_3164_tag(std::string_view& sv)
     }
 
     // "app[pid]" or just "app"
-    const auto bracket = tag_part.find('[');
-    if (bracket != std::string_view::npos && !tag_part.empty() && tag_part.back() == ']')
+    const auto bracket = tagPart.find('[');
+    if (bracket != std::string_view::npos && !tagPart.empty() && tagPart.back() == ']')
     {
-        auto app = std::string(tag_part.substr(0, bracket));
-        auto pid = std::string(tag_part.substr(bracket + 1, tag_part.size() - bracket - 2));
+        auto app = std::string(tagPart.substr(0, bracket));
+        auto pid = std::string(tagPart.substr(bracket + 1, tagPart.size() - bracket - 2));
         return {app.empty() ? std::nullopt : std::make_optional(std::move(app)),
                 pid.empty() ? std::nullopt : std::make_optional(std::move(pid))};
     }
-    while (!tag_part.empty() && tag_part.back() == ' ')
+    while (!tagPart.empty() && tagPart.back() == ' ')
     {
-        tag_part.remove_suffix(1);
+        tagPart.remove_suffix(1);
     }
-    return {tag_part.empty() ? std::nullopt : std::make_optional(std::string(tag_part)),
+    return {tagPart.empty() ? std::nullopt : std::make_optional(std::string(tagPart)),
             std::nullopt};
 }
 
-bool try_rfc5424(std::string_view data, SyslogMessage& msg)
+bool tryRfc5424(std::string_view data, SyslogMessage& msg)
 {
     std::string_view sv = data;
-    const int pri       = parse_pri(sv);
+    const int pri       = parsePri(sv);
     if (pri < 0)
     {
         return false;
@@ -242,37 +242,37 @@ bool try_rfc5424(std::string_view data, SyslogMessage& msg)
         return false;
     }
 
-    auto timestamp = parse_nilable(sv);
-    auto hostname  = parse_nilable(sv);
-    auto app_name  = parse_nilable(sv);
-    auto proc_id   = parse_nilable(sv);
-    auto msg_id    = parse_nilable(sv);
+    auto timestamp = parseNilable(sv);
+    auto hostname  = parseNilable(sv);
+    auto appName   = parseNilable(sv);
+    auto procId    = parseNilable(sv);
+    auto msgId     = parseNilable(sv);
 
     // Everything remaining (structured data + MSG) becomes the message.
     // Consistent with the Python reference: structured data is NOT stripped.
     msg.protocol = Protocol::RFC5424;
     msg.raw      = std::string(data);
-    apply_pri(msg, pri);
+    applyPri(msg, pri);
     msg.version   = ver;
     msg.timestamp = std::move(timestamp);
     msg.hostname  = std::move(hostname);
-    msg.app_name  = std::move(app_name);
-    msg.proc_id   = std::move(proc_id);
-    msg.msg_id    = std::move(msg_id);
+    msg.appName   = std::move(appName);
+    msg.procId    = std::move(procId);
+    msg.msgId     = std::move(msgId);
     msg.message   = std::string(sv);
     return true;
 }
 
-bool try_rfc3164(std::string_view data, SyslogMessage& msg)
+bool tryRfc3164(std::string_view data, SyslogMessage& msg)
 {
     std::string_view sv = data;
-    const int pri       = parse_pri(sv);
+    const int pri       = parsePri(sv);
     if (pri < 0)
     {
         return false;
     }
 
-    auto ts = parse_3164_timestamp(sv);
+    auto ts = parse3164Timestamp(sv);
     if (!ts)
     {
         return false;
@@ -297,22 +297,22 @@ bool try_rfc3164(std::string_view data, SyslogMessage& msg)
         }
     }
 
-    auto [app_name, proc_id] = parse_3164_tag(sv);
+    auto [appName, procId] = parse3164Tag(sv);
 
     msg.protocol = Protocol::RFC3164;
     msg.raw      = std::string(data);
-    apply_pri(msg, pri);
+    applyPri(msg, pri);
     msg.timestamp = std::move(ts);
     msg.hostname  = std::move(hostname);
-    msg.app_name  = std::move(app_name);
-    msg.proc_id   = std::move(proc_id);
+    msg.appName   = std::move(appName);
+    msg.procId    = std::move(procId);
     msg.message   = std::string(sv);
     return true;
 }
 
 } // namespace
 
-SyslogMessage parse_syslog(std::string_view data)
+SyslogMessage parseSyslog(std::string_view data)
 {
     // Strip trailing CR/LF that some senders append
     while (!data.empty() && (data.back() == '\r' || data.back() == '\n'))
@@ -321,11 +321,11 @@ SyslogMessage parse_syslog(std::string_view data)
     }
 
     SyslogMessage msg;
-    if (try_rfc5424(data, msg))
+    if (tryRfc5424(data, msg))
     {
         return msg;
     }
-    if (try_rfc3164(data, msg))
+    if (tryRfc3164(data, msg))
     {
         return msg;
     }

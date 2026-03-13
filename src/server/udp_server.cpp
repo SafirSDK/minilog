@@ -7,16 +7,16 @@ namespace minilog
 
 UdpServer::UdpServer(boost::asio::io_context& ioc,
                      const Config& cfg,
-                     OutputManager& output_mgr,
+                     OutputManager& outputMgr,
                      Forwarder* forwarder)
-    : m_cfg(cfg), m_socket(ioc), m_output_mgr(output_mgr), m_forwarder(forwarder),
-      m_recv_buffer(BUFFER_SIZE)
+    : m_cfg(cfg), m_socket(ioc), m_outputMgr(outputMgr), m_forwarder(forwarder),
+      m_recvBuffer(BUFFER_SIZE)
 {
 }
 
 void UdpServer::start()
 {
-    // TODO: open socket, bind to m_cfg.host:m_cfg.udp_port, call receive()
+    // TODO: open socket, bind to m_cfg.host:m_cfg.udpPort, call receive()
 }
 
 void UdpServer::stop()
@@ -27,13 +27,13 @@ void UdpServer::stop()
 
 void UdpServer::receive()
 {
-    m_socket.async_receive_from(boost::asio::buffer(m_recv_buffer),
-                                m_sender_endpoint,
+    m_socket.async_receive_from(boost::asio::buffer(m_recvBuffer),
+                                m_senderEndpoint,
                                 [this](const boost::system::error_code& ec, std::size_t bytes)
-                                { on_receive(ec, bytes); });
+                                { onReceive(ec, bytes); });
 }
 
-void UdpServer::on_receive(const boost::system::error_code& ec, std::size_t bytes)
+void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes)
 {
     if (ec)
     {
@@ -41,15 +41,15 @@ void UdpServer::on_receive(const boost::system::error_code& ec, std::size_t byte
     }
 
     // Copy received data immediately so buffer can be re-armed
-    std::string data(m_recv_buffer.data(), bytes);
-    std::string src_ip = m_sender_endpoint.address().to_string();
+    std::string data(m_recvBuffer.data(), bytes);
+    std::string srcIp = m_senderEndpoint.address().to_string();
 
     // Re-arm receive before processing
     receive();
 
     // TODO: decode encoding, parse, dispatch
     (void)data;
-    (void)src_ip;
+    (void)srcIp;
 }
 
 } // namespace minilog

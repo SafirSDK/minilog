@@ -5,9 +5,9 @@ namespace minilog
 
 OutputManager::OutputManager(boost::asio::io_context& ioc, const Config& cfg)
 {
-    for (const auto& out_cfg : cfg.outputs)
+    for (const auto& outCfg : cfg.outputs)
     {
-        m_sinks.push_back(std::make_unique<LogFile>(ioc, out_cfg));
+        m_sinks.push_back(std::make_unique<LogFile>(ioc, outCfg));
     }
 }
 
@@ -15,7 +15,7 @@ void OutputManager::dispatch(const SyslogMessage& msg)
 {
     for (auto& sink : m_sinks)
     {
-        // TODO: facility matching, include_malformed check
+        // TODO: facility matching, includeMalformed check
         sink->write(msg);
     }
 }

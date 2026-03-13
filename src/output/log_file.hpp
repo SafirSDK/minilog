@@ -24,11 +24,11 @@ public:
     void close();
 
 private:
-    void do_write(const SyslogMessage& msg);
-    void rotate_if_needed();
+    void doWrite(const SyslogMessage& msg);
+    void rotateIfNeeded();
     void rotate();
-    void open_files();
-    void close_files();
+    void openFiles();
+    void closeFiles();
 
     OutputConfig m_cfg;
     boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
