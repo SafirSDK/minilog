@@ -28,7 +28,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer"
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10"
       }
     },
     {
@@ -40,7 +41,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer"
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10"
       }
     },
     {
@@ -51,7 +53,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_FLAGS": "--coverage -fno-inline",
-        "CMAKE_EXE_LINKER_FLAGS": "--coverage"
+        "CMAKE_EXE_LINKER_FLAGS": "--coverage",
+        "MINILOG_STRESS_MULTIPLIER": "10"
       }
     },
     {

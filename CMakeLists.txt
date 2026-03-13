@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.25)
 project(minilog VERSION 0.1.0 LANGUAGES CXX)
 
+# Scale factor for stress test message counts.
+# Full load (100) is used in normal builds.  Instrumented builds (coverage,
+# sanitizers) should use a smaller value (e.g. 10) so tests complete in time.
+set(MINILOG_STRESS_MULTIPLIER "100" CACHE STRING
+    "Stress test scale factor: flood = 100×N, concurrent = 10×N messages per thread")
+
 cmake_policy(SET CMP0167 NEW)
 
 set(CMAKE_CXX_STANDARD 20)

@@ -33,6 +33,12 @@
 using namespace minilog;
 namespace fs = std::filesystem;
 
+// MINILOG_STRESS_MULTIPLIER is injected by CMake (default 100, reduced in
+// instrumented builds such as coverage / ASan / TSan).
+#ifndef MINILOG_STRESS_MULTIPLIER
+#define MINILOG_STRESS_MULTIPLIER 100
+#endif
+
 namespace
 {
 
@@ -141,7 +147,7 @@ BOOST_AUTO_TEST_CASE(ten_thousand_messages_no_loss)
 
     auto ioThreads = startIoc();
 
-    constexpr int N = 10'000;
+    constexpr int N = 100 * MINILOG_STRESS_MULTIPLIER;
     for (int i = 0; i < N; ++i)
     {
         sendUdp("<34>Oct 11 22:14:15 host app[1]: flood " + std::to_string(i), port);
@@ -170,7 +176,7 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
     auto ioThreads = startIoc(4);
 
     constexpr int N_THREADS    = 8;
-    constexpr int N_PER_THREAD = 1000; // 8 000 total
+    constexpr int N_PER_THREAD = 10 * MINILOG_STRESS_MULTIPLIER; // 8 000 at full scale
 
     std::vector<std::thread> senders;
     senders.reserve(N_THREADS);
@@ -295,7 +301,7 @@ BOOST_AUTO_TEST_CASE(correct_file_count_after_flood)
 
     auto ioThreads = startIoc();
 
-    constexpr int N = 500;
+    constexpr int N = 5 * MINILOG_STRESS_MULTIPLIER;
     for (int i = 0; i < N; ++i)
     {
         sendUdp("<34>Oct 11 22:14:15 host app[1]: rotation flood " + std::to_string(i), port);
