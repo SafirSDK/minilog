@@ -21,6 +21,7 @@ pkgs.mkShell {
 
     # Useful dev tools
     gdb
+    gh
   ];
 
   shellHook = ''
