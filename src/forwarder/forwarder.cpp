@@ -15,12 +15,20 @@
 
 #include "forwarder.hpp"
 
+#include <boost/asio/post.hpp>
+
 namespace minilog
 {
 
 Forwarder::Forwarder(boost::asio::io_context& ioc, const ForwardingConfig& cfg)
-    : m_cfg(cfg), m_strand(boost::asio::make_strand(ioc))
+    : m_cfg(cfg), m_strand(boost::asio::make_strand(ioc)), m_socket(ioc)
 {
+    if (m_cfg.enabled)
+    {
+        m_socket.open(boost::asio::ip::udp::v4());
+        m_endpoint = boost::asio::ip::udp::endpoint(
+            boost::asio::ip::make_address(m_cfg.host), m_cfg.port);
+    }
 }
 
 void Forwarder::forward(const SyslogMessage& msg)
@@ -28,9 +36,56 @@ void Forwarder::forward(const SyslogMessage& msg)
     boost::asio::post(m_strand, [this, msg]() { doForward(msg); });
 }
 
-void Forwarder::doForward(const SyslogMessage& /*msg*/)
+void Forwarder::doForward(const SyslogMessage& msg)
 {
-    // TODO: truncate if needed, send UDP datagram
+    if (!m_cfg.enabled)
+    {
+        return;
+    }
+    if (!facilityMatches(m_cfg.facilities, msg.facility))
+    {
+        return;
+    }
+    const std::string payload = truncateIfNeeded(msg.raw, m_cfg.maxMessageSize);
+    boost::system::error_code ec;
+    m_socket.send_to(boost::asio::buffer(payload), m_endpoint, 0, ec);
+}
+
+bool Forwarder::facilityMatches(const std::vector<int>& filter,
+                                const std::optional<int>& msgFacility)
+{
+    // Empty filter = wildcard: forward everything.
+    if (filter.empty())
+    {
+        return true;
+    }
+    // Non-wildcard filter: message must have a facility that is in the list.
+    if (!msgFacility.has_value())
+    {
+        return false;
+    }
+    for (const int f : filter)
+    {
+        if (f == *msgFacility)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string Forwarder::truncateIfNeeded(const std::string& raw, uint32_t maxSize)
+{
+    if (maxSize == 0 || raw.size() <= maxSize)
+    {
+        return raw;
+    }
+    const std::string suffix = "[TRUNCATED: " + std::to_string(raw.size()) + " bytes]";
+    if (suffix.size() >= maxSize)
+    {
+        return raw.substr(0, maxSize);
+    }
+    return raw.substr(0, maxSize - suffix.size()) + suffix;
 }
 
 } // namespace minilog

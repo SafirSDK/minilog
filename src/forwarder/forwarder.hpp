@@ -18,7 +18,11 @@
 #include "parser/syslog_message.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/strand.hpp>
+
+#include <optional>
+#include <string>
 
 namespace minilog
 {
@@ -36,8 +40,14 @@ public:
 private:
     void doForward(const SyslogMessage& msg);
 
+    static bool facilityMatches(const std::vector<int>& filter,
+                                const std::optional<int>& msgFacility);
+    static std::string truncateIfNeeded(const std::string& raw, uint32_t maxSize);
+
     ForwardingConfig m_cfg;
     boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
+    boost::asio::ip::udp::socket m_socket;
+    boost::asio::ip::udp::endpoint m_endpoint;
 };
 
 } // namespace minilog

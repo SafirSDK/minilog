@@ -14,6 +14,7 @@
  ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_integration
+#include "forwarder/forwarder.hpp"
 #include "output/output_manager.hpp"
 #include "server/udp_server.hpp"
 
@@ -276,7 +277,7 @@ BOOST_AUTO_TEST_CASE(include_malformed_false_drops_unknown)
 
 BOOST_AUTO_TEST_SUITE_END()
 
-// ─── Graceful shutdown ───────────────────────────────────────────────────────
+// ─── Graceful shutdown (kept below forwarding) ───────────────────────────────
 
 BOOST_FIXTURE_TEST_SUITE(graceful_shutdown, Fixture)
 
@@ -303,6 +304,75 @@ BOOST_AUTO_TEST_CASE(all_messages_written_before_stop)
         }
     }
     BOOST_CHECK_EQUAL(lineCount, 5);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Forwarding integration ───────────────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(forwarding_integration, Fixture)
+
+BOOST_AUTO_TEST_CASE(forward_to_self)
+{
+    // Server A: text output in dir/a/, forwarding enabled (target = server B).
+    // Server B: text output in dir/b/, no forwarding.
+    // Send one message to A; both A and B output files must contain it.
+
+    const fs::path dirA = dir / "a";
+    const fs::path dirB = dir / "b";
+    fs::create_directories(dirA);
+    fs::create_directories(dirB);
+
+    // Build config for B first (no forwarding) so we get its ephemeral port.
+    Config cfgB;
+    cfgB.host    = "127.0.0.1";
+    cfgB.udpPort = 0;
+    {
+        OutputConfig out;
+        out.name     = "b";
+        out.textFile = (dirB / "syslog.log").string();
+        cfgB.outputs = {out};
+    }
+
+    OutputManager omB(ioc, cfgB);
+    UdpServer serverB(ioc, cfgB, omB, nullptr);
+    serverB.start();
+
+    const uint16_t portB = serverB.localPort();
+
+    // Build config for A with forwarding pointed at B.
+    Config cfgA;
+    cfgA.host    = "127.0.0.1";
+    cfgA.udpPort = 0;
+    {
+        OutputConfig out;
+        out.name     = "a";
+        out.textFile = (dirA / "syslog.log").string();
+        cfgA.outputs = {out};
+    }
+    cfgA.forwarding.enabled = true;
+    cfgA.forwarding.host    = "127.0.0.1";
+    cfgA.forwarding.port    = portB;
+
+    OutputManager omA(ioc, cfgA);
+    Forwarder fwd(ioc, cfgA.forwarding);
+    UdpServer serverA(ioc, cfgA, omA, &fwd);
+    serverA.start();
+
+    const std::string msg = "<34>Oct 11 22:14:15 mymachine su[123]: forwarded";
+    sendUdp(msg, serverA.localPort());
+
+    // Extra time for A->B forwarding leg to arrive and be processed.
+    ioc.run_for(std::chrono::milliseconds(200));
+    serverA.stop();
+    serverB.stop();
+    omA.close();
+    omB.close();
+    ioc.restart();
+    ioc.run_for(std::chrono::milliseconds(50));
+
+    BOOST_CHECK(readAll(dirA / "syslog.log").find("forwarded") != std::string::npos);
+    BOOST_CHECK(readAll(dirB / "syslog.log").find("forwarded") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
