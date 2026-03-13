@@ -3,9 +3,11 @@
 #include <string>
 #include <vector>
 
-namespace minilog {
+namespace minilog
+{
 
-struct OutputConfig {
+struct OutputConfig
+{
     std::string name;            // section name, e.g. "main"
     std::string text_file;       // empty = not configured
     std::string jsonl_file;      // empty = not configured
@@ -15,7 +17,8 @@ struct OutputConfig {
     bool include_malformed = true;
 };
 
-struct ForwardingConfig {
+struct ForwardingConfig
+{
     bool enabled = false;
     std::string host;
     uint16_t port             = 514;
@@ -23,7 +26,8 @@ struct ForwardingConfig {
     std::vector<int> facilities; // empty = all
 };
 
-struct Config {
+struct Config
+{
     std::string host     = "0.0.0.0";
     uint16_t udp_port    = 514;
     std::string encoding = "utf-8";

@@ -9,10 +9,12 @@
 #include <memory>
 #include <vector>
 
-namespace minilog {
+namespace minilog
+{
 
 // Routes each received message to all matching OutputConfig sinks.
-class OutputManager {
+class OutputManager
+{
 public:
     OutputManager(boost::asio::io_context& ioc, const Config& cfg);
 
@@ -23,7 +25,7 @@ public:
     void close();
 
 private:
-    std::vector<std::unique_ptr<LogFile>> sinks_;
+    std::vector<std::unique_ptr<LogFile>> m_sinks;
 };
 
 } // namespace minilog

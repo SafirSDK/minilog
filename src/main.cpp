@@ -9,7 +9,8 @@
 #include <thread>
 #include <vector>
 
-int main(int /*argc*/, char* /*argv*/[]) {
+int main(int /*argc*/, char* /*argv*/[])
+{
     // TODO: parse CLI args (--install, --uninstall, config path)
     // TODO: detect Windows service vs console mode
     // TODO: load config

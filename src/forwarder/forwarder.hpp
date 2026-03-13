@@ -5,11 +5,13 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/strand.hpp>
 
-namespace minilog {
+namespace minilog
+{
 
 // Forwards messages to a remote syslog server over UDP.
 // Messages exceeding max_message_size are truncated before sending.
-class Forwarder {
+class Forwarder
+{
 public:
     Forwarder(boost::asio::io_context& ioc, const ForwardingConfig& cfg);
 
@@ -19,8 +21,8 @@ public:
 private:
     void do_forward(const SyslogMessage& msg);
 
-    ForwardingConfig cfg_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    ForwardingConfig m_cfg;
+    boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
 };
 
 } // namespace minilog

@@ -14,7 +14,8 @@ AccessModifierOffset:  -4
 NamespaceIndentation:  None
 
 # Braces
-BreakBeforeBraces: Attach
+BreakBeforeBraces: Allman
+InsertBraces:      true
 
 # Pointer / reference style  (const std::string&, not const std::string &)
 PointerAlignment: Left
@@ -24,7 +25,7 @@ AllowShortBlocksOnASingleLine:     Empty
 AllowShortCaseLabelsOnASingleLine: false
 AllowShortFunctionsOnASingleLine:  Inline
 AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine:      true
+AllowShortLoopsOnASingleLine:      false
 
 # Function / call argument alignment
 AlignAfterOpenBracket:           Align

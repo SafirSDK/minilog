@@ -3,7 +3,8 @@
 #include <windows.h>
 #endif
 
-namespace minilog {
+namespace minilog
+{
 
 // TODO: implement StartServiceCtrlDispatcher, SERVICE_MAIN,
 //       SetServiceStatus, and --install/--uninstall CLI support

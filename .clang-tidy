@@ -1,0 +1,16 @@
+---
+Checks: >
+  readability-identifier-naming
+
+CheckOptions:
+  # Private member variables: m_lowerCamelCase
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: m_
+
+  # Protected member variables: same convention
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: m_

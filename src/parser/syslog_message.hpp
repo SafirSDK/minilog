@@ -2,11 +2,18 @@
 #include <optional>
 #include <string>
 
-namespace minilog {
+namespace minilog
+{
 
-enum class Protocol { RFC3164, RFC5424, Unknown };
+enum class Protocol
+{
+    RFC3164,
+    RFC5424,
+    Unknown
+};
 
-struct SyslogMessage {
+struct SyslogMessage
+{
     Protocol protocol = Protocol::Unknown;
     std::string raw;    // original datagram bytes (as string)
     std::string src_ip; // sender IP address

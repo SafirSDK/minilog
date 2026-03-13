@@ -5,12 +5,14 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/strand.hpp>
 
-namespace minilog {
+namespace minilog
+{
 
 // Manages a pair of output files (text + jsonl) for one [output.X] section.
 // All public methods are safe to call from multiple threads — writes are
 // serialized through the strand.
-class LogFile {
+class LogFile
+{
 public:
     explicit LogFile(boost::asio::io_context& ioc, OutputConfig cfg);
     ~LogFile();
@@ -28,8 +30,8 @@ private:
     void open_files();
     void close_files();
 
-    OutputConfig cfg_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    OutputConfig m_cfg;
+    boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
 
     // File handles and current sizes tracked here (accessed only on strand)
 };

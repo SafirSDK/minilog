@@ -2,7 +2,8 @@
 
 #include <csignal>
 
-namespace minilog {
+namespace minilog
+{
 
 // TODO: implement SIGTERM/SIGINT handler and graceful shutdown wiring
 

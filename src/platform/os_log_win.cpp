@@ -5,12 +5,15 @@
 #include <windows.h>
 #endif
 
-namespace minilog {
+namespace minilog
+{
 
-void os_log_error(const std::string& message) {
+void os_log_error(const std::string& message)
+{
 #ifdef _WIN32
     HANDLE h = RegisterEventSourceA(nullptr, "minilog");
-    if (h) {
+    if (h)
+    {
         const char* msg = message.c_str();
         ReportEventA(h, EVENTLOG_ERROR_TYPE, 0, 0, nullptr, 1, 0, &msg, nullptr);
         DeregisterEventSource(h);
@@ -19,10 +22,12 @@ void os_log_error(const std::string& message) {
     std::cerr << "[ERROR] " << message << "\n";
 }
 
-void os_log_info(const std::string& message) {
+void os_log_info(const std::string& message)
+{
 #ifdef _WIN32
     HANDLE h = RegisterEventSourceA(nullptr, "minilog");
-    if (h) {
+    if (h)
+    {
         const char* msg = message.c_str();
         ReportEventA(h, EVENTLOG_INFORMATION_TYPE, 0, 0, nullptr, 1, 0, &msg, nullptr);
         DeregisterEventSource(h);

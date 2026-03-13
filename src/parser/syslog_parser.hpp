@@ -3,7 +3,8 @@
 
 #include <string_view>
 
-namespace minilog {
+namespace minilog
+{
 
 // Parse a syslog datagram (RFC3164 or RFC5424).
 // Never throws — unknown/malformed input returns Protocol::Unknown.
