@@ -36,6 +36,12 @@ def free_port() -> int:
 def wait_for_port(port: int, timeout: float = 5.0) -> bool:
     """Block until a process has bound to *port* (server is ready)."""
     deadline = time.monotonic() + timeout
+    # On Windows, SO_EXCLUSIVEADDRUSE creates a race: the probe socket can
+    # briefly hold the port between the server's open() and bind() calls,
+    # causing the server's bind() to fail with WSAEADDRINUSE.  A short
+    # initial wait lets the server complete its bind before we start probing.
+    if sys.platform == "win32":
+        time.sleep(0.3)
     while time.monotonic() < deadline:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             try:
