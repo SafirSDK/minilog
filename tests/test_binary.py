@@ -22,6 +22,14 @@ from pathlib import Path
 
 BINARY: str = ""  # set from argv[1] before test discovery
 
+# On Windows, processes must be in their own process group so that
+# CTRL_C_EVENT can be delivered without also interrupting the test runner.
+_POPEN_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    if sys.platform == "win32"
+    else {}
+)
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -99,7 +107,10 @@ def write_config(
 def terminate(proc: subprocess.Popen) -> None:
     """Send a graceful shutdown signal."""
     if sys.platform == "win32":
-        proc.terminate()
+        # CTRL_C_EVENT triggers SIGINT in the child's process group, which
+        # Boost.Asio's signal_set catches and routes to the onStop handler.
+        # proc.terminate() would call TerminateProcess() (exit code 1) instead.
+        proc.send_signal(signal.CTRL_C_EVENT)
     else:
         proc.send_signal(signal.SIGTERM)
 
@@ -138,7 +149,7 @@ class TestSmoke(unittest.TestCase):
             port = free_port()
             conf = write_config(d, port)
 
-            proc = subprocess.Popen([BINARY, str(conf)])
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
             try:
                 self.assertTrue(wait_for_port(port), "server did not start in time")
                 send_udp("<34>Oct 11 22:14:15 mymachine su[1]: smoke test", port)
@@ -161,7 +172,7 @@ class TestSmoke(unittest.TestCase):
                 busy_port = blocker.getsockname()[1]
                 conf = write_config(d, busy_port)
 
-                proc = subprocess.Popen([BINARY, str(conf)])
+                proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
@@ -177,7 +188,7 @@ class TestSmoke(unittest.TestCase):
             port = free_port()
             conf = write_config(d, port)
 
-            proc = subprocess.Popen([BINARY, str(conf)])
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
             try:
                 self.assertTrue(wait_for_port(port))
                 send_udp("<34>Oct 11 22:14:15 mymachine su[1]: from3164", port)
@@ -196,7 +207,6 @@ class TestSmoke(unittest.TestCase):
 
 
 class TestGracefulShutdown(unittest.TestCase):
-    @unittest.skipIf(sys.platform == "win32", "SIGTERM graceful shutdown is Linux/macOS only")
     def test_inflight_messages_complete_before_exit(self):
         """Messages received before SIGTERM must all appear in the output file."""
         with tempfile.TemporaryDirectory() as d:
@@ -204,7 +214,7 @@ class TestGracefulShutdown(unittest.TestCase):
             port = free_port()
             conf = write_config(d, port)
 
-            proc = subprocess.Popen([BINARY, str(conf)])
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
             try:
                 self.assertTrue(wait_for_port(port))
                 N = 20
@@ -238,8 +248,8 @@ class TestForwardToSelf(unittest.TestCase):
             conf_b = write_config(db, port_b)
             conf_a = write_config(da, port_a, forward_to=port_b)
 
-            proc_b = subprocess.Popen([BINARY, str(conf_b)])
-            proc_a = subprocess.Popen([BINARY, str(conf_a)])
+            proc_b = subprocess.Popen([BINARY, str(conf_b)], **_POPEN_FLAGS)
+            proc_a = subprocess.Popen([BINARY, str(conf_a)], **_POPEN_FLAGS)
             try:
                 self.assertTrue(wait_for_port(port_b), "server B did not start")
                 self.assertTrue(wait_for_port(port_a), "server A did not start")
@@ -272,7 +282,7 @@ class TestMultiWorker(unittest.TestCase):
             port = free_port()
             conf = write_config(d, port, workers=4)
 
-            proc = subprocess.Popen([BINARY, str(conf)])
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
             try:
                 self.assertTrue(wait_for_port(port))
 

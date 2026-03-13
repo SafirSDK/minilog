@@ -22,6 +22,10 @@ pkgs.mkShell {
     # Useful dev tools
     gdb
     gh
+
+    # Container tools
+    docker
+    docker-compose
   ];
 
   shellHook = ''
