@@ -61,3 +61,38 @@ else()
         ../src/platform/service_linux.cpp
     )
 endif()
+
+add_boost_test(test_stress test_stress.cpp)
+target_sources(test_stress PRIVATE
+    ../src/config/config.cpp
+    ../src/parser/syslog_parser.cpp
+    ../src/output/log_file.cpp
+    ../src/output/output_manager.cpp
+    ../src/forwarder/forwarder.cpp
+    ../src/server/udp_server.cpp
+)
+if(WIN32)
+    target_sources(test_stress PRIVATE
+        ../src/platform/os_log_win.cpp
+        ../src/platform/service_win.cpp
+    )
+    target_link_libraries(test_stress PRIVATE ws2_32)
+else()
+    target_sources(test_stress PRIVATE
+        ../src/platform/os_log_linux.cpp
+        ../src/platform/service_linux.cpp
+    )
+endif()
+
+# Binary-level tests — require the minilog executable.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+    add_test(
+        NAME test_binary
+        COMMAND Python3::Interpreter
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_binary.py
+            $<TARGET_FILE:minilog>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(test_binary PROPERTIES TIMEOUT 120)
+endif()
