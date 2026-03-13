@@ -343,8 +343,19 @@ Ported from Python plus significantly extended:
 12. main.cpp wiring
 13. Inno Setup installer
 14. Dockerfile + docker-compose.yml + Docker CI job
-15. Remove Python implementation (`syslog-server.py`, `syslog-server.conf`, `tests/test_syslog_server.py`)
-16. Update README and write documentation:
+15. Stress & robustness tests:
+    - Flood: 10 000 messages as fast as possible from a single sender — verify line count matches, no corruption
+    - Concurrent senders: 8 threads sending simultaneously — no torn/interleaved lines
+    - Max-size datagrams: 65507-byte UDP payload — no crash, no buffer overrun
+    - Adversarial input: empty datagram, 1-byte, all-zero, all-0xFF, random binary — server must not crash
+    - Rotation under flood: tiny max_size + high message rate — no corruption, correct file count
+    - Forwarding unreachable: target host down — server keeps running, no hang
+16. libFuzzer target for the syslog parser (Linux/Clang only):
+    - Fuzz entry point over `parseSyslog()` with random + semi-valid corpus
+    - Goal: no crashes, no sanitizer findings
+    - Add `linux-fuzz` CMake preset and a CI job that runs the fuzzer for a fixed duration
+17. Remove Python implementation (`syslog-server.py`, `syslog-server.conf`, `tests/test_syslog_server.py`)
+18. Update README and write documentation:
     - Rewrite README.md for the C++ version (build instructions, configuration reference, output format, Windows service install/uninstall)
     - Write `syslog-server.conf.example` with all options documented and commented
     - Add `BUILDING.md`: how to build on Linux (nix-shell + CMake) and Windows (Conan + MSVC + CMake)

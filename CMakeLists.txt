@@ -59,7 +59,7 @@ target_link_libraries(minilog PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(minilog PRIVATE ws2_32)
+    target_link_libraries(minilog PRIVATE ws2_32 advapi32)
 endif()
 
 enable_testing()

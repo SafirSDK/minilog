@@ -13,13 +13,36 @@
  *
  ******************************************************************************/
 
-#include "os_log.hpp"
+#include "service.hpp"
+
+#include <boost/asio/signal_set.hpp>
 
 #include <csignal>
+#include <memory>
 
 namespace minilog
 {
 
-// TODO: implement SIGTERM/SIGINT handler and graceful shutdown wiring
+void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop)
+{
+    auto signals = std::make_shared<boost::asio::signal_set>(ioc, SIGTERM, SIGINT);
+    signals->async_wait(
+        [signals, onStop = std::move(onStop)](const boost::system::error_code& ec, int /*signum*/)
+        {
+            if (!ec)
+            {
+                onStop();
+            }
+        });
+}
+
+bool tryRunAsService(const std::function<int()>& /*serviceMain*/)
+{
+    return false;
+}
+
+void installService(const std::string& /*exePath*/, const std::string& /*configPath*/) {}
+
+void uninstallService() {}
 
 } // namespace minilog
