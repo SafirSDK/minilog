@@ -5,7 +5,7 @@
 
 > **Note:** This project is currently being rewritten from Python to C++. The Python
 > implementation (`syslog-server.py`) remains fully functional in the meantime. The C++ rewrite
-> will replace it once complete — see the [implementation plan](.claude/plans/mossy-splashing-dewdrop.md)
+> will replace it once complete — see the [implementation plan](plan.md)
 > for current status.
 
 ---
