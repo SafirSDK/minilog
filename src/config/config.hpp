@@ -1,17 +1,17 @@
 /******************************************************************************
-*
-* Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
-*
-* Created by: Lars Hagström / lars@foldspace.nu
-*
-*******************************************************************************
-*
-* This file is part of minilog.
-*
-* minilog is released under the MIT License. See the LICENSE file in
-* the project root for full license information.
-*
-******************************************************************************/
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is released under the MIT License. See the LICENSE file in
+ * the project root for full license information.
+ *
+ ******************************************************************************/
 
 #pragma once
 #include <cstdint>
@@ -36,7 +36,7 @@ struct ForwardingConfig
 {
     bool enabled = false;
     std::string host;
-    uint16_t port             = 514;
+    uint16_t port           = 514;
     uint32_t maxMessageSize = 2048;
     std::vector<int> facilities; // empty = all
 };

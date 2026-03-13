@@ -1,17 +1,17 @@
 /******************************************************************************
-*
-* Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
-*
-* Created by: Lars Hagström / lars@foldspace.nu
-*
-*******************************************************************************
-*
-* This file is part of minilog.
-*
-* minilog is released under the MIT License. See the LICENSE file in
-* the project root for full license information.
-*
-******************************************************************************/
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is released under the MIT License. See the LICENSE file in
+ * the project root for full license information.
+ *
+ ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_integration
 #include "output/output_manager.hpp"
@@ -47,10 +47,7 @@ struct Fixture
         fs::create_directories(dir);
     }
 
-    ~Fixture()
-    {
-        fs::remove_all(dir);
-    }
+    ~Fixture() { fs::remove_all(dir); }
 
     Config makeConfig(bool textOut = true, bool jsonlOut = true, bool inclMalformed = true) const
     {
@@ -136,12 +133,12 @@ BOOST_AUTO_TEST_CASE(jsonl_fields_correct)
 
     auto obj = parseJsonl(readAll(dir / "syslog.jsonl"));
 
-    BOOST_CHECK_EQUAL(obj["proto"].as_string(),    "RFC3164");
-    BOOST_CHECK_EQUAL(obj["src"].as_string(),      "127.0.0.1");
+    BOOST_CHECK_EQUAL(obj["proto"].as_string(), "RFC3164");
+    BOOST_CHECK_EQUAL(obj["src"].as_string(), "127.0.0.1");
     BOOST_CHECK_EQUAL(obj["hostname"].as_string(), "mymachine");
-    BOOST_CHECK_EQUAL(obj["app"].as_string(),      "su");
-    BOOST_CHECK_EQUAL(obj["pid"].as_string(),      "123");
-    BOOST_CHECK_EQUAL(obj["message"].as_string(),  "hello world");
+    BOOST_CHECK_EQUAL(obj["app"].as_string(), "su");
+    BOOST_CHECK_EQUAL(obj["pid"].as_string(), "123");
+    BOOST_CHECK_EQUAL(obj["message"].as_string(), "hello world");
     BOOST_CHECK(obj["msgid"].is_null());
 }
 
@@ -159,8 +156,8 @@ BOOST_AUTO_TEST_CASE(jsonl_rcv_is_iso8601_utc)
 
     // YYYY-MM-DDTHH:MM:SSZ
     BOOST_REQUIRE_EQUAL(rcv.size(), 20u);
-    BOOST_CHECK_EQUAL(rcv[4],  '-');
-    BOOST_CHECK_EQUAL(rcv[7],  '-');
+    BOOST_CHECK_EQUAL(rcv[4], '-');
+    BOOST_CHECK_EQUAL(rcv[7], '-');
     BOOST_CHECK_EQUAL(rcv[10], 'T');
     BOOST_CHECK_EQUAL(rcv[13], ':');
     BOOST_CHECK_EQUAL(rcv[16], ':');
@@ -207,17 +204,16 @@ BOOST_AUTO_TEST_CASE(jsonl_fields_correct)
     UdpServer server(ioc, cfg, om, nullptr);
     server.start();
 
-    sendUdp("<34>1 2026-03-12T14:30:22Z mymachine su 123 ID47 - hello world",
-            server.localPort());
+    sendUdp("<34>1 2026-03-12T14:30:22Z mymachine su 123 ID47 - hello world", server.localPort());
     drain(server, om);
 
     auto obj = parseJsonl(readAll(dir / "syslog.jsonl"));
 
-    BOOST_CHECK_EQUAL(obj["proto"].as_string(),    "RFC5424");
+    BOOST_CHECK_EQUAL(obj["proto"].as_string(), "RFC5424");
     BOOST_CHECK_EQUAL(obj["hostname"].as_string(), "mymachine");
-    BOOST_CHECK_EQUAL(obj["app"].as_string(),      "su");
-    BOOST_CHECK_EQUAL(obj["pid"].as_string(),      "123");
-    BOOST_CHECK_EQUAL(obj["msgid"].as_string(),    "ID47");
+    BOOST_CHECK_EQUAL(obj["app"].as_string(), "su");
+    BOOST_CHECK_EQUAL(obj["pid"].as_string(), "123");
+    BOOST_CHECK_EQUAL(obj["msgid"].as_string(), "ID47");
     // Parser keeps STRUCTURED-DATA verbatim in message (status quo).
     // Nil SD "-" is included as a prefix before the MSG text.
     BOOST_CHECK_EQUAL(obj["message"].as_string(), "- hello world");
@@ -298,7 +294,7 @@ BOOST_AUTO_TEST_CASE(all_messages_written_before_stop)
     }
     drain(server, om);
 
-    int lineCount         = 0;
+    int lineCount = 0;
     for (char c : readAll(dir / "syslog.log"))
     {
         if (c == '\n')

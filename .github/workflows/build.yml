@@ -7,6 +7,23 @@ on:
     branches: [ master ]
 
 jobs:
+  # ─── clang-format check ─────────────────────────────────────────────────────
+  clang-format:
+    name: clang-format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang-format
+
+      - name: Check formatting
+        run: |
+          find src tests -name "*.cpp" -o -name "*.hpp" \
+            | xargs clang-format --dry-run --Werror
+
   # ─── File header check ───────────────────────────────────────────────────────
   check-headers:
     name: File header check
@@ -89,6 +106,27 @@ jobs:
         with:
           files: coverage.info
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ─── Linux (Clang, TSan) ────────────────────────────────────────────────────
+  linux-tsan:
+    name: Linux (Clang TSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build clang libboost-all-dev
+
+      - name: Configure
+        run: cmake --preset linux-tsan
+
+      - name: Build
+        run: cmake --build --preset linux-tsan
+
+      - name: Test
+        run: ctest --preset linux-tsan
 
   # ─── Windows (MSVC) ─────────────────────────────────────────────────────────
   windows:

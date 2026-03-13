@@ -1,17 +1,17 @@
 /******************************************************************************
-*
-* Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
-*
-* Created by: Lars Hagström / lars@foldspace.nu
-*
-*******************************************************************************
-*
-* This file is part of minilog.
-*
-* minilog is released under the MIT License. See the LICENSE file in
-* the project root for full license information.
-*
-******************************************************************************/
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is released under the MIT License. See the LICENSE file in
+ * the project root for full license information.
+ *
+ ******************************************************************************/
 
 #pragma once
 #include <optional>
@@ -30,7 +30,7 @@ enum class Protocol
 struct SyslogMessage
 {
     Protocol protocol = Protocol::Unknown;
-    std::string raw;    // original datagram bytes (as string)
+    std::string raw;   // original datagram bytes (as string)
     std::string srcIp; // sender IP address
 
     // PRI

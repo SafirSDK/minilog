@@ -1,17 +1,17 @@
 /******************************************************************************
-*
-* Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
-*
-* Created by: Lars Hagström / lars@foldspace.nu
-*
-*******************************************************************************
-*
-* This file is part of minilog.
-*
-* minilog is released under the MIT License. See the LICENSE file in
-* the project root for full license information.
-*
-******************************************************************************/
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is released under the MIT License. See the LICENSE file in
+ * the project root for full license information.
+ *
+ ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_output
 #include "output/log_file.hpp"
@@ -45,10 +45,7 @@ struct Fixture
         fs::create_directories(dir);
     }
 
-    ~Fixture()
-    {
-        fs::remove_all(dir);
-    }
+    ~Fixture() { fs::remove_all(dir); }
 
     // Post a write and drain the ioc so the handler completes before returning.
     // restart() is required because poll() marks the ioc stopped when it empties.
@@ -65,7 +62,8 @@ struct Fixture
         return {std::istreambuf_iterator<char>(f), {}};
     }
 
-    SyslogMessage rfc3164Msg(const std::string& raw = "<34>Oct 11 22:14:15 mymachine su[123]: hello") const
+    SyslogMessage
+    rfc3164Msg(const std::string& raw = "<34>Oct 11 22:14:15 mymachine su[123]: hello") const
     {
         SyslogMessage msg;
         msg.raw          = raw;
@@ -100,7 +98,7 @@ BOOST_FIXTURE_TEST_SUITE(text_file, Fixture)
 BOOST_AUTO_TEST_CASE(single_write_exact_bytes)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
+    cfg.textFile         = (dir / "syslog.log").string();
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -112,7 +110,7 @@ BOOST_AUTO_TEST_CASE(single_write_exact_bytes)
 BOOST_AUTO_TEST_CASE(multiple_writes_appended)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
+    cfg.textFile         = (dir / "syslog.log").string();
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -131,7 +129,7 @@ BOOST_FIXTURE_TEST_SUITE(jsonl_file, Fixture)
 BOOST_AUTO_TEST_CASE(single_write_valid_json)
 {
     OutputConfig cfg;
-    cfg.jsonlFile       = (dir / "syslog.jsonl").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -144,13 +142,13 @@ BOOST_AUTO_TEST_CASE(single_write_valid_json)
     // Strip trailing newline before parsing.
     auto obj = bj::parse(std::string(content.begin(), content.end() - 1)).as_object();
 
-    BOOST_CHECK_EQUAL(obj["src"].as_string(),      "192.168.1.50");
-    BOOST_CHECK_EQUAL(obj["proto"].as_string(),    "RFC3164");
+    BOOST_CHECK_EQUAL(obj["src"].as_string(), "192.168.1.50");
+    BOOST_CHECK_EQUAL(obj["proto"].as_string(), "RFC3164");
     BOOST_CHECK_EQUAL(obj["facility"].as_string(), "daemon");
     BOOST_CHECK_EQUAL(obj["severity"].as_string(), "NOTICE");
     BOOST_CHECK_EQUAL(obj["hostname"].as_string(), "mymachine");
-    BOOST_CHECK_EQUAL(obj["app"].as_string(),      "su");
-    BOOST_CHECK_EQUAL(obj["pid"].as_string(),      "123");
+    BOOST_CHECK_EQUAL(obj["app"].as_string(), "su");
+    BOOST_CHECK_EQUAL(obj["pid"].as_string(), "123");
     BOOST_CHECK(obj["msgid"].is_null());
     BOOST_CHECK_EQUAL(obj["message"].as_string(), "hello");
     BOOST_CHECK(!obj["rcv"].as_string().empty());
@@ -159,7 +157,7 @@ BOOST_AUTO_TEST_CASE(single_write_valid_json)
 BOOST_AUTO_TEST_CASE(rfc5424_msgid_present)
 {
     OutputConfig cfg;
-    cfg.jsonlFile       = (dir / "syslog.jsonl").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
     cfg.includeMalformed = true;
 
     SyslogMessage msg;
@@ -187,7 +185,7 @@ BOOST_AUTO_TEST_CASE(rfc5424_msgid_present)
 BOOST_AUTO_TEST_CASE(unknown_protocol_nulls)
 {
     OutputConfig cfg;
-    cfg.jsonlFile       = (dir / "syslog.jsonl").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -215,7 +213,7 @@ BOOST_FIXTURE_TEST_SUITE(malformed_filter, Fixture)
 BOOST_AUTO_TEST_CASE(include_malformed_false_skips_unknown)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
+    cfg.textFile         = (dir / "syslog.log").string();
     cfg.includeMalformed = false;
 
     LogFile lf(ioc, cfg);
@@ -228,7 +226,7 @@ BOOST_AUTO_TEST_CASE(include_malformed_false_skips_unknown)
 BOOST_AUTO_TEST_CASE(include_malformed_false_passes_known)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
+    cfg.textFile         = (dir / "syslog.log").string();
     cfg.includeMalformed = false;
 
     LogFile lf(ioc, cfg);
@@ -240,7 +238,7 @@ BOOST_AUTO_TEST_CASE(include_malformed_false_passes_known)
 BOOST_AUTO_TEST_CASE(include_malformed_true_keeps_unknown)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
+    cfg.textFile         = (dir / "syslog.log").string();
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -258,9 +256,9 @@ BOOST_FIXTURE_TEST_SUITE(rotation, Fixture)
 BOOST_AUTO_TEST_CASE(text_file_rotates_on_size)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
-    cfg.maxSize         = 1; // trigger after every write
-    cfg.maxFiles        = 0; // unlimited
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 1; // trigger after every write
+    cfg.maxFiles         = 0; // unlimited
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -275,10 +273,10 @@ BOOST_AUTO_TEST_CASE(text_file_rotates_on_size)
 BOOST_AUTO_TEST_CASE(both_files_rotate_together)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
-    cfg.jsonlFile       = (dir / "syslog.jsonl").string();
-    cfg.maxSize         = 1;
-    cfg.maxFiles        = 0;
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 0;
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -292,9 +290,9 @@ BOOST_AUTO_TEST_CASE(both_files_rotate_together)
 BOOST_AUTO_TEST_CASE(rotation_numbering_shifts)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
-    cfg.maxSize         = 1;
-    cfg.maxFiles        = 0;
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 0;
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -308,16 +306,16 @@ BOOST_AUTO_TEST_CASE(rotation_numbering_shifts)
     //   current = third write's content ("C\n")
     BOOST_CHECK_EQUAL(readAll(dir / "syslog.2.log"), "A\n");
     BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "B\n");
-    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"),   "C\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), "C\n");
     BOOST_CHECK(!fs::exists(dir / "syslog.3.log"));
 }
 
 BOOST_AUTO_TEST_CASE(max_files_deletes_oldest)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
-    cfg.maxSize         = 1;
-    cfg.maxFiles        = 3;
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 3;
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -336,9 +334,9 @@ BOOST_AUTO_TEST_CASE(max_files_deletes_oldest)
 BOOST_AUTO_TEST_CASE(max_files_zero_keeps_all)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
-    cfg.maxSize         = 1;
-    cfg.maxFiles        = 0; // unlimited
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 0; // unlimited
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -361,7 +359,7 @@ BOOST_FIXTURE_TEST_SUITE(edge_cases, Fixture)
 BOOST_AUTO_TEST_CASE(no_crash_on_missing_directory)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "nonexistent" / "syslog.log").string();
+    cfg.textFile         = (dir / "nonexistent" / "syslog.log").string();
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -373,8 +371,8 @@ BOOST_AUTO_TEST_CASE(no_crash_on_missing_directory)
 BOOST_AUTO_TEST_CASE(max_size_zero_never_rotates)
 {
     OutputConfig cfg;
-    cfg.textFile        = (dir / "syslog.log").string();
-    cfg.maxSize         = 0; // unlimited
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 0; // unlimited
     cfg.includeMalformed = true;
 
     LogFile lf(ioc, cfg);
@@ -403,22 +401,22 @@ Config makeRoutingConfig(const fs::path& base)
     Config cfg;
 
     OutputConfig mainOut;
-    mainOut.name            = "main";
-    mainOut.textFile        = (base / "main.log").string();
+    mainOut.name             = "main";
+    mainOut.textFile         = (base / "main.log").string();
     mainOut.includeMalformed = true;
     // facilities empty = wildcard
 
     OutputConfig authOut;
-    authOut.name            = "auth";
-    authOut.textFile        = (base / "auth.log").string();
+    authOut.name             = "auth";
+    authOut.textFile         = (base / "auth.log").string();
     authOut.includeMalformed = true;
-    authOut.facilities      = {4, 10}; // auth, authpriv
+    authOut.facilities       = {4, 10}; // auth, authpriv
 
     OutputConfig mailOut;
-    mailOut.name            = "mail";
-    mailOut.textFile        = (base / "mail.log").string();
+    mailOut.name             = "mail";
+    mailOut.textFile         = (base / "mail.log").string();
     mailOut.includeMalformed = true;
-    mailOut.facilities      = {2}; // mail
+    mailOut.facilities       = {2}; // mail
 
     cfg.outputs = {mainOut, authOut, mailOut};
     return cfg;

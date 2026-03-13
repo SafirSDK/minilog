@@ -1,17 +1,17 @@
 /******************************************************************************
-*
-* Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
-*
-* Created by: Lars Hagström / lars@foldspace.nu
-*
-*******************************************************************************
-*
-* This file is part of minilog.
-*
-* minilog is released under the MIT License. See the LICENSE file in
-* the project root for full license information.
-*
-******************************************************************************/
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is released under the MIT License. See the LICENSE file in
+ * the project root for full license information.
+ *
+ ******************************************************************************/
 
 #include "log_file.hpp"
 
@@ -58,16 +58,14 @@ std::string toJsonlRecord(const SyslogMessage& msg, const std::string& rcv)
     namespace bj = boost::json;
 
     auto optStr = [](const std::optional<std::string>& o) -> bj::value
-    {
-        return o ? bj::value(*o) : bj::value(nullptr);
-    };
+    { return o ? bj::value(*o) : bj::value(nullptr); };
 
     bj::object obj;
     obj["rcv"]      = rcv;
     obj["src"]      = msg.srcIp;
-    obj["proto"]    = (msg.protocol == Protocol::RFC3164) ? "RFC3164"
-                    : (msg.protocol == Protocol::RFC5424) ? "RFC5424"
-                    : "UNKNOWN";
+    obj["proto"]    = (msg.protocol == Protocol::RFC3164)   ? "RFC3164"
+                      : (msg.protocol == Protocol::RFC5424) ? "RFC5424"
+                                                            : "UNKNOWN";
     obj["facility"] = optStr(msg.facilityName);
     obj["severity"] = optStr(msg.severityName);
     obj["hostname"] = optStr(msg.hostname);

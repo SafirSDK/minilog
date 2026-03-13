@@ -1,17 +1,17 @@
 /******************************************************************************
-*
-* Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
-*
-* Created by: Lars Hagström / lars@foldspace.nu
-*
-*******************************************************************************
-*
-* This file is part of minilog.
-*
-* minilog is released under the MIT License. See the LICENSE file in
-* the project root for full license information.
-*
-******************************************************************************/
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is released under the MIT License. See the LICENSE file in
+ * the project root for full license information.
+ *
+ ******************************************************************************/
 
 #include "udp_server.hpp"
 
@@ -33,7 +33,7 @@ UdpServer::UdpServer(boost::asio::io_context& ioc,
 
 void UdpServer::start()
 {
-    using udp = boost::asio::ip::udp;
+    using udp          = boost::asio::ip::udp;
     const auto address = boost::asio::ip::make_address(m_cfg.host);
     const udp::endpoint ep(address, m_cfg.udpPort);
 

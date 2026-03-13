@@ -1,17 +1,17 @@
 /******************************************************************************
-*
-* Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
-*
-* Created by: Lars Hagström / lars@foldspace.nu
-*
-*******************************************************************************
-*
-* This file is part of minilog.
-*
-* minilog is released under the MIT License. See the LICENSE file in
-* the project root for full license information.
-*
-******************************************************************************/
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is released under the MIT License. See the LICENSE file in
+ * the project root for full license information.
+ *
+ ******************************************************************************/
 
 #include "syslog_parser.hpp"
 
@@ -174,8 +174,7 @@ std::optional<std::string> parse3164Timestamp(std::string_view& sv)
 }
 
 // Parse RFC3164 tag (e.g. "app[pid]:") and advance sv to message body.
-std::pair<std::optional<std::string>, std::optional<std::string>>
-parse3164Tag(std::string_view& sv)
+std::pair<std::optional<std::string>, std::optional<std::string>> parse3164Tag(std::string_view& sv)
 {
     const auto colon = sv.find(':');
     std::string_view tagPart;
