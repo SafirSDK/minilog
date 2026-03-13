@@ -45,8 +45,8 @@
     },
     {
       "name": "windows-release",
-      "displayName": "Windows Release (MSVC)",
-      "generator": "Visual Studio 17 2022",
+      "displayName": "Windows Release (MSVC + Ninja)",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/windows-release",
       "toolchainFile": "${sourceDir}/build/windows-release/conan_toolchain.cmake",
       "cacheVariables": {
@@ -73,8 +73,7 @@
     },
     {
       "name": "windows-release",
-      "configurePreset": "windows-release",
-      "configuration": "Release"
+      "configurePreset": "windows-release"
     }
   ],
   "testPresets": [
@@ -101,7 +100,6 @@
     {
       "name": "windows-release",
       "configurePreset": "windows-release",
-      "configuration": "Release",
       "output": { "outputOnFailure": true }
     }
   ]

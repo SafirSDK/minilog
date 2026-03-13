@@ -69,12 +69,18 @@ jobs:
           key: conan-windows-${{ hashFiles('conanfile.py') }}
           restore-keys: conan-windows-
 
+      - name: Install Ninja
+        run: choco install ninja --no-progress
+
       - name: Conan install
         run: |
           conan install . `
             --output-folder=build/windows-release `
             --build=missing `
             --settings=build_type=Release
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure
         run: cmake --preset windows-release
