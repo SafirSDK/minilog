@@ -43,7 +43,6 @@ void UdpServer::start()
     try
     {
         m_socket.open(ep.protocol());
-        m_socket.set_option(boost::asio::socket_base::reuse_address(true));
         m_socket.bind(ep);
     }
     catch (const boost::system::system_error& e)
