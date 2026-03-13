@@ -17,6 +17,10 @@
 #include "service.hpp"
 
 #ifdef _WIN32
+#include <boost/asio/post.hpp>
+#include <boost/asio/signal_set.hpp>
+
+#include <csignal>
 #include <stdexcept>
 #include <string>
 #include <thread>
