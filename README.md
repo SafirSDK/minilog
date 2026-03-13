@@ -1,5 +1,15 @@
 # minilog
 
+[![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
+[![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/master/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
+
+> **Note:** This project is currently being rewritten from Python to C++. The Python
+> implementation (`syslog-server.py`) remains fully functional in the meantime. The C++ rewrite
+> will replace it once complete — see the [implementation plan](.claude/plans/mossy-splashing-dewdrop.md)
+> for current status.
+
+---
+
 A small, dependency-free, UDP-only syslog listener that understands RFC3164 and RFC5424 message formats (transport RFC5426). It supports regex-based exclusion filters and can write to stdout and/or a file. Intended for development and testing; not production-hardened.
 
 ## Features
