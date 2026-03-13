@@ -1,0 +1,35 @@
+#include "os_log.hpp"
+#include <iostream>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace minilog {
+
+void os_log_error(const std::string& message)
+{
+#ifdef _WIN32
+    HANDLE h = RegisterEventSourceA(nullptr, "minilog");
+    if (h) {
+        const char* msg = message.c_str();
+        ReportEventA(h, EVENTLOG_ERROR_TYPE, 0, 0, nullptr, 1, 0, &msg, nullptr);
+        DeregisterEventSource(h);
+    }
+#endif
+    std::cerr << "[ERROR] " << message << "\n";
+}
+
+void os_log_info(const std::string& message)
+{
+#ifdef _WIN32
+    HANDLE h = RegisterEventSourceA(nullptr, "minilog");
+    if (h) {
+        const char* msg = message.c_str();
+        ReportEventA(h, EVENTLOG_INFORMATION_TYPE, 0, 0, nullptr, 1, 0, &msg, nullptr);
+        DeregisterEventSource(h);
+    }
+#endif
+    std::cerr << "[INFO] " << message << "\n";
+}
+
+} // namespace minilog
