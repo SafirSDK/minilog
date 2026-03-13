@@ -43,6 +43,13 @@ void UdpServer::start()
     try
     {
         m_socket.open(ep.protocol());
+#ifdef _WIN32
+        // Windows allows UDP port-sharing by default; SO_EXCLUSIVEADDRUSE
+        // prevents any other process from binding the same port.
+        const BOOL exclusive = TRUE;
+        setsockopt(m_socket.native_handle(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                   reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+#endif
         m_socket.bind(ep);
     }
     catch (const boost::system::system_error& e)
