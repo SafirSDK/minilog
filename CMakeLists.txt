@@ -7,6 +7,12 @@ project(minilog VERSION 0.1.0 LANGUAGES CXX)
 set(MINILOG_STRESS_MULTIPLIER "100" CACHE STRING
     "Stress test scale factor: flood = 100×N, concurrent = 10×N messages per thread")
 
+# When ON, the soak test suites are compiled in and count-sensitive assertions
+# in the flood/concurrent tests are replaced by a fixed soak window.  Intended
+# for the extended sanitizer presets where intentional UDP overload is expected.
+set(MINILOG_STRESS_LOSSY "0" CACHE STRING
+    "Set to 1 to enable lossy soak tests (extended ASan/TSan presets)")
+
 cmake_policy(SET CMP0167 NEW)
 
 set(CMAKE_CXX_STANDARD 20)

@@ -64,7 +64,8 @@ endif()
 
 add_boost_test(test_stress test_stress.cpp)
 target_compile_definitions(test_stress PRIVATE
-    MINILOG_STRESS_MULTIPLIER=${MINILOG_STRESS_MULTIPLIER})
+    MINILOG_STRESS_MULTIPLIER=${MINILOG_STRESS_MULTIPLIER}
+    MINILOG_STRESS_LOSSY=${MINILOG_STRESS_LOSSY})
 target_sources(test_stress PRIVATE
     ../src/config/config.cpp
     ../src/parser/syslog_parser.cpp

@@ -341,6 +341,117 @@ BOOST_AUTO_TEST_CASE(correct_file_count_after_flood)
 
 BOOST_AUTO_TEST_SUITE_END()
 
+#if MINILOG_STRESS_LOSSY
+
+// ─── Soak tests (extended / lossy mode only) ─────────────────────────────────
+// Compiled only when MINILOG_STRESS_LOSSY=1 (the linux-*-extended presets).
+// Each test fires a large burst via a single reused socket (fast sender),
+// then soaks for a fixed window while sanitizers observe concurrent activity.
+// Message loss is expected and not checked.
+
+namespace
+{
+
+constexpr std::chrono::seconds SOAK_DURATION{10};
+
+// Send n datagrams on a single reused socket.  Creating a new io_context and
+// socket per datagram (as sendUdp() does) is too slow for high-volume soaking
+// because ASan/TSan instrument every allocation in the constructor.
+void sendUdpBatch(const std::string& prefix, int n, uint16_t port)
+{
+    boost::asio::io_context senderIoc;
+    boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
+    const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), port);
+    for (int i = 0; i < n; ++i)
+    {
+        const std::string msg = prefix + std::to_string(i);
+        sock.send_to(boost::asio::buffer(msg), ep);
+    }
+}
+
+} // namespace
+
+BOOST_FIXTURE_TEST_SUITE(soak_flood, Fixture)
+
+BOOST_AUTO_TEST_CASE(flood_no_crash)
+{
+    auto cfg = makeConfig(true, false);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+    const uint16_t port = server.localPort();
+
+    auto ioThreads = startIoc();
+
+    // 2000×N intentionally saturates the kernel receive buffer; the server
+    // stays busy processing from it throughout the full soak window.
+    constexpr int N = 2000 * MINILOG_STRESS_MULTIPLIER;
+    sendUdpBatch("<34>Oct 11 22:14:15 host app[1]: soak flood ", N, port);
+
+    std::this_thread::sleep_for(SOAK_DURATION);
+    shutdown(server, om, ioThreads);
+    // No count assertion — message loss is expected under overload.
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(soak_concurrent, Fixture)
+
+BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
+{
+    auto cfg = makeConfig(true, false);
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+    const uint16_t port = server.localPort();
+
+    auto ioThreads = startIoc(4);
+
+    constexpr int N_THREADS    = 8;
+    constexpr int N_PER_THREAD = 250 * MINILOG_STRESS_MULTIPLIER;
+
+    std::vector<std::thread> senders;
+    senders.reserve(N_THREADS);
+    for (int t = 0; t < N_THREADS; ++t)
+    {
+        senders.emplace_back(
+            [t, port]()
+            {
+                boost::asio::io_context senderIoc;
+                boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
+                const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"),
+                                                        port);
+                for (int i = 0; i < N_PER_THREAD; ++i)
+                {
+                    const std::string msg = "<34>Oct 11 22:14:15 host app[" + std::to_string(t) +
+                                            "]: t" + std::to_string(t) + "m" + std::to_string(i);
+                    sock.send_to(boost::asio::buffer(msg), ep);
+                }
+            });
+    }
+    for (auto& t : senders)
+    {
+        t.join();
+    }
+
+    std::this_thread::sleep_for(SOAK_DURATION);
+    shutdown(server, om, ioThreads);
+
+    // Every line that did arrive must be structurally complete.
+    std::ifstream f(dir / "syslog.log");
+    std::string line;
+    while (std::getline(f, line))
+    {
+        const auto pos = line.rfind(": t");
+        BOOST_CHECK_MESSAGE(pos != std::string::npos, "torn line: " << line);
+    }
+    // No count assertion.
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+#endif // MINILOG_STRESS_LOSSY
+
 // ─── Forwarding to unreachable host ──────────────────────────────────────────
 
 BOOST_FIXTURE_TEST_SUITE(forwarding_unreachable, Fixture)

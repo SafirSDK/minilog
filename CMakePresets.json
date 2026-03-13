@@ -58,6 +58,34 @@
       }
     },
     {
+      "name": "linux-asan-extended",
+      "displayName": "Linux ASan+UBSan extended soak (Clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-asan-extended",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1"
+      }
+    },
+    {
+      "name": "linux-tsan-extended",
+      "displayName": "Linux TSan extended soak (Clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-tsan-extended",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1"
+      }
+    },
+    {
       "name": "windows-release",
       "displayName": "Windows RelWithDebInfo (MSVC + Ninja)",
       "generator": "Ninja",
@@ -90,6 +118,14 @@
       "configurePreset": "linux-coverage"
     },
     {
+      "name": "linux-asan-extended",
+      "configurePreset": "linux-asan-extended"
+    },
+    {
+      "name": "linux-tsan-extended",
+      "configurePreset": "linux-tsan-extended"
+    },
+    {
       "name": "windows-release",
       "configurePreset": "windows-release"
     }
@@ -118,6 +154,16 @@
     {
       "name": "linux-coverage",
       "configurePreset": "linux-coverage",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-asan-extended",
+      "configurePreset": "linux-asan-extended",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-tsan-extended",
+      "configurePreset": "linux-tsan-extended",
       "output": { "outputOnFailure": true }
     },
     {
