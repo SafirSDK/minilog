@@ -44,6 +44,17 @@
       }
     },
     {
+      "name": "linux-coverage",
+      "displayName": "Linux Coverage (GCC)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-coverage",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "--coverage -fno-inline",
+        "CMAKE_EXE_LINKER_FLAGS": "--coverage"
+      }
+    },
+    {
       "name": "windows-release",
       "displayName": "Windows RelWithDebInfo (MSVC + Ninja)",
       "generator": "Ninja",
@@ -72,6 +83,10 @@
       "configurePreset": "linux-tsan"
     },
     {
+      "name": "linux-coverage",
+      "configurePreset": "linux-coverage"
+    },
+    {
       "name": "windows-release",
       "configurePreset": "windows-release"
     }
@@ -95,6 +110,11 @@
     {
       "name": "linux-tsan",
       "configurePreset": "linux-tsan",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-coverage",
+      "configurePreset": "linux-coverage",
       "output": { "outputOnFailure": true }
     },
     {
