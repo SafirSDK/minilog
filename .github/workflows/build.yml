@@ -7,6 +7,14 @@ on:
     branches: [ master ]
 
 jobs:
+  # ─── File header check ───────────────────────────────────────────────────────
+  check-headers:
+    name: File header check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: python3 scripts/check_headers.py
+
   # ─── Linux (GCC) ────────────────────────────────────────────────────────────
   linux:
     name: Linux (GCC)
