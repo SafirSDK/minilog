@@ -83,7 +83,7 @@ The config path is stored in the service registry entry so the same path is used
 
 minilog reads a single INI file passed on the command line. There is no config reload; restart the process to pick up changes.
 
-See [`syslog-server.conf.example`](syslog-server.conf.example) for a fully commented example.
+See [`minilog.conf.example`](minilog.conf.example) for a fully commented example.
 
 ### `[server]`
 
@@ -163,7 +163,7 @@ Build the image:
 docker build -t minilog .
 ```
 
-Run with docker-compose (mounts config from `./conf/syslog-server.conf`, writes logs to `./logs/`):
+Run with docker-compose (mounts config from `./conf/minilog.conf`, writes logs to `./logs/`):
 
 ```
 docker compose up
@@ -182,7 +182,7 @@ Description=minilog syslog server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/minilog /etc/minilog/syslog-server.conf
+ExecStart=/usr/local/bin/minilog /etc/minilog/minilog.conf
 Restart=on-failure
 User=minilog
 

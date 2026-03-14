@@ -213,7 +213,7 @@ Triggered before each write if either `text_file` or `jsonl_file` exceeds `max_s
 
 ## Inno Setup Installer
 
-- Packages the `.exe` and a default `syslog-server.conf`
+- Packages the `.exe` and a default `minilog.conf`
 - Installs to `{pf}\MiniLog`
 - Registers and starts Windows service on install
 - Stops and removes service on uninstall
@@ -248,9 +248,9 @@ Conan with `conanfile.py`, binary caching enabled for fast CI.
 Multi-stage `Dockerfile` at repo root:
 - **Build stage**: `debian:bookworm` + GCC + CMake + Ninja + libboost-all-dev; builds with `linux-release` preset
 - **Runtime stage**: `debian:bookworm-slim`; copies only the `minilog` binary; runs as a non-root user
-- Exposes UDP port 514; config file mounted via volume at `/etc/minilog/syslog-server.conf`
+- Exposes UDP port 514; config file mounted via volume at `/etc/minilog/minilog.conf`
 - CI (`build.yml`) adds a `docker` job: `docker build .` to verify the image builds on every push (no push to registry)
-- `docker-compose.yml` for local development: mounts `./conf/syslog-server.conf` and `./logs/` volume
+- `docker-compose.yml` for local development: mounts `./conf/minilog.conf` and `./logs/` volume
 
 ---
 
@@ -342,7 +342,7 @@ Ported from Python plus significantly extended:
 11. Platform layer (OS log, Windows service, Linux signal handling)
 12. main.cpp wiring
 13. Inno Setup installer
-14. Remove Python implementation (`syslog-server.py`, `syslog-server.conf`, `tests/test_syslog_server.py`)
+14. Remove Python implementation (`syslog-server.py`, `minilog.conf`, `tests/test_syslog_server.py`)
 15. Stress, robustness, and binary-level tests:
 
     Binary smoke tests (Python script — `tests/test_binary.py`; wired into CTest via `find_package(Python3)`; binary path passed as argv[1]):
@@ -376,11 +376,11 @@ Ported from Python plus significantly extended:
     - Add `linux-fuzz` CMake preset and a CI job that runs the fuzzer for a fixed duration
 19. Update README and write documentation:
     - Rewrite README.md for the C++ version (build instructions, configuration reference, output format, Windows service install/uninstall)
-    - Write `syslog-server.conf.example` with all options documented and commented
+    - Write `minilog.conf.example` with all options documented and commented
     - Add `BUILDING.md`: how to build on Linux (nix-shell + CMake) and Windows (Conan + MSVC + CMake)
     - Add `CHANGELOG.md` with initial release notes
     - Note in README: Linux deployment is intended to run under systemd (no PID file needed; systemd tracks the process itself)
-    - Document Docker usage: note that log paths in `syslog-server.conf` must match the volume mount (e.g. `/var/log/minilog/`) for `docker-compose.yml` to work correctly
+    - Document Docker usage: note that log paths in `minilog.conf` must match the volume mount (e.g. `/var/log/minilog/`) for `docker-compose.yml` to work correctly
 20. Code review:
     - Review all source files for correctness, style, and completeness against the requirements
     - Check error handling paths (bad config, bind failure, write failure, rotation errors)

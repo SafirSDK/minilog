@@ -23,5 +23,5 @@ USER minilog
 
 EXPOSE 514/udp
 
-# Config file must be provided via a bind mount at /etc/minilog/syslog-server.conf
-CMD ["/usr/local/bin/minilog", "/etc/minilog/syslog-server.conf"]
+# Config file must be provided via a bind mount at /etc/minilog/minilog.conf
+CMD ["/usr/local/bin/minilog", "/etc/minilog/minilog.conf"]

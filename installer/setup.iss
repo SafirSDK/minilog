@@ -8,7 +8,7 @@
 ;
 ; Defines accepted on the ISCC command line:
 ;   SourceDir   — directory containing minilog.exe and minilog.pdb
-;   ConfigDir   — directory containing the default syslog-server.conf
+;   ConfigDir   — directory containing the default minilog.conf
 ;   AppVersion  — version string, e.g. "0.1.0"
 ;   OutputDir   — where to write the installer .exe (default: SourceDir)
 
@@ -64,14 +64,14 @@ Source: "{#SourceDir}\minilog.pdb"; DestDir: "{app}"; Components: pdb; \
 
 ; Default configuration — only written if the file does not already exist,
 ; so upgrades never overwrite a user-modified config.
-Source: "{#ConfigDir}\syslog-server.conf"; \
+Source: "{#ConfigDir}\minilog.conf"; \
     DestDir: "{commonappdata}\MiniLog"; \
     Components: main; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Run]
 ; Register the Windows service, pointing it at the installed config.
 Filename: "{app}\minilog.exe"; \
-    Parameters: "--install ""{commonappdata}\MiniLog\syslog-server.conf"""; \
+    Parameters: "--install ""{commonappdata}\MiniLog\minilog.conf"""; \
     Flags: runhidden waituntilterminated; \
     StatusMsg: "Registering service..."
 
