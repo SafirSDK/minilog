@@ -77,7 +77,8 @@ void UdpServer::stop()
                       [this]()
                       {
                           boost::system::error_code ec;
-                          m_socket.close(ec); // NOLINT(bugprone-unused-return-value) — close(ec) returns void
+                          m_socket.close(
+                              ec); // NOLINT(bugprone-unused-return-value) — close(ec) returns void
                       });
 }
 

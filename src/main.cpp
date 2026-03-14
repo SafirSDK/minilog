@@ -98,7 +98,9 @@ int runServer(const std::string& configPath)
 
 } // namespace
 
-// NOLINTNEXTLINE(bugprone-exception-escape) — io_context ctor can theoretically throw service_already_exists, but only if the same service is registered twice, which never happens here.
+// NOLINTNEXTLINE(bugprone-exception-escape) — io_context ctor can theoretically throw
+// service_already_exists, but only if the same service is registered twice, which never happens
+// here.
 int main(int argc, char* argv[])
 {
     po::options_description desc("Options");
