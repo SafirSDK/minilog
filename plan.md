@@ -380,6 +380,7 @@ Ported from Python plus significantly extended:
     - Add `BUILDING.md`: how to build on Linux (nix-shell + CMake) and Windows (Conan + MSVC + CMake)
     - Add `CHANGELOG.md` with initial release notes
     - Note in README: Linux deployment is intended to run under systemd (no PID file needed; systemd tracks the process itself)
+    - Document Docker usage: note that log paths in `syslog-server.conf` must match the volume mount (e.g. `/var/log/minilog/`) for `docker-compose.yml` to work correctly
 20. Code review:
     - Review all source files for correctness, style, and completeness against the requirements
     - Check error handling paths (bad config, bind failure, write failure, rotation errors)
