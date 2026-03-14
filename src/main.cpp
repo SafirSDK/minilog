@@ -45,7 +45,7 @@ int runServer(const std::string& configPath)
     }
     catch (const std::exception& e)
     {
-        minilog::os_log_error(std::string("minilog: failed to load config: ") + e.what());
+        minilog::osLogError(std::string("minilog: failed to load config: ") + e.what());
         return EXIT_FAILURE;
     }
 
@@ -67,7 +67,7 @@ int runServer(const std::string& configPath)
     }
     catch (const std::exception& /*e*/)
     {
-        // os_log_error already called inside start(); just exit.
+        // osLogError already called inside start(); just exit.
         outputMgr.close();
         return EXIT_FAILURE;
     }
@@ -98,6 +98,7 @@ int runServer(const std::string& configPath)
 
 } // namespace
 
+// NOLINTNEXTLINE(bugprone-exception-escape) — io_context ctor can theoretically throw service_already_exists, but only if the same service is registered twice, which never happens here.
 int main(int argc, char* argv[])
 {
     po::options_description desc("Options");
@@ -141,7 +142,7 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            minilog::os_log_error(e.what());
+            minilog::osLogError(e.what());
             return EXIT_FAILURE;
         }
         return EXIT_SUCCESS;
@@ -164,7 +165,7 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& e)
         {
-            minilog::os_log_error(e.what());
+            minilog::osLogError(e.what());
             return EXIT_FAILURE;
         }
         return EXIT_SUCCESS;

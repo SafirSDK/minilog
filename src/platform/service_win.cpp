@@ -184,7 +184,7 @@ void installService(const std::string& exePath, const std::string& configPath)
         throw std::runtime_error("CreateService failed: " + std::to_string(GetLastError()));
     }
 
-    os_log_info(std::string("minilog service installed (") + binPath + ")");
+    osLogInfo(std::string("minilog service installed (") + binPath + ")");
     CloseServiceHandle(svc);
     CloseServiceHandle(scm);
 }
@@ -217,7 +217,7 @@ void uninstallService()
         throw std::runtime_error("DeleteService failed: " + std::to_string(err));
     }
 
-    os_log_info("minilog service uninstalled");
+    osLogInfo("minilog service uninstalled");
     CloseServiceHandle(svc);
     CloseServiceHandle(scm);
 }

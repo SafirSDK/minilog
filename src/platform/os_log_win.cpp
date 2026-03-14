@@ -23,7 +23,7 @@
 namespace minilog
 {
 
-void os_log_error(const std::string& message)
+void osLogError(const std::string& message)
 {
 #ifdef _WIN32
     HANDLE h = RegisterEventSourceA(nullptr, "minilog");
@@ -37,7 +37,7 @@ void os_log_error(const std::string& message)
     std::cerr << "[ERROR] " << message << "\n";
 }
 
-void os_log_info(const std::string& message)
+void osLogInfo(const std::string& message)
 {
 #ifdef _WIN32
     HANDLE h = RegisterEventSourceA(nullptr, "minilog");

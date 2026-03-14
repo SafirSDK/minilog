@@ -20,8 +20,8 @@
 namespace minilog
 {
 
-Forwarder::Forwarder(boost::asio::io_context& ioc, const ForwardingConfig& cfg)
-    : m_cfg(cfg), m_strand(boost::asio::make_strand(ioc)), m_socket(ioc)
+Forwarder::Forwarder(boost::asio::io_context& ioc, ForwardingConfig cfg)
+    : m_cfg(std::move(cfg)), m_strand(boost::asio::make_strand(ioc)), m_socket(ioc)
 {
     if (m_cfg.enabled)
     {

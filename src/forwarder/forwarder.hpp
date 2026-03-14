@@ -32,7 +32,7 @@ namespace minilog
 class Forwarder
 {
 public:
-    Forwarder(boost::asio::io_context& ioc, const ForwardingConfig& cfg);
+    Forwarder(boost::asio::io_context& ioc, ForwardingConfig cfg);
 
     // Dispatch a forward to this forwarder's strand (non-blocking for caller).
     void forward(const SyslogMessage& msg);

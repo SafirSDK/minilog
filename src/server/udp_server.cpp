@@ -64,7 +64,7 @@ void UdpServer::start()
     {
         const std::string msg =
             "minilog: failed to bind UDP port " + std::to_string(m_cfg.udpPort) + ": " + e.what();
-        os_log_error(msg);
+        osLogError(msg);
         throw std::runtime_error(msg);
     }
 
@@ -77,7 +77,7 @@ void UdpServer::stop()
                       [this]()
                       {
                           boost::system::error_code ec;
-                          m_socket.close(ec);
+                          m_socket.close(ec); // NOLINT(bugprone-unused-return-value) — close(ec) returns void
                       });
 }
 

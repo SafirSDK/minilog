@@ -40,7 +40,7 @@ public:
     void stop();
 
     // Returns the actual bound port (useful when udpPort=0 was requested).
-    uint16_t localPort() const;
+    [[nodiscard]] uint16_t localPort() const;
 
 private:
     void receive();

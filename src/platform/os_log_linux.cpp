@@ -21,13 +21,13 @@
 namespace minilog
 {
 
-void os_log_error(const std::string& message)
+void osLogError(const std::string& message)
 {
     syslog(LOG_ERR, "%s", message.c_str());
     std::cerr << "[ERROR] " << message << "\n";
 }
 
-void os_log_info(const std::string& message)
+void osLogInfo(const std::string& message)
 {
     syslog(LOG_INFO, "%s", message.c_str());
     std::cerr << "[INFO] " << message << "\n";
