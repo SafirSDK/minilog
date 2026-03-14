@@ -10,16 +10,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 failed = False
 for pattern in ("**/*.cpp", "**/*.hpp"):
-    for path in sorted((REPO_ROOT / "src").glob(pattern)):
-        header = path.read_text(encoding="utf-8", errors="replace")[:500]
-        if EXPECTED not in header:
-            print(f"MISSING HEADER: {path.relative_to(REPO_ROOT)}")
-            failed = True
-    for path in sorted((REPO_ROOT / "tests").glob(pattern)):
-        header = path.read_text(encoding="utf-8", errors="replace")[:500]
-        if EXPECTED not in header:
-            print(f"MISSING HEADER: {path.relative_to(REPO_ROOT)}")
-            failed = True
+    for directory in ("src", "tests", "fuzz"):
+        for path in sorted((REPO_ROOT / directory).glob(pattern)):
+            header = path.read_text(encoding="utf-8", errors="replace")[:500]
+            if EXPECTED not in header:
+                print(f"MISSING HEADER: {path.relative_to(REPO_ROOT)}")
+                failed = True
 
 if not failed:
     print("OK: all files have the required header.")

@@ -106,6 +106,18 @@ if(WIN32)
     endif()
 endif()
 
+# libFuzzer target (Clang only, enabled via linux-fuzz preset).
+option(MINILOG_FUZZ "Build libFuzzer fuzz_parser target" OFF)
+if(MINILOG_FUZZ)
+    add_executable(fuzz_parser
+        fuzz/fuzz_parser.cpp
+        src/parser/syslog_parser.cpp
+    )
+    target_include_directories(fuzz_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
+    target_link_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
+endif()
+
 # clang-tidy static analysis.
 # Run with: cmake --build <build-dir> --target clang-tidy-check
 find_program(RUN_CLANG_TIDY NAMES

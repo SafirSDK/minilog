@@ -98,6 +98,20 @@
       }
     },
     {
+      "name": "linux-fuzz",
+      "displayName": "Linux libFuzzer (Clang + ASan)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-fuzz",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,fuzzer-no-link -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address",
+        "MINILOG_FUZZ": "ON"
+      }
+    },
+    {
       "name": "windows-release",
       "displayName": "Windows RelWithDebInfo (MSVC + Ninja)",
       "generator": "Ninja",
@@ -140,6 +154,10 @@
     {
       "name": "linux-tsan-extended",
       "configurePreset": "linux-tsan-extended"
+    },
+    {
+      "name": "linux-fuzz",
+      "configurePreset": "linux-fuzz"
     },
     {
       "name": "windows-release",

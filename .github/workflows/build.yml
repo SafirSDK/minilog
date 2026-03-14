@@ -21,7 +21,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find src tests -name "*.cpp" -o -name "*.hpp" \
+          find src tests fuzz -name "*.cpp" -o -name "*.hpp" \
             | xargs clang-format --dry-run --Werror
 
   # ─── File header check ───────────────────────────────────────────────────────
@@ -170,6 +170,31 @@ jobs:
 
       - name: Test
         run: ctest --preset windows-release
+
+  # ─── Linux (Clang, libFuzzer) ────────────────────────────────────────────
+  linux-fuzz:
+    name: Linux (libFuzzer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build clang libboost-all-dev
+
+      - name: Configure
+        run: cmake --preset linux-fuzz
+
+      - name: Build
+        run: cmake --build --preset linux-fuzz --target fuzz_parser
+
+      - name: Fuzz (30 s)
+        run: |
+          ./build/linux-fuzz/fuzz_parser \
+            -max_total_time=30 \
+            -jobs=2 \
+            fuzz/corpus/
 
   # ─── Docker ──────────────────────────────────────────────────────────────────
   docker:
