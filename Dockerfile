@@ -1,5 +1,5 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM debian:bookworm AS build
+FROM debian:trixie AS build
 
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
@@ -13,7 +13,7 @@ RUN cmake --preset linux-docker && \
     cmake --build --preset linux-docker
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 RUN useradd --system --no-create-home minilog
 
