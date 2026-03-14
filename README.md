@@ -63,6 +63,61 @@ To build the installer (requires [Inno Setup](https://jrsoftware.org/isinfo.php)
 cmake --build --preset windows-release --target package
 ```
 
+## Development
+
+### Test suite overview
+
+All tests are driven by CTest. Run them with:
+
+```
+ctest --preset linux-debug --output-on-failure
+```
+
+The suite contains:
+
+| Target | What it covers |
+|--------|---------------|
+| `test_config` | INI config parsing, defaults, validation |
+| `test_parser` | RFC 3164, RFC 5424, and UNKNOWN datagram parsing |
+| `test_output` | File writing, rotation, facility filtering |
+| `test_forwarder` | UDP forwarding, truncation, facility filtering |
+| `test_integration` | Multi-output routing end-to-end |
+| `test_stress` | Concurrent senders, file rotation under load (soak) |
+| `test_binary` | Black-box test of the real binary (Python, via CTest) |
+
+### Sanitizer builds
+
+```
+cmake --preset linux-asan && cmake --build --preset linux-asan
+ctest --preset linux-asan --output-on-failure
+```
+
+Replace `asan` with `tsan` for the ThreadSanitizer build.
+
+### Coverage
+
+```
+cmake --preset linux-coverage && cmake --build --preset linux-coverage
+ctest --preset linux-coverage
+gcovr -r . --html-details build/linux-coverage/coverage.html
+```
+
+### Fuzz testing
+
+```
+cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
+build/linux-fuzz/fuzz_parser -max_total_time=60
+```
+
+### Extended soak (ASan + UBSan / TSan, ~30 min each)
+
+The `linux-asan-extended` and `linux-tsan-extended` presets run `test_stress` for 900 seconds per case. Used in CI nightly; run locally when making changes to threading or I/O paths:
+
+```
+cmake --preset linux-asan-extended && cmake --build --preset linux-asan-extended
+ctest --preset linux-asan-extended --output-on-failure
+```
+
 ## Usage
 
 ```
