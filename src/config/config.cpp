@@ -15,13 +15,13 @@
 
 #include "config.hpp"
 
+#include <boost/algorithm/string.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <set>
-#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -42,22 +42,6 @@ const std::unordered_map<std::string, int> kFacilityNames = {
     {"local3", 19},   {"local4", 20}, {"local5", 21},  {"local6", 22},   {"local7", 23},
 };
 
-std::string toLower(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    return s;
-}
-
-std::string trim(const std::string& s)
-{
-    const auto first = s.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos)
-    {
-        return {};
-    }
-    return s.substr(first, s.find_last_not_of(" \t\r\n") - first + 1);
-}
-
 // Parse "auth,authpriv,*" → deduplicated vector<int>; empty vector = all (wildcard)
 std::vector<int> parseFacilities(const std::string& raw)
 {
@@ -66,12 +50,14 @@ std::vector<int> parseFacilities(const std::string& raw)
         return {};
     }
 
+    std::vector<std::string> tokens;
+    boost::algorithm::split(tokens, raw, boost::algorithm::is_any_of(","));
+
     std::vector<int> result;
-    std::istringstream ss(raw);
-    std::string token;
-    while (std::getline(ss, token, ','))
+    for (auto& token : tokens)
     {
-        token = toLower(trim(token));
+        boost::algorithm::trim(token);
+        boost::algorithm::to_lower(token);
         if (token == "*")
         {
             return {}; // wildcard → empty = all
@@ -114,7 +100,8 @@ uint64_t parseSize(const std::string& raw)
         throw std::runtime_error("Size must be > 0: '" + raw + "'");
     }
 
-    const std::string unit = toLower(trim(raw.substr(i)));
+    std::string unit = boost::algorithm::trim_copy(raw.substr(i));
+    boost::algorithm::to_lower(unit);
     uint64_t mult          = 1;
     if (unit == "b" || unit.empty())
     {

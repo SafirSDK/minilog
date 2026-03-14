@@ -19,7 +19,7 @@
 #include <boost/json.hpp>
 
 #include <chrono>
-#include <ctime>
+#include <format>
 #include <string>
 
 namespace minilog
@@ -32,25 +32,14 @@ namespace
 // E.g. "syslog.log" → "syslog.1.log", "syslog.2.log", …
 std::filesystem::path rotatedPath(const std::filesystem::path& base, int n)
 {
-    auto parent = base.parent_path();
-    auto stem   = base.stem().string();
-    auto ext    = base.extension().string();
-    return parent / (stem + "." + std::to_string(n) + ext);
+    return base.parent_path() /
+           std::format("{}.{}{}", base.stem().string(), n, base.extension().string());
 }
 
 std::string currentTimestamp()
 {
-    auto now = std::chrono::system_clock::now();
-    auto tt  = std::chrono::system_clock::to_time_t(now);
-    std::tm tm{};
-#ifdef _WIN32
-    gmtime_s(&tm, &tt);
-#else
-    gmtime_r(&tt, &tm);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
-    return buf;
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    return std::format("{:%Y-%m-%dT%H:%M:%S}Z", now);
 }
 
 std::string toJsonlRecord(const SyslogMessage& msg, const std::string& rcv)

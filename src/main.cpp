@@ -21,6 +21,7 @@
 #include "server/udp_server.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <boost/program_options.hpp>
 
 #include <cstdlib>
 #include <filesystem>
@@ -30,16 +31,10 @@
 #include <thread>
 #include <vector>
 
+namespace po = boost::program_options;
+
 namespace
 {
-
-void printUsage(const char* prog)
-{
-    std::cerr << "Usage:\n"
-              << "  " << prog << " <config-path>              run (interactive or service)\n"
-              << "  " << prog << " --install <config-path>    install Windows service\n"
-              << "  " << prog << " --uninstall                remove Windows service\n";
-}
 
 int runServer(const std::string& configPath)
 {
@@ -105,7 +100,40 @@ int runServer(const std::string& configPath)
 
 int main(int argc, char* argv[])
 {
-    if (argc == 2 && std::string(argv[1]) == "--uninstall")
+    po::options_description desc("Options");
+    // clang-format off
+    desc.add_options()
+        ("help,h",      "show this help message and exit")
+        ("config-path", po::value<std::string>(), "path to the configuration file");
+#ifdef _WIN32
+    desc.add_options()
+        ("install",     "install as a Windows service")
+        ("uninstall",   "remove the Windows service");
+#endif
+    // clang-format on
+
+    po::positional_options_description pos;
+    pos.add("config-path", 1);
+
+    po::variables_map vm;
+    try
+    {
+        po::store(po::command_line_parser(argc, argv).options(desc).positional(pos).run(), vm);
+        po::notify(vm);
+    }
+    catch (const po::error& e)
+    {
+        std::cerr << "minilog: " << e.what() << "\n\n" << desc << "\n";
+        return EXIT_FAILURE;
+    }
+
+    if (vm.count("help"))
+    {
+        std::cout << "Usage: minilog [options] <config-path>\n\n" << desc << "\n";
+        return EXIT_SUCCESS;
+    }
+
+    if (vm.count("uninstall"))
     {
         try
         {
@@ -119,10 +147,17 @@ int main(int argc, char* argv[])
         return EXIT_SUCCESS;
     }
 
-    if (argc == 3 && std::string(argv[1]) == "--install")
+    if (!vm.count("config-path"))
     {
-        const std::string configPath = argv[2];
-        const std::string exePath    = std::filesystem::absolute(argv[0]).string();
+        std::cerr << "minilog: config-path is required\n\n" << desc << "\n";
+        return EXIT_FAILURE;
+    }
+
+    const std::string configPath = vm["config-path"].as<std::string>();
+
+    if (vm.count("install"))
+    {
+        const std::string exePath = std::filesystem::absolute(argv[0]).string();
         try
         {
             minilog::installService(exePath, configPath);
@@ -134,14 +169,6 @@ int main(int argc, char* argv[])
         }
         return EXIT_SUCCESS;
     }
-
-    if (argc != 2)
-    {
-        printUsage(argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    const std::string configPath = argv[1];
 
     // Try to start as a Windows NT service. If this process was launched by
     // the SCM, StartServiceCtrlDispatcher will dispatch into runServer() and

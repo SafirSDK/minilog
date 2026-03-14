@@ -380,3 +380,12 @@ Ported from Python plus significantly extended:
     - Add `BUILDING.md`: how to build on Linux (nix-shell + CMake) and Windows (Conan + MSVC + CMake)
     - Add `CHANGELOG.md` with initial release notes
     - Note in README: Linux deployment is intended to run under systemd (no PID file needed; systemd tracks the process itself)
+20. Code review:
+    - Review all source files for correctness, style, and completeness against the requirements
+    - Check error handling paths (bad config, bind failure, write failure, rotation errors)
+    - Check for any missing edge cases in the parser, config, rotation logic, and forwarder
+    - Verify JSONL output format matches the spec (field names, null handling, ISO8601 timestamps)
+    - Verify the RFC5424 structured-data handling decision is implemented consistently
+    - Check platform-specific code (Windows service, Linux signal handling) for correctness
+    - Review test coverage and identify any untested paths
+    - Review CI configuration for completeness and correctness

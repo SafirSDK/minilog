@@ -32,7 +32,7 @@ add_compile_options(
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wpedantic>
 )
 
-find_package(Boost REQUIRED COMPONENTS json unit_test_framework)
+find_package(Boost REQUIRED COMPONENTS json program_options unit_test_framework)
 
 # Platform-specific sources
 if(WIN32)
@@ -72,6 +72,7 @@ target_compile_definitions(minilog PRIVATE
 target_link_libraries(minilog PRIVATE
     Boost::headers
     Boost::json
+    Boost::program_options
 )
 
 if(WIN32)

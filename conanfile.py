@@ -8,11 +8,12 @@ class MinilogConan(ConanFile):
 
     # Compiled Boost libraries we actually use
     _boost_keep = {
-        "system",       # required by Asio
-        "json",         # JSONL output
-        "test",         # unit tests (unit_test_framework)
-        "container",    # required by json
-        "exception",    # required by test
+        "system",           # required by Asio
+        "json",             # JSONL output
+        "test",             # unit tests (unit_test_framework)
+        "container",        # required by json
+        "exception",        # required by test
+        "program_options",  # CLI argument parsing
     }
 
     # All compiled Boost libraries that have a without_* option in the recipe
