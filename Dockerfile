@@ -10,7 +10,7 @@ WORKDIR /src
 COPY . .
 
 RUN cmake --preset linux-docker && \
-    cmake --build --preset linux-docker
+    cmake --build --preset linux-docker --target minilog
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:trixie-slim AS runtime
