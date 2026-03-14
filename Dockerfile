@@ -9,18 +9,15 @@ RUN apt-get update -qq && \
 WORKDIR /src
 COPY . .
 
-RUN cmake --preset linux-release && \
-    cmake --build --preset linux-release
+RUN cmake --preset linux-docker && \
+    cmake --build --preset linux-docker
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends libboost-program-options && \
-    rm -rf /var/lib/apt/lists/* && \
-    useradd --system --no-create-home minilog
+RUN useradd --system --no-create-home minilog
 
-COPY --from=build /src/build/linux-release/minilog /usr/local/bin/minilog
+COPY --from=build /src/build/linux-docker/minilog /usr/local/bin/minilog
 
 USER minilog
 
