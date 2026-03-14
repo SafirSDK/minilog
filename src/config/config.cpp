@@ -102,7 +102,7 @@ uint64_t parseSize(const std::string& raw)
 
     std::string unit = boost::algorithm::trim_copy(raw.substr(i));
     boost::algorithm::to_lower(unit);
-    uint64_t mult          = 1;
+    uint64_t mult = 1;
     if (unit == "b" || unit.empty())
     {
         mult = 1ULL;
