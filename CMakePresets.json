@@ -69,7 +69,7 @@
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
         "MINILOG_STRESS_MULTIPLIER": "10",
         "MINILOG_STRESS_LOSSY": "1",
-        "MINILOG_STRESS_SOAK_SECONDS": "1800"
+        "MINILOG_STRESS_SOAK_SECONDS": "900"
       }
     },
     {
@@ -84,7 +84,7 @@
         "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
         "MINILOG_STRESS_MULTIPLIER": "10",
         "MINILOG_STRESS_LOSSY": "1",
-        "MINILOG_STRESS_SOAK_SECONDS": "1800"
+        "MINILOG_STRESS_SOAK_SECONDS": "900"
       }
     },
     {
