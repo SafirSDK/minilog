@@ -97,11 +97,20 @@ struct Fixture
         return threads;
     }
 
-    // Drain all pending work: stop the server, close outputs, join all threads.
-    void shutdown(UdpServer& server, OutputManager& om, std::vector<std::thread>& ioThreads)
+    // Drain all pending work: stop the server, join all threads.
+    //
+    // NOTE: om.close() is intentionally NOT called here.  Calling it before
+    // joining would post a "close" task to the LogFile strand while processing
+    // tasks are still queued in the io_context.  Those tasks post their writes
+    // to the strand *after* the close task, causing them to be silently dropped
+    // (m_closed == true).  Instead, we join first so the io_context fully drains
+    // (all receives → process tasks → strand writes complete), then let the
+    // OutputManager/LogFile destructors close files synchronously.
+    void shutdown(UdpServer& server,
+                  OutputManager& /*om*/,
+                  std::vector<std::thread>& ioThreads)
     {
         server.stop();
-        om.close();
         for (auto& t : ioThreads)
         {
             t.join();
@@ -199,9 +208,12 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
     }
 
     // Wait for all messages to be processed.  With 4 io_context threads this
-    // should be well within the timeout even on a slow CI machine.
+    // should be well within the timeout even on a slow CI machine.  Use a
+    // generous limit scaled by the stress multiplier so sanitiser builds don't
+    // time out under the extra overhead.
     constexpr int N_TOTAL = N_THREADS * N_PER_THREAD;
-    BOOST_CHECK(waitForLines(dir / "syslog.log", N_TOTAL, std::chrono::seconds(10)));
+    BOOST_CHECK(waitForLines(dir / "syslog.log", N_TOTAL,
+                             std::chrono::seconds(10 * MINILOG_STRESS_MULTIPLIER)));
     shutdown(server, om, ioThreads);
 
     std::ifstream f(dir / "syslog.log");
