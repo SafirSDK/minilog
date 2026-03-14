@@ -1,0 +1,93 @@
+; minilog configuration file
+; All available options are listed here with their defaults.
+; Restart minilog to apply any changes.
+
+; ─────────────────────────────────────────────────────────────────────────────
+; Server settings
+; ─────────────────────────────────────────────────────────────────────────────
+[server]
+
+; IP address to bind the UDP socket to.
+; 0.0.0.0 listens on all interfaces; use 127.0.0.1 to restrict to localhost.
+host = 0.0.0.0
+
+; UDP port to listen on (1–65535).
+; Note: binding to port 514 may require elevated privileges on Linux.
+udp_port = 514
+
+; Character encoding used to interpret incoming datagram bytes.
+; The decoded text is written to JSONL files. Common values: utf-8, latin-1.
+encoding = utf-8
+
+; Number of I/O worker threads. One thread per physical CPU core is a
+; reasonable upper bound; the default of 4 is suitable for most deployments.
+workers = 4
+
+; ─────────────────────────────────────────────────────────────────────────────
+; Output sections  [output.<name>]
+;
+; Define one or more named output sections. At least one of text_file or
+; jsonl_file must be specified in each section. Multiple [output.*] sections
+; may be defined; messages are routed to every section whose facility filter
+; matches.
+; ─────────────────────────────────────────────────────────────────────────────
+[output.main]
+
+; Raw text log: each line is the verbatim UDP payload followed by a newline.
+; No decoding or reformatting is applied.
+text_file = /var/log/minilog/syslog.log
+
+; JSONL log: one UTF-8 JSON object per line with parsed fields.
+; Fields: rcv, src, proto, facility, severity, hostname, app, pid, msgid, message
+jsonl_file = /var/log/minilog/syslog.jsonl
+
+; Rotate both files when either exceeds this size.
+; Supported units: B, KB, MB, GB. Set to 0 to disable rotation.
+; Rotated filenames: syslog.1.log, syslog.2.log, ...
+max_size = 100MB
+
+; Number of rotated files to keep per output section. 0 = keep all.
+max_files = 10
+
+; Comma-separated list of syslog facility names to accept, or * for all.
+; Standard names: kern, user, mail, daemon, auth, syslog, lpr, news, uucp,
+;                 clock, authpriv, ftp, ntp, audit, alert, local0–local7
+; Aliases: kernel=kern, security=auth, system=daemon, cron=clock,
+;          logaudit=audit, logalert=alert
+facility = *
+
+; Set to false to silently discard messages that could not be parsed
+; (proto = UNKNOWN). Useful to suppress binary noise on UDP port 514.
+include_malformed = true
+
+
+; ─── Example: a second output section filtering to auth/authpriv only ────────
+;[output.auth]
+;text_file  = /var/log/minilog/auth.log
+;jsonl_file = /var/log/minilog/auth.jsonl
+;max_size   = 50MB
+;max_files  = 5
+;facility   = auth,authpriv
+;include_malformed = false
+
+; ─────────────────────────────────────────────────────────────────────────────
+; UDP forwarding
+; ─────────────────────────────────────────────────────────────────────────────
+[forwarding]
+
+; Set to true to forward received messages to another syslog endpoint.
+enabled = false
+
+; Destination hostname or IP address.
+host = 10.0.0.5
+
+; Destination UDP port.
+port = 514
+
+; Facilities to forward. Same syntax as output.facility above.
+facility = *
+
+; Messages longer than this many bytes are truncated before forwarding.
+; The string "... [TRUNCATED: N bytes]" is appended to the shortened message.
+; Set to 0 for no limit.
+max_message_size = 2048
