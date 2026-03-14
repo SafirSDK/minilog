@@ -117,7 +117,9 @@ void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop)
     else
     {
         // Running as console process: use Ctrl+C / Ctrl+Break signals.
-        auto signals = std::make_shared<boost::asio::signal_set>(ioc, SIGINT, SIGTERM);
+        // SIGBREAK catches CTRL_BREAK_EVENT from the test harness (which spawns
+        // the server with CREATE_NEW_PROCESS_GROUP, disabling CTRL_C/SIGINT).
+        auto signals = std::make_shared<boost::asio::signal_set>(ioc, SIGINT, SIGTERM, SIGBREAK);
         signals->async_wait(
             [signals, onStop = std::move(onStop)](const boost::system::error_code& ec,
                                                   int /*signum*/)

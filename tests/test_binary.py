@@ -107,10 +107,11 @@ def write_config(
 def terminate(proc: subprocess.Popen) -> None:
     """Send a graceful shutdown signal."""
     if sys.platform == "win32":
-        # CTRL_C_EVENT triggers SIGINT in the child's process group, which
-        # Boost.Asio's signal_set catches and routes to the onStop handler.
-        # proc.terminate() would call TerminateProcess() (exit code 1) instead.
-        proc.send_signal(signal.CTRL_C_EVENT)
+        # Processes are started with CREATE_NEW_PROCESS_GROUP, which disables
+        # CTRL_C handling in the child (Windows sets SetConsoleCtrlHandler(NULL,TRUE)
+        # implicitly).  CTRL_BREAK_EVENT is not maskable and is delivered to the
+        # process group; the C++ server handles it via signal_set(SIGBREAK).
+        proc.send_signal(signal.CTRL_BREAK_EVENT)
     else:
         proc.send_signal(signal.SIGTERM)
 
