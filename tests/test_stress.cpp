@@ -142,6 +142,9 @@ struct Fixture
 } // namespace
 
 // ─── Flood ───────────────────────────────────────────────────────────────────
+// Strict-count tests — skipped in lossy/extended mode where ASan/TSan overhead
+// causes the OS to drop UDP datagrams under load.  Covered by soak_flood below.
+#if !MINILOG_STRESS_LOSSY
 
 BOOST_FIXTURE_TEST_SUITE(flood, Fixture)
 
@@ -170,6 +173,7 @@ BOOST_AUTO_TEST_CASE(ten_thousand_messages_no_loss)
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Concurrent senders ──────────────────────────────────────────────────────
+// Same rationale as flood above.
 
 BOOST_FIXTURE_TEST_SUITE(concurrent_senders, Fixture)
 
@@ -229,6 +233,8 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+#endif // !MINILOG_STRESS_LOSSY
 
 // ─── Max-size datagrams ───────────────────────────────────────────────────────
 
