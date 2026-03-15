@@ -215,8 +215,7 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
     // generous limit scaled by the stress multiplier so sanitiser builds don't
     // time out under the extra overhead.
     constexpr int N_TOTAL = N_THREADS * N_PER_THREAD;
-    BOOST_CHECK(waitForLines(
-        dir / "syslog.log", N_TOTAL, std::chrono::seconds(10 * MINILOG_STRESS_MULTIPLIER)));
+    BOOST_CHECK(waitForLines(dir / "syslog.log", N_TOTAL, std::chrono::seconds(30)));
     shutdown(server, om, ioThreads);
 
     std::ifstream f(dir / "syslog.log");

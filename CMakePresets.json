@@ -168,27 +168,32 @@
     {
       "name": "linux-debug",
       "configurePreset": "linux-debug",
-      "output": { "outputOnFailure": true }
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
     },
     {
       "name": "linux-release",
       "configurePreset": "linux-release",
-      "output": { "outputOnFailure": true }
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
     },
     {
       "name": "linux-asan",
       "configurePreset": "linux-asan",
-      "output": { "outputOnFailure": true }
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
     },
     {
       "name": "linux-tsan",
       "configurePreset": "linux-tsan",
-      "output": { "outputOnFailure": true }
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
     },
     {
       "name": "linux-coverage",
       "configurePreset": "linux-coverage",
-      "output": { "outputOnFailure": true }
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
     },
     {
       "name": "linux-asan-extended",
@@ -203,7 +208,8 @@
     {
       "name": "windows-release",
       "configurePreset": "windows-release",
-      "output": { "outputOnFailure": true }
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
     }
   ]
 }
