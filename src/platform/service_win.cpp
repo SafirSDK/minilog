@@ -32,8 +32,7 @@ namespace minilog
 
 static constexpr char SERVICE_NAME[]    = "minilog";
 static constexpr char SERVICE_DISPLAY[] = "minilog Syslog Server";
-static constexpr char SERVICE_DESC[]    =
-    "Minimal syslog server. https://github.com/SafirSDK/minilog";
+static constexpr char SERVICE_DESC[] = "Minimal syslog server. https://github.com/SafirSDK/minilog";
 
 // ─── Global state shared between SCM callbacks and tryRunAsService ────────────
 
