@@ -3,6 +3,7 @@ name: Build & Test
 on:
   push:
     branches: [ master, cpp-rewrite ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
 
@@ -151,6 +152,9 @@ jobs:
       - name: Install Ninja
         run: choco install ninja --no-progress
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress
+
       - name: Conan install
         run: |
           conan install . `
@@ -168,8 +172,24 @@ jobs:
       - name: Build
         run: cmake --build --preset windows-release
 
+      - name: Build installer
+        run: cmake --build --preset windows-release --target package
+
       - name: Test
         run: ctest --preset windows-release
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: minilog-installer
+          path: build/windows-release/minilog-*-setup.exe
+          if-no-files-found: error
+
+      - name: Publish installer to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/windows-release/minilog-*-setup.exe
 
   # ─── Linux (Clang, libFuzzer) ────────────────────────────────────────────
   linux-fuzz:
