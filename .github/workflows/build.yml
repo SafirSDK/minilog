@@ -52,6 +52,8 @@ jobs:
         run: cmake --build --preset linux-release
 
       - name: Test
+        env:
+          BOOST_TEST_LOG_LEVEL: test_suite
         run: ctest --preset linux-release
 
   # ─── Linux (Clang, ASan + UBSan) ────────────────────────────────────────────
@@ -73,6 +75,8 @@ jobs:
         run: cmake --build --preset linux-asan
 
       - name: Test
+        env:
+          BOOST_TEST_LOG_LEVEL: test_suite
         run: ctest --preset linux-asan
 
   # ─── Linux (GCC, coverage) ──────────────────────────────────────────────────
@@ -94,6 +98,8 @@ jobs:
         run: cmake --build --preset linux-coverage
 
       - name: Test
+        env:
+          BOOST_TEST_LOG_LEVEL: test_suite
         run: ctest --preset linux-coverage
 
       - name: Generate coverage report
@@ -127,6 +133,8 @@ jobs:
         run: cmake --build --preset linux-tsan
 
       - name: Test
+        env:
+          BOOST_TEST_LOG_LEVEL: test_suite
         run: ctest --preset linux-tsan
 
   # ─── Windows (MSVC) ─────────────────────────────────────────────────────────
@@ -177,6 +185,8 @@ jobs:
         run: cmake --build --preset windows-release --target package
 
       - name: Test
+        env:
+          BOOST_TEST_LOG_LEVEL: test_suite
         run: ctest --preset windows-release
 
       - name: Test installer
