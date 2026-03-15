@@ -32,6 +32,8 @@ namespace minilog
 
 static constexpr char SERVICE_NAME[]    = "minilog";
 static constexpr char SERVICE_DISPLAY[] = "minilog Syslog Server";
+static constexpr char SERVICE_DESC[]    =
+    "Minimal syslog server. https://github.com/SafirSDK/minilog";
 
 // ─── Global state shared between SCM callbacks and tryRunAsService ────────────
 
@@ -183,6 +185,9 @@ void installService(const std::string& exePath, const std::string& configPath)
         CloseServiceHandle(scm);
         throw std::runtime_error("CreateService failed: " + std::to_string(GetLastError()));
     }
+
+    SERVICE_DESCRIPTIONA desc{const_cast<char*>(SERVICE_DESC)};
+    ChangeServiceConfig2A(svc, SERVICE_CONFIG_DESCRIPTION, &desc);
 
     osLogInfo(std::string("minilog service installed (") + binPath + ")");
     CloseServiceHandle(svc);
