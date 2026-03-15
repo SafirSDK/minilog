@@ -48,18 +48,7 @@ Fields: `rcv` (ISO8601 UTC), `src` (sender IP, no port), `proto` (`"RFC3164"`/`"
 `facility`, `severity`, `hostname`, `app`, `pid`, `msgid`, `message`. Absent optionals → `null`.
 Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 
-## ioc.poll() pattern in tests
-Always call `ioc.restart()` before `ioc.poll()` — Boost.Asio marks the context stopped after
-`poll()` drains, so subsequent calls silently do nothing without the restart.
-
-## Soak test notes
-OOM under ASan: senders flooded at loopback speed; io_context queue grew unbounded because ASan
-slows file I/O far more than the producer. Not a leak. Fix: 100 µs sleep in the soak send loops
-(~10k msg/s per thread) in `tests/test_stress.cpp`.
-
 ## Merge checklist (cpp-rewrite → master)
 - Update `codecov.yml` branch from `cpp-rewrite` to `master`
 - Update README badge URL from `branch/cpp-rewrite` to `branch/master`
 
-## Backlog
-- Create icons/logo for the project
