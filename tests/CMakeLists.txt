@@ -32,6 +32,11 @@ target_sources(test_output     PRIVATE
     ../src/output/output_manager.cpp
     ../src/parser/syslog_parser.cpp
 )
+if(WIN32)
+    target_sources(test_output PRIVATE ../src/platform/os_log_win.cpp)
+else()
+    target_sources(test_output PRIVATE ../src/platform/os_log_linux.cpp)
+endif()
 
 add_boost_test(test_forwarder  test_forwarder.cpp)
 target_sources(test_forwarder  PRIVATE
@@ -39,6 +44,11 @@ target_sources(test_forwarder  PRIVATE
     ../src/forwarder/forwarder.cpp
     ../src/parser/syslog_parser.cpp
 )
+if(WIN32)
+    target_sources(test_forwarder PRIVATE ../src/platform/os_log_win.cpp)
+else()
+    target_sources(test_forwarder PRIVATE ../src/platform/os_log_linux.cpp)
+endif()
 
 add_boost_test(test_integration test_integration.cpp)
 target_sources(test_integration PRIVATE

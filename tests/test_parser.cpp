@@ -317,6 +317,26 @@ BOOST_AUTO_TEST_CASE(bad_time_format_falls_through)
     BOOST_TEST((m.protocol == Protocol::Unknown));
 }
 
+BOOST_AUTO_TEST_CASE(out_of_range_day_falls_through)
+{
+    // Day 0 is invalid
+    BOOST_TEST((parse("<13>Jan  0 00:00:00 host app: msg").protocol == Protocol::Unknown));
+    // Day 32 is invalid
+    BOOST_TEST((parse("<13>Jan 32 00:00:00 host app: msg").protocol == Protocol::Unknown));
+    // Day 99 is invalid (fits in 2 digits but out of range)
+    BOOST_TEST((parse("<13>Jan 99 00:00:00 host app: msg").protocol == Protocol::Unknown));
+}
+
+BOOST_AUTO_TEST_CASE(out_of_range_time_falls_through)
+{
+    // Hour 24 is invalid
+    BOOST_TEST((parse("<13>Jan 12 24:00:00 host app: msg").protocol == Protocol::Unknown));
+    // Minute 60 is invalid
+    BOOST_TEST((parse("<13>Jan 12 00:60:00 host app: msg").protocol == Protocol::Unknown));
+    // Second 60 is invalid
+    BOOST_TEST((parse("<13>Jan 12 00:00:60 host app: msg").protocol == Protocol::Unknown));
+}
+
 BOOST_AUTO_TEST_CASE(raw_field_preserved)
 {
     const std::string s = "<34>Jan 12 15:04:05 h su[1]: msg";

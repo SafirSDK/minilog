@@ -18,12 +18,22 @@
 
 #include "parser/syslog_parser.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
-    minilog::parseSyslog(std::string_view(reinterpret_cast<const char*>(data), size));
+    const auto msg =
+        minilog::parseSyslog(std::string_view(reinterpret_cast<const char*>(data), size));
+
+    // Facility and severity are always derived from the same PRI, so they must
+    // be set together or not at all.
+    assert(msg.facility.has_value() == msg.severity.has_value());
+
+    // raw is always populated for non-empty input.
+    assert(size == 0 || !msg.raw.empty());
+
     return 0;
 }

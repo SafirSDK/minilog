@@ -202,8 +202,7 @@ Config loadConfig(const std::string& path)
     Config cfg;
 
     // [server]
-    cfg.host     = tree.get<std::string>("server.host", cfg.host);
-    cfg.encoding = tree.get<std::string>("server.encoding", cfg.encoding);
+    cfg.host = tree.get<std::string>("server.host", cfg.host);
 
     {
         const int port = requireInt(tree, "server.udp_port", static_cast<int>(cfg.udpPort));
@@ -243,6 +242,11 @@ Config loadConfig(const std::string& path)
         }
     }
 
+    if (cfg.outputs.empty())
+    {
+        throw std::runtime_error("Config must define at least one [output.*] section");
+    }
+
     // [forwarding]
     if (auto fwdNode = tree.get_child_optional("forwarding"))
     {
@@ -259,6 +263,11 @@ Config loadConfig(const std::string& path)
             throw std::runtime_error("Invalid forwarding port: " + std::to_string(port));
         }
         cfg.forwarding.port = static_cast<uint16_t>(port);
+    }
+
+    if (cfg.forwarding.enabled && cfg.forwarding.host.empty())
+    {
+        throw std::runtime_error("[forwarding] enabled = true requires a host address");
     }
 
     return cfg;

@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cctype>
 
 namespace minilog
@@ -35,6 +36,7 @@ const std::array<const char*, 24> kFacilityNames = {
 
 void applyPri(SyslogMessage& msg, int pri)
 {
+    assert(pri >= 0 && pri <= 191);
     msg.pri      = pri;
     msg.facility = pri / 8;
     msg.severity = pri % 8;
@@ -144,6 +146,14 @@ std::optional<std::string> parse3164Timestamp(std::string_view& sv)
     {
         return std::nullopt;
     }
+    {
+        const int day =
+            (p - day0 == 1) ? (sv[day0] - '0') : (sv[day0] - '0') * 10 + (sv[day0 + 1] - '0');
+        if (day < 1 || day > 31)
+        {
+            return std::nullopt;
+        }
+    }
     if (p >= sv.size() || sv[p] != ' ')
     {
         return std::nullopt;
@@ -162,6 +172,15 @@ std::optional<std::string> parse3164Timestamp(std::string_view& sv)
         !std::isdigit((unsigned char)t[6]) || !std::isdigit((unsigned char)t[7]))
     {
         return std::nullopt;
+    }
+    {
+        const int hh = (t[0] - '0') * 10 + (t[1] - '0');
+        const int mm = (t[3] - '0') * 10 + (t[4] - '0');
+        const int ss = (t[6] - '0') * 10 + (t[7] - '0');
+        if (hh > 23 || mm > 59 || ss > 59)
+        {
+            return std::nullopt;
+        }
     }
     p += 8;
     std::string ts(sv.substr(0, p));
@@ -229,13 +248,14 @@ bool tryRfc5424(std::string_view data, SyslogMessage& msg)
         return false;
     }
 
-    // Version: digit(s) followed by space; only version 1 is recognised
+    // Version: digit(s) followed by space; only version 1 is recognised.
+    // Cap at 2 digits to avoid signed-integer overflow in the accumulator.
     std::size_t vi = 0;
     while (vi < sv.size() && std::isdigit((unsigned char)sv[vi]))
     {
         ++vi;
     }
-    if (vi == 0 || vi >= sv.size() || sv[vi] != ' ')
+    if (vi == 0 || vi > 2 || vi >= sv.size() || sv[vi] != ' ')
     {
         return false;
     }

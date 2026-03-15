@@ -15,12 +15,15 @@
 
 #include "log_file.hpp"
 
+#include "platform/os_log.hpp"
+
 #include <boost/asio/post.hpp>
 #include <boost/json.hpp>
 
 #include <chrono>
 #include <format>
 #include <string>
+#include <system_error>
 
 namespace minilog
 {
@@ -123,6 +126,13 @@ void LogFile::doWrite(const SyslogMessage& msg)
         const std::string line = msg.raw + "\n";
         m_textStream.write(line.data(), static_cast<std::streamsize>(line.size()));
         m_textStream.flush();
+        if (!m_textStream)
+        {
+            osLogError("minilog: write to '" + m_cfg.textFile + "' failed; closing sink");
+            m_closed = true;
+            closeFiles();
+            return;
+        }
         m_textSize += line.size();
     }
 
@@ -131,6 +141,13 @@ void LogFile::doWrite(const SyslogMessage& msg)
         const std::string record = toJsonlRecord(msg, rcv) + "\n";
         m_jsonlStream.write(record.data(), static_cast<std::streamsize>(record.size()));
         m_jsonlStream.flush();
+        if (!m_jsonlStream)
+        {
+            osLogError("minilog: write to '" + m_cfg.jsonlFile + "' failed; closing sink");
+            m_closed = true;
+            closeFiles();
+            return;
+        }
         m_jsonlSize += record.size();
     }
 }
@@ -182,7 +199,13 @@ void LogFile::rotate()
                 auto p = rotatedPath(base, n);
                 if (fs::exists(p))
                 {
-                    fs::remove(p);
+                    std::error_code ec;
+                    fs::remove(p, ec);
+                    if (ec)
+                    {
+                        osLogError("minilog: rotation remove failed for '" + p.string() +
+                                   "': " + ec.message());
+                    }
                 }
             }
             highest = m_cfg.maxFiles - 1;
@@ -194,14 +217,26 @@ void LogFile::rotate()
             auto from = rotatedPath(base, n);
             if (fs::exists(from))
             {
-                fs::rename(from, rotatedPath(base, n + 1));
+                std::error_code ec;
+                fs::rename(from, rotatedPath(base, n + 1), ec);
+                if (ec)
+                {
+                    osLogError("minilog: rotation rename failed for '" + from.string() +
+                               "': " + ec.message());
+                }
             }
         }
 
         // Rename the current file to .1.
         if (fs::exists(base))
         {
-            fs::rename(base, rotatedPath(base, 1));
+            std::error_code ec;
+            fs::rename(base, rotatedPath(base, 1), ec);
+            if (ec)
+            {
+                osLogError("minilog: rotation rename failed for '" + base.string() +
+                           "': " + ec.message());
+            }
         }
     };
 
@@ -224,19 +259,26 @@ void LogFile::openFiles()
     if (!m_cfg.textFile.empty())
     {
         m_textStream.open(m_cfg.textFile, std::ios::app | std::ios::binary);
-        if (m_textStream.is_open())
+        if (!m_textStream.is_open())
         {
-            m_textSize = static_cast<uint64_t>(fs::file_size(m_cfg.textFile));
+            osLogError("minilog: failed to open '" + m_cfg.textFile + "'; closing sink");
+            m_closed = true;
+            return;
         }
+        m_textSize = static_cast<uint64_t>(fs::file_size(m_cfg.textFile));
     }
 
     if (!m_cfg.jsonlFile.empty())
     {
         m_jsonlStream.open(m_cfg.jsonlFile, std::ios::app | std::ios::binary);
-        if (m_jsonlStream.is_open())
+        if (!m_jsonlStream.is_open())
         {
-            m_jsonlSize = static_cast<uint64_t>(fs::file_size(m_cfg.jsonlFile));
+            osLogError("minilog: failed to open '" + m_cfg.jsonlFile + "'; closing sink");
+            m_closed = true;
+            closeFiles();
+            return;
         }
+        m_jsonlSize = static_cast<uint64_t>(fs::file_size(m_cfg.jsonlFile));
     }
 }
 

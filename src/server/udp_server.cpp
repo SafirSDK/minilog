@@ -99,6 +99,12 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
 {
     if (ec)
     {
+        // operation_aborted means the socket is being closed by stop(); do not re-arm.
+        if (ec != boost::asio::error::operation_aborted)
+        {
+            osLogError("minilog: receive error: " + ec.message());
+            receive();
+        }
         return;
     }
 

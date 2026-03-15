@@ -62,7 +62,6 @@ BOOST_AUTO_TEST_CASE(struct_defaults)
     Config cfg;
     BOOST_TEST(cfg.host == "0.0.0.0");
     BOOST_TEST(cfg.udpPort == 514);
-    BOOST_TEST(cfg.encoding == "utf-8");
     BOOST_TEST(cfg.workers == 4);
     BOOST_TEST(cfg.outputs.empty());
     BOOST_TEST(!cfg.forwarding.enabled);
@@ -78,7 +77,6 @@ BOOST_AUTO_TEST_CASE(minimal_config_uses_defaults)
     Config cfg = loadConfig(tmp.path);
     BOOST_TEST(cfg.host == "0.0.0.0");
     BOOST_TEST(cfg.udpPort == 5514);
-    BOOST_TEST(cfg.encoding == "utf-8");
     BOOST_TEST(cfg.workers == 4);
 }
 
@@ -121,7 +119,6 @@ BOOST_AUTO_TEST_CASE(all_fields_parsed)
 
     BOOST_TEST(cfg.host == "127.0.0.1");
     BOOST_TEST(cfg.udpPort == 5514);
-    BOOST_TEST(cfg.encoding == "latin-1");
     BOOST_TEST(cfg.workers == 8);
 
     BOOST_REQUIRE(cfg.outputs.size() == 2);
@@ -442,6 +439,31 @@ BOOST_AUTO_TEST_CASE(forwarding_facility_filter)
     BOOST_REQUIRE(facs.size() == 2);
     BOOST_TEST(facs[0] == 16);
     BOOST_TEST(facs[1] == 17);
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_enabled_no_host_throws)
+{
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
+                 "[forwarding]\nenabled=true\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Output section validation ────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_SUITE(output_section_validation)
+
+BOOST_AUTO_TEST_CASE(no_output_sections_throws)
+{
+    TempFile tmp("[server]\nudp_port = 5514\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(empty_config_throws)
+{
+    TempFile tmp("");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

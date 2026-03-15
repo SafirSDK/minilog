@@ -61,6 +61,14 @@ int runServer(const std::string& configPath)
 
     minilog::UdpServer server(ioc, cfg, outputMgr, forwarder.get());
 
+    // Install shutdown handler before start() so no signal is missed.
+    minilog::setupShutdown(ioc,
+                           [&server, &outputMgr]()
+                           {
+                               server.stop();
+                               outputMgr.close();
+                           });
+
     try
     {
         server.start();
@@ -71,13 +79,6 @@ int runServer(const std::string& configPath)
         outputMgr.close();
         return EXIT_FAILURE;
     }
-
-    minilog::setupShutdown(ioc,
-                           [&server, &outputMgr]()
-                           {
-                               server.stop();
-                               outputMgr.close();
-                           });
 
     // Spin up workers-1 additional threads; main thread also calls run().
     std::vector<std::thread> threads;

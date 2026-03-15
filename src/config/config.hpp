@@ -43,10 +43,9 @@ struct ForwardingConfig
 
 struct Config
 {
-    std::string host     = "0.0.0.0";
-    uint16_t udpPort     = 514;
-    std::string encoding = "utf-8";
-    int workers          = 4;
+    std::string host = "0.0.0.0";
+    uint16_t udpPort = 514;
+    int workers      = 4;
 
     std::vector<OutputConfig> outputs;
     ForwardingConfig forwarding;

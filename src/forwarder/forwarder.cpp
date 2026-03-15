@@ -15,6 +15,8 @@
 
 #include "forwarder.hpp"
 
+#include "platform/os_log.hpp"
+
 #include <boost/asio/post.hpp>
 
 namespace minilog
@@ -49,6 +51,11 @@ void Forwarder::doForward(const SyslogMessage& msg)
     const std::string payload = truncateIfNeeded(msg.raw, m_cfg.maxMessageSize);
     boost::system::error_code ec;
     m_socket.send_to(boost::asio::buffer(payload), m_endpoint, 0, ec);
+    if (ec)
+    {
+        osLogError("minilog: forward to " + m_cfg.host + ":" + std::to_string(m_cfg.port) +
+                   " failed: " + ec.message());
+    }
 }
 
 bool Forwarder::facilityMatches(const std::vector<int>& filter,
