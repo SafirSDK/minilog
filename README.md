@@ -1,5 +1,7 @@
 # minilog
 
+![minilog logo](artwork/minilog-logo.png)
+
 [![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg?branch=cpp-rewrite)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
 [![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/cpp-rewrite/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
 

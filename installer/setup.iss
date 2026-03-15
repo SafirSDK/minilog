@@ -42,9 +42,9 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 ; No Start Menu entries — this is a service, not a GUI application.
 DisableProgramGroupPage=yes
-SetupIconFile=minilog.ico
-WizardImageFile=..\minilog-logo.png
-WizardSmallImageFile=..\minilog-icon.png
+SetupIconFile=..\artwork\minilog.ico
+WizardImageFile=..\artwork\minilog-logo.png
+WizardSmallImageFile=..\artwork\minilog-icon.png
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
