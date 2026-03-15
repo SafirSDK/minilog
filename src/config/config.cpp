@@ -42,6 +42,31 @@ const std::unordered_map<std::string, int> kFacilityNames = {
     {"local3", 19},   {"local4", 20}, {"local5", 21},  {"local6", 22},   {"local7", 23},
 };
 
+// Get an integer field from the property tree, throwing std::runtime_error for
+// non-integer values (e.g. "abc"). Returns defaultVal when the key is absent.
+int requireInt(const boost::property_tree::ptree& tree, const std::string& path, int defaultVal)
+{
+    const auto raw = tree.get_optional<std::string>(path);
+    if (!raw)
+    {
+        return defaultVal;
+    }
+    try
+    {
+        std::size_t pos;
+        const int val = std::stoi(*raw, &pos);
+        if (pos != raw->size())
+        {
+            throw std::invalid_argument("");
+        }
+        return val;
+    }
+    catch (...)
+    {
+        throw std::runtime_error("Invalid integer value for '" + path + "': '" + *raw + "'");
+    }
+}
+
 // Parse "auth,authpriv,*" → deduplicated vector<int>; empty vector = all (wildcard)
 std::vector<int> parseFacilities(const std::string& raw)
 {
@@ -181,7 +206,7 @@ Config loadConfig(const std::string& path)
     cfg.encoding = tree.get<std::string>("server.encoding", cfg.encoding);
 
     {
-        const int port = tree.get<int>("server.udp_port", static_cast<int>(cfg.udpPort));
+        const int port = requireInt(tree, "server.udp_port", static_cast<int>(cfg.udpPort));
         if (port <= 0 || port > 65535)
         {
             throw std::runtime_error("Invalid udp_port: " + std::to_string(port));
@@ -189,7 +214,7 @@ Config loadConfig(const std::string& path)
         cfg.udpPort = static_cast<uint16_t>(port);
     }
     {
-        const int w = tree.get<int>("server.workers", cfg.workers);
+        const int w = requireInt(tree, "server.workers", cfg.workers);
         if (w <= 0)
         {
             throw std::runtime_error("workers must be > 0");
@@ -228,7 +253,7 @@ Config loadConfig(const std::string& path)
             f.get<uint32_t>("max_message_size", cfg.forwarding.maxMessageSize);
         cfg.forwarding.facilities = parseFacilities(f.get<std::string>("facility", "*"));
 
-        const int port = f.get<int>("port", static_cast<int>(cfg.forwarding.port));
+        const int port = requireInt(f, "port", static_cast<int>(cfg.forwarding.port));
         if (port <= 0 || port > 65535)
         {
             throw std::runtime_error("Invalid forwarding port: " + std::to_string(port));

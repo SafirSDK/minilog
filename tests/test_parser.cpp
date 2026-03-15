@@ -127,6 +127,44 @@ BOOST_AUTO_TEST_CASE(trailing_crlf_stripped)
     BOOST_TEST(m.message == "- msg");
 }
 
+BOOST_AUTO_TEST_CASE(embedded_crlf_preserved)
+{
+    // CRLF in the middle of the message is NOT stripped — only trailing CRLF is.
+    const auto m = parse("<34>1 2026-01-01T00:00:00Z h a - - - before\r\nafter");
+    BOOST_TEST((m.protocol == Protocol::RFC5424));
+    BOOST_TEST(m.message == "- before\r\nafter");
+}
+
+BOOST_AUTO_TEST_CASE(bom_prefix_no_crash)
+{
+    // UTF-8 BOM (\xEF\xBB\xBF) at the start of the MSG field is kept verbatim.
+    const std::string s = "<34>1 2026-01-01T00:00:00Z h a - - - \xEF\xBB\xBFhello";
+    BOOST_CHECK_NO_THROW(parse(s));
+    const auto m = parse(s);
+    BOOST_TEST((m.protocol == Protocol::RFC5424));
+    BOOST_TEST(m.message.find('\xEF') != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(very_long_message)
+{
+    const std::string body(1000, 'x');
+    const auto m = parse("<34>1 2026-01-01T00:00:00Z h a - - - " + body);
+    BOOST_TEST((m.protocol == Protocol::RFC5424));
+    // message = "- " + 1000 x's (SD nil + space + body)
+    BOOST_TEST(m.message.size() == 1002u);
+}
+
+BOOST_AUTO_TEST_CASE(message_at_max_udp_size)
+{
+    // 65507 = max IPv4 UDP payload (65535 - 20 IP header - 8 UDP header).
+    // "<0>1 - - - - - " = 15 bytes; fill the rest with 'x'.
+    const std::string hdr     = "<0>1 - - - - - ";
+    const std::string payload = hdr + std::string(65507 - hdr.size(), 'x');
+    BOOST_REQUIRE_EQUAL(payload.size(), 65507u);
+    BOOST_CHECK_NO_THROW(parse(payload));
+    BOOST_TEST((parse(payload).protocol == Protocol::RFC5424));
+}
+
 BOOST_AUTO_TEST_CASE(raw_field_preserved)
 {
     const std::string s = "<34>1 2026-01-01T00:00:00Z h a - - - msg";
@@ -228,6 +266,22 @@ BOOST_AUTO_TEST_CASE(trailing_crlf_stripped)
     const auto m = parse("<13>Jan 12 15:04:05 host app: msg\r\n");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(m.message == "msg");
+}
+
+BOOST_AUTO_TEST_CASE(embedded_crlf_preserved)
+{
+    // CRLF in the middle of the message is NOT stripped.
+    const auto m = parse("<13>Jan  1 00:00:00 h app: before\r\nafter");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(m.message == "before\r\nafter");
+}
+
+BOOST_AUTO_TEST_CASE(very_long_message)
+{
+    const std::string body(1000, 'x');
+    const auto m = parse("<13>Jan  1 00:00:00 h app: " + body);
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(m.message == body);
 }
 
 BOOST_AUTO_TEST_CASE(facility_names_mapped)
@@ -335,6 +389,16 @@ BOOST_AUTO_TEST_CASE(malformed_pri_no_close)
     BOOST_TEST((m.protocol == Protocol::Unknown));
 }
 
+BOOST_AUTO_TEST_CASE(non_utf8_bytes_no_crash)
+{
+    // Latin-1 / arbitrary high bytes in a valid RFC3164 message body.
+    const std::string s = "<13>Jan  1 00:00:00 h app: \x80\x81\x82\x83";
+    BOOST_CHECK_NO_THROW(parse(s));
+    const auto m = parse(s);
+    // Parser works byte-level; result may be RFC3164 or Unknown, but must not crash.
+    BOOST_TEST((m.protocol == Protocol::RFC3164 || m.protocol == Protocol::Unknown));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Real-world samples ───────────────────────────────────────────────────────
@@ -377,6 +441,29 @@ BOOST_AUTO_TEST_CASE(cisco_ios_style)
     BOOST_TEST(*m.hostname == "192.168.1.1");
     BOOST_TEST(m.appName.has_value());
     BOOST_TEST(m.message == "Configured from console");
+}
+
+BOOST_AUTO_TEST_CASE(juniper)
+{
+    // Juniper JunOS syslog in standard RFC3164 format.
+    const auto m =
+        parse("<189>Jan  1 00:00:00 router.example.com %BGP-5-ADJCHANGE: neighbor 10.0.0.1 Up");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(*m.hostname == "router.example.com");
+    BOOST_TEST(*m.appName == "%BGP-5-ADJCHANGE");
+    BOOST_TEST(m.message == "neighbor 10.0.0.1 Up");
+}
+
+BOOST_AUTO_TEST_CASE(windows_event_log)
+{
+    // Windows Event Log forwarded via syslog in RFC3164 format.
+    const auto m =
+        parse("<14>Mar 15 12:00:00 WIN-SERVER MSWinEventLog[1]: Security 4624 Successful Logon");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(*m.hostname == "WIN-SERVER");
+    BOOST_TEST(*m.appName == "MSWinEventLog");
+    BOOST_TEST(*m.procId == "1");
+    BOOST_TEST(m.message == "Security 4624 Successful Logon");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

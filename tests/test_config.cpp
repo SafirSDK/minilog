@@ -177,6 +177,12 @@ BOOST_AUTO_TEST_CASE(port_negative_invalid)
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
+BOOST_AUTO_TEST_CASE(port_non_numeric_throws)
+{
+    TempFile tmp("[server]\nudp_port = abc\n\n[output.m]\ntext_file = /tmp/f\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
 BOOST_AUTO_TEST_CASE(port_1_valid)
 {
     TempFile tmp("[server]\nudp_port = 1\n\n[output.m]\ntext_file = /tmp/f\n");
@@ -342,6 +348,19 @@ BOOST_AUTO_TEST_CASE(max_files_zero_means_unlimited)
     TempFile tmp("[output.m]\ntext_file=/tmp/f\nmax_files=0\n");
     Config cfg = loadConfig(tmp.path);
     BOOST_TEST(cfg.outputs[0].maxFiles == 0);
+}
+
+BOOST_AUTO_TEST_CASE(max_files_one)
+{
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\nmax_files=1\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.outputs[0].maxFiles == 1);
+}
+
+BOOST_AUTO_TEST_CASE(duplicate_output_section_names_throws)
+{
+    TempFile tmp("[output.main]\ntext_file=/tmp/f1\n\n[output.main]\ntext_file=/tmp/f2\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_CASE(max_files_negative_throws)

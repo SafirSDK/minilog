@@ -350,6 +350,24 @@ BOOST_AUTO_TEST_CASE(max_files_zero_keeps_all)
     BOOST_CHECK(!fs::exists(dir / "syslog.6.log")); // 6th write goes to current
 }
 
+BOOST_AUTO_TEST_CASE(jsonl_only_rotates_on_size)
+{
+    // When only jsonl_file is configured, rotation triggers on jsonl size.
+    OutputConfig cfg;
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.maxSize          = 1; // any JSONL record exceeds 1 byte
+    cfg.maxFiles         = 0;
+    cfg.includeMalformed = true;
+
+    LogFile lf(ioc, cfg);
+    writeSync(lf, rfc3164Msg("hello")); // first write → current
+    writeSync(lf, rfc3164Msg("hello")); // jsonl size >= maxSize → rotates to .1
+
+    BOOST_CHECK(fs::exists(dir / "syslog.jsonl"));
+    BOOST_CHECK(fs::exists(dir / "syslog.1.jsonl"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.jsonl"));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Edge cases ─────────────────────────────────────────────────────────────
