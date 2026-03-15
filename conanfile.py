@@ -1,7 +1,7 @@
 from conan import ConanFile
 
 
-class MinilogConan(ConanFile):
+class minilogConan(ConanFile):
     name = "minilog"
     settings = "os", "compiler", "build_type", "arch"
     generators = "CMakeDeps", "CMakeToolchain"

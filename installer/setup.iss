@@ -32,8 +32,8 @@ AppPublisher=Saab AB
 AppPublisherURL=https://github.com/SafirSDK/minilog
 AppSupportURL=https://github.com/SafirSDK/minilog/issues
 AppUpdatesURL=https://github.com/SafirSDK/minilog/releases
-DefaultDirName={autopf}\MiniLog
-DefaultGroupName=MiniLog
+DefaultDirName={autopf}\minilog
+DefaultGroupName=minilog
 OutputDir={#OutputDir}
 OutputBaseFilename=minilog-{#AppVersion}-setup
 Compression=lzma2
@@ -55,7 +55,7 @@ Name: "pdb";  Description: "Debug Symbols (.pdb)"
 
 [Dirs]
 ; Create the log directory so the service can write logs immediately.
-Name: "{commonappdata}\MiniLog\logs"; Components: main
+Name: "{commonappdata}\minilog\logs"; Components: main
 
 [Files]
 ; Main binary.
@@ -68,13 +68,13 @@ Source: "{#SourceDir}\minilog.pdb"; DestDir: "{app}"; Components: pdb; \
 ; Default configuration — only written if the file does not already exist,
 ; so upgrades never overwrite a user-modified config.
 Source: "{#ConfigDir}\minilog.conf"; \
-    DestDir: "{commonappdata}\MiniLog"; \
+    DestDir: "{commonappdata}\minilog"; \
     Components: main; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Run]
 ; Register the Windows service, pointing it at the installed config.
 Filename: "{app}\minilog.exe"; \
-    Parameters: "--install ""{commonappdata}\MiniLog\minilog.conf"""; \
+    Parameters: "--install ""{commonappdata}\minilog\minilog.conf"""; \
     Flags: runhidden waituntilterminated; \
     StatusMsg: "Registering service..."
 

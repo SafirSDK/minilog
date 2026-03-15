@@ -27,8 +27,8 @@ from pathlib import Path
 
 PROGRAM_FILES  = Path(os.environ["ProgramFiles"])
 PROGRAM_DATA   = Path(os.environ["ProgramData"])
-APP_DIR        = PROGRAM_FILES / "MiniLog"
-DATA_DIR       = PROGRAM_DATA / "MiniLog"
+APP_DIR        = PROGRAM_FILES / "minilog"
+DATA_DIR       = PROGRAM_DATA / "minilog"
 EXE_PATH       = APP_DIR / "minilog.exe"
 UNINST_PATH    = APP_DIR / "unins000.exe"
 CONFIG_PATH    = DATA_DIR / "minilog.conf"

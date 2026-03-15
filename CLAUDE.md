@@ -1,6 +1,7 @@
 # minilog — Claude Code context
 
 ## Project
+Project name is "minilog", in all lower case.
 Minimal but production-worthy C++20 syslog server (UDP receiver, RFC3164 + RFC5424 + malformed
 messages, INI config, multiple output sinks with rotation, facility-based routing, UDP forwarding,
 Windows service + Inno Setup installer). Intended primarily for Windows deployment; developed on Linux.
@@ -61,5 +62,4 @@ slows file I/O far more than the producer. Not a leak. Fix: 100 µs sleep in the
 - Update README badge URL from `branch/cpp-rewrite` to `branch/master`
 
 ## Backlog
-- Discuss renaming `MiniLog` → `minilog` for branding consistency
 - Create icons/logo for the project
