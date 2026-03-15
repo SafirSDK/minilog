@@ -7,7 +7,7 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 
 ## Features
 
-- UDP reception (no TCP/TLS)
+- UDP reception
 - Parses RFC 3164, RFC 5424, and unrecognised ("UNKNOWN") datagrams
 - Multiple named output sections, each independently filtered by facility
 - Per-output text file (raw payload) and/or JSONL file (structured)
@@ -15,6 +15,13 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 - UDP forwarding with per-facility filtering and message truncation
 - Windows service installation/removal via CLI flags
 - Single external dependency: Boost
+
+## Limitations
+
+- **UDP only** — no TCP, TLS, or RELP; message delivery is best-effort
+- **IPv4 only** — the server binds a UDP v4 socket; IPv6 is not supported
+- **RFC 5424 structured data is not parsed** — it is just passed along to the output files
+- **Rotated files are not compressed** — generation files are plain text/JSONL; no gzip
 
 ## Requirements
 
@@ -137,6 +144,8 @@ The config path is stored in the service registry entry so the same path is used
 ## Configuration
 
 minilog reads a single INI file passed on the command line. There is no config reload; restart the process to pick up changes.
+
+Errors (bad config, bind failure, write failure) are reported to the Windows Event Log on Windows, and to the system syslog on Linux — plus stderr in both cases.
 
 See [`minilog.conf.example`](minilog.conf.example) for a fully commented example.
 
