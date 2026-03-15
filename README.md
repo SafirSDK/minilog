@@ -72,6 +72,17 @@ To build the installer (requires [Inno Setup](https://jrsoftware.org/isinfo.php)
 cmake --build --preset windows-release --target package
 ```
 
+### Running the installer from another installer or a script
+
+Pass `/VERYSILENT` to suppress the wizard and install with defaults:
+
+```
+minilog-0.1.0-setup.exe /VERYSILENT
+```
+
+For further command-line flags (component selection, install directory override, etc.) see the
+[Inno Setup documentation](https://jrsoftware.org/ishelp/index.php?topic=setupcmdline).
+
 ## Development
 
 ### Test suite overview
