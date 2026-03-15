@@ -48,7 +48,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Components]
 Name: "main"; Description: "minilog Syslog Server"; Types: full compact custom; Flags: fixed
-Name: "pdb";  Description: "Debug Symbols (.pdb)";  Types: full
+Name: "pdb";  Description: "Debug Symbols (.pdb)"
 
 [Dirs]
 ; Create the log directory so the service can write logs immediately.
