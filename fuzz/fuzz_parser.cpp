@@ -18,6 +18,7 @@
 
 #include "parser/syslog_parser.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -32,8 +33,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     // be set together or not at all.
     assert(msg.facility.has_value() == msg.severity.has_value());
 
-    // raw is always populated for non-empty input.
-    assert(size == 0 || !msg.raw.empty());
+    // raw is always populated unless the input is entirely CR/LF (which the
+    // parser strips before processing, leaving nothing to record).
+    const bool hasContent = std::any_of(data, data + size,
+                                        [](uint8_t b) { return b != '\r' && b != '\n'; });
+    assert(!hasContent || !msg.raw.empty());
 
     return 0;
 }
