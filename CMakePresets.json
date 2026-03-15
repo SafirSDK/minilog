@@ -39,7 +39,8 @@
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
-        "MINILOG_STRESS_MULTIPLIER": "10"
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1"
       }
     },
     {
@@ -52,7 +53,8 @@
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
-        "MINILOG_STRESS_MULTIPLIER": "10"
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1"
       }
     },
     {
