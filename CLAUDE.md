@@ -6,7 +6,7 @@ messages, INI config, multiple output sinks with rotation, facility-based routin
 Windows service + Inno Setup installer). Intended primarily for Windows deployment; developed and
 tested on Linux.
 
-- Branch: `cpp-rewrite` (merges to `master` when ready)
+- Branch: `cpp-rewrite` (merges to `master` when ready — see merge checklist below)
 - Build: CMake + Boost (system package on Linux, Conan on Windows)
 - Test framework: Boost.Test + Python binary tests (`tests/test_binary.py`)
 - Build presets: `linux-debug`, `linux-release`, `linux-docker`, `linux-coverage`, `linux-asan`,
