@@ -45,12 +45,118 @@ std::string currentTimestamp()
     return std::format("{:%Y-%m-%dT%H:%M:%S}Z", now);
 }
 
+// Replace every invalid UTF-8 byte sequence with U+FFFD (0xEF 0xBF 0xBD).
+// This ensures all string fields written to JSONL are valid UTF-8 regardless
+// of the encoding of the incoming syslog datagram.
+std::string sanitizeUtf8(std::string_view s)
+{
+    constexpr std::string_view kReplacement = "\xef\xbf\xbd";
+    std::string out;
+    out.reserve(s.size());
+
+    for (std::size_t i = 0; i < s.size();)
+    {
+        const auto c = static_cast<unsigned char>(s[i]);
+
+        if (c <= 0x7F)
+        {
+            out += s[i++];
+            continue;
+        }
+
+        // Determine sequence length and first-continuation-byte bounds.
+        std::size_t len;
+        unsigned char lo = 0x80, hi = 0xBF;
+        if (c >= 0xC2 && c <= 0xDF)
+        {
+            len = 2;
+        }
+        else if (c == 0xE0)
+        {
+            len = 3;
+            lo  = 0xA0;
+        }
+        else if (c >= 0xE1 && c <= 0xEC)
+        {
+            len = 3;
+        }
+        else if (c == 0xED)
+        {
+            len = 3;
+            hi  = 0x9F;
+        }
+        else if (c >= 0xEE && c <= 0xEF)
+        {
+            len = 3;
+        }
+        else if (c == 0xF0)
+        {
+            len = 4;
+            lo  = 0x90;
+        }
+        else if (c >= 0xF1 && c <= 0xF3)
+        {
+            len = 4;
+        }
+        else if (c == 0xF4)
+        {
+            len = 4;
+            hi  = 0x8F;
+        }
+        else
+        {
+            out += kReplacement; // invalid lead byte
+            ++i;
+            continue;
+        }
+
+        if (i + len > s.size())
+        {
+            out += kReplacement; // truncated sequence
+            ++i;
+            continue;
+        }
+
+        const auto b1 = static_cast<unsigned char>(s[i + 1]);
+        if (b1 < lo || b1 > hi)
+        {
+            out += kReplacement; // first continuation byte out of range
+            ++i;
+            continue;
+        }
+
+        bool valid = true;
+        for (std::size_t j = 2; j < len; ++j)
+        {
+            const auto bj = static_cast<unsigned char>(s[i + j]);
+            if (bj < 0x80 || bj > 0xBF)
+            {
+                valid = false;
+                break;
+            }
+        }
+
+        if (valid)
+        {
+            out.append(s.data() + i, len);
+            i += len;
+        }
+        else
+        {
+            out += kReplacement;
+            ++i;
+        }
+    }
+
+    return out;
+}
+
 std::string toJsonlRecord(const SyslogMessage& msg, const std::string& rcv)
 {
     namespace bj = boost::json;
 
     auto optStr = [](const std::optional<std::string>& o) -> bj::value
-    { return o ? bj::value(*o) : bj::value(nullptr); };
+    { return o ? bj::value(sanitizeUtf8(*o)) : bj::value(nullptr); };
 
     bj::object obj;
     obj["rcv"]      = rcv;
@@ -64,7 +170,7 @@ std::string toJsonlRecord(const SyslogMessage& msg, const std::string& rcv)
     obj["app"]      = optStr(msg.appName);
     obj["pid"]      = optStr(msg.procId);
     obj["msgid"]    = optStr(msg.msgId);
-    obj["message"]  = msg.message;
+    obj["message"]  = sanitizeUtf8(msg.message);
 
     return bj::serialize(obj);
 }

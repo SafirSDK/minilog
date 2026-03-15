@@ -155,7 +155,6 @@ See [`minilog.conf.example`](minilog.conf.example) for a fully commented example
 |-----|---------|-------------|
 | `host` | `0.0.0.0` | IP address to bind |
 | `udp_port` | `514` | UDP port (1–65535) |
-| `encoding` | `utf-8` | Byte encoding for incoming datagrams |
 | `workers` | `4` | Number of I/O worker threads |
 
 ### `[output.<name>]`

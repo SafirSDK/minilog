@@ -15,10 +15,6 @@ host = 0.0.0.0
 ; Note: binding to port 514 may require elevated privileges on Linux.
 udp_port = 514
 
-; Character encoding used to interpret incoming datagram bytes.
-; The decoded text is written to JSONL files. Common values: utf-8, latin-1.
-encoding = utf-8
-
 ; Number of I/O worker threads. One thread per physical CPU core is a
 ; reasonable upper bound; the default of 4 is suitable for most deployments.
 workers = 4

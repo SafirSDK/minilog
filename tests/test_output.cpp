@@ -204,6 +204,38 @@ BOOST_AUTO_TEST_CASE(unknown_protocol_nulls)
     BOOST_CHECK_EQUAL(obj["message"].as_string(), "garbage bytes");
 }
 
+BOOST_AUTO_TEST_CASE(invalid_utf8_replaced_with_replacement_character)
+{
+    // Syslog datagrams can contain non-UTF-8 bytes (e.g. Latin-1 sources).
+    // boost::json::serialize replaces each invalid byte sequence with U+FFFD.
+    OutputConfig cfg;
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.includeMalformed = true;
+
+    SyslogMessage msg  = rfc3164Msg();
+    msg.hostname       = "host\xFF" "name"; // 0xFF is never valid UTF-8
+    msg.message        = "caf\xe9";         // Latin-1 é (incomplete UTF-8 sequence)
+
+    LogFile lf(ioc, cfg);
+    writeSync(lf, msg);
+
+    const std::string content = readAll(dir / "syslog.jsonl");
+    BOOST_REQUIRE(!content.empty());
+
+    // Output must be parseable as JSON.
+    auto obj = bj::parse(std::string(content.begin(), content.end() - 1)).as_object();
+
+    // Each invalid byte is replaced with U+FFFD (UTF-8: 0xEF 0xBF 0xBD).
+    constexpr std::string_view kReplacement = "\xef\xbf\xbd";
+    const std::string hostname              = std::string(obj["hostname"].as_string());
+    BOOST_CHECK(hostname.find(kReplacement) != std::string::npos);
+    BOOST_CHECK_EQUAL(hostname.find('\xff'), std::string::npos);
+
+    const std::string message = std::string(obj["message"].as_string());
+    BOOST_CHECK(message.find(kReplacement) != std::string::npos);
+    BOOST_CHECK_EQUAL(message.find('\xe9'), std::string::npos);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── include_malformed ──────────────────────────────────────────────────────
