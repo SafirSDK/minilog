@@ -44,7 +44,6 @@ ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 SetupIconFile=..\artwork\minilog.ico
 WizardImageFile=wizard-image.png
-WizardImageStretch=no
 WizardSmallImageFile=wizard-header.png
 
 [Languages]
