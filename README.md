@@ -77,7 +77,7 @@ cmake --build --preset windows-release --target package
 Pass `/VERYSILENT` to suppress the wizard and install with defaults:
 
 ```
-minilog-0.1.0-setup.exe /VERYSILENT
+minilog-1.0.0-setup.exe /VERYSILENT
 ```
 
 For further command-line flags (component selection, install directory override, etc.) see the
