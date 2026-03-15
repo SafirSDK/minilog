@@ -59,3 +59,7 @@ slows file I/O far more than the producer. Not a leak. Fix: 100 µs sleep in the
 ## Merge checklist (cpp-rewrite → master)
 - Update `codecov.yml` branch from `cpp-rewrite` to `master`
 - Update README badge URL from `branch/cpp-rewrite` to `branch/master`
+
+## Backlog
+- Discuss renaming `MiniLog` → `minilog` for branding consistency
+- Create icons/logo for the project

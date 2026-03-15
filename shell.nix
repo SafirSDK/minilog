@@ -22,6 +22,7 @@ pkgs.mkShell {
     # Useful dev tools
     gdb
     gh
+    imagemagick
 
     # Container tools
     docker
