@@ -207,7 +207,8 @@ BOOST_AUTO_TEST_CASE(unknown_protocol_nulls)
 BOOST_AUTO_TEST_CASE(invalid_utf8_replaced_with_replacement_character)
 {
     // Syslog datagrams can contain non-UTF-8 bytes (e.g. Latin-1 sources).
-    // boost::json::serialize replaces each invalid byte sequence with U+FFFD.
+    // sanitizeUtf8() replaces each invalid byte sequence with U+FFFD before
+    // the fields are handed to boost::json::serialize.
     OutputConfig cfg;
     cfg.jsonlFile        = (dir / "syslog.jsonl").string();
     cfg.includeMalformed = true;
