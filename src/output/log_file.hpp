@@ -27,6 +27,9 @@
 namespace minilog
 {
 
+// Replace every invalid UTF-8 byte sequence with U+FFFD (0xEF 0xBF 0xBD).
+std::string sanitizeUtf8(std::string_view s);
+
 // Manages a pair of output files (text + jsonl) for one [output.X] section.
 // All public methods are safe to call from multiple threads — writes are
 // serialized through the strand.

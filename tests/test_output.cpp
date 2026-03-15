@@ -540,3 +540,180 @@ BOOST_AUTO_TEST_CASE(include_malformed_false_blocks_unknown)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+// ─── sanitizeUtf8 ────────────────────────────────────────────────────────────
+//
+// Tests call sanitizeUtf8() directly (declared in log_file.hpp).
+// The function must pass valid UTF-8 through unchanged and replace every
+// invalid byte sequence with U+FFFD (0xEF 0xBF 0xBD).
+
+BOOST_AUTO_TEST_SUITE(sanitize_utf8)
+
+namespace
+{
+const std::string R = "\xef\xbf\xbd"; // U+FFFD replacement character
+} // namespace
+
+// ── Valid sequences — must pass through unchanged ────────────────────────────
+
+BOOST_AUTO_TEST_CASE(empty_string)
+{
+    BOOST_CHECK_EQUAL(sanitizeUtf8(""), "");
+}
+
+BOOST_AUTO_TEST_CASE(pure_ascii_unchanged)
+{
+    BOOST_CHECK_EQUAL(sanitizeUtf8("Hello, world!"), "Hello, world!");
+}
+
+BOOST_AUTO_TEST_CASE(valid_2byte_unchanged)
+{
+    // U+00E9 LATIN SMALL LETTER E WITH ACUTE: 0xC3 0xA9
+    const std::string in = "caf\xc3\xa9";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(valid_3byte_unchanged)
+{
+    // U+20AC EURO SIGN: 0xE2 0x82 0xAC
+    const std::string in = "\xe2\x82\xac";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(valid_4byte_unchanged)
+{
+    // U+1D11E MUSICAL SYMBOL G CLEF: 0xF0 0x9D 0x84 0x9E
+    const std::string in = "\xf0\x9d\x84\x9e";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(valid_3byte_e0_boundary_unchanged)
+{
+    // U+0800 — minimum code point that uses a 3-byte sequence with 0xE0 lead.
+    // First continuation must be >= 0xA0; anything lower is an overlong encoding.
+    const std::string in = "\xe0\xa0\x80";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(valid_3byte_ed_boundary_unchanged)
+{
+    // U+D7FF — last code point before the surrogate range.
+    // 0xED lead requires first continuation <= 0x9F.
+    const std::string in = "\xed\x9f\xbf";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(valid_4byte_f0_boundary_unchanged)
+{
+    // U+10000 — minimum 4-byte sequence.
+    // 0xF0 lead requires first continuation >= 0x90.
+    const std::string in = "\xf0\x90\x80\x80";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(valid_4byte_f4_boundary_unchanged)
+{
+    // U+10FFFF — last valid Unicode code point.
+    // 0xF4 lead requires first continuation <= 0x8F.
+    const std::string in = "\xf4\x8f\xbf\xbf";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+// ── Invalid lead bytes ───────────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(invalid_lead_0xff_replaced)
+{
+    // 0xFF is never a valid lead byte.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xff"), R);
+}
+
+BOOST_AUTO_TEST_CASE(stray_continuation_byte_replaced)
+{
+    // 0x80–0xBF can only appear as continuation bytes; a lone one is invalid.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\x80"), R);
+}
+
+BOOST_AUTO_TEST_CASE(overlong_lead_bytes_replaced)
+{
+    // 0xC0 and 0xC1 would only produce overlong encodings of ASCII — rejected.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xc0\x80"), R + R);
+}
+
+// ── Truncated sequences ──────────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(truncated_2byte_at_end_replaced)
+{
+    // A 2-byte lead byte (0xC3) with no continuation following.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xc3"), R);
+}
+
+BOOST_AUTO_TEST_CASE(truncated_3byte_at_end_replaced)
+{
+    // 0xE2 alone — truncated before either continuation byte arrives.
+    // The stray 0x82 left behind is also an invalid lead byte.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xe2\x82"), R + R);
+}
+
+BOOST_AUTO_TEST_CASE(truncated_4byte_at_end_replaced)
+{
+    // 0xF0 with only two of its three required continuation bytes.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xf0\x90\x80"), R + R + R);
+}
+
+// ── Out-of-range first continuation byte ────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(overlong_3byte_e0_replaced)
+{
+    // 0xE0 0x9F … — first continuation below 0xA0 is an overlong encoding.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xe0\x9f\x80"), R + R + R);
+}
+
+BOOST_AUTO_TEST_CASE(surrogate_ed_replaced)
+{
+    // 0xED 0xA0 0x80 encodes U+D800 — a surrogate pair value, not valid UTF-8.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xed\xa0\x80"), R + R + R);
+}
+
+BOOST_AUTO_TEST_CASE(overlong_4byte_f0_replaced)
+{
+    // 0xF0 0x8F … — first continuation below 0x90 is an overlong encoding.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xf0\x8f\x80\x80"), R + R + R + R);
+}
+
+BOOST_AUTO_TEST_CASE(out_of_range_4byte_f4_replaced)
+{
+    // 0xF4 0x90 … — first continuation above 0x8F exceeds Unicode's U+10FFFF limit.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xf4\x90\x80\x80"), R + R + R + R);
+}
+
+// ── Bad later continuation bytes ─────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(bad_second_continuation_in_3byte_replaced)
+{
+    // 0xE2 0x82 0x41: valid lead + valid first cont, then 'A' instead of 0x80–0xBF.
+    // The lead is replaced; the stray 0x82 is then also replaced; 'A' passes through.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xe2\x82\x41"), R + R + "A");
+}
+
+BOOST_AUTO_TEST_CASE(bad_third_continuation_in_4byte_replaced)
+{
+    // 0xF0 0x90 0x80 0x41: three valid bytes then 'A' instead of 0x80–0xBF.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("\xf0\x90\x80\x41"), R + R + R + "A");
+}
+
+// ── Mixed content ────────────────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(invalid_byte_embedded_in_ascii)
+{
+    // A single invalid byte in the middle of an otherwise clean ASCII string.
+    BOOST_CHECK_EQUAL(sanitizeUtf8("hello\xffworld"), "hello" + R + "world");
+}
+
+BOOST_AUTO_TEST_CASE(valid_multibyte_and_invalid_interleaved)
+{
+    // Valid 2-byte (é), then an invalid byte, then valid 3-byte (€).
+    const std::string in = "\xc3\xa9\xff\xe2\x82\xac";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), "\xc3\xa9" + R + "\xe2\x82\xac");
+}
+
+BOOST_AUTO_TEST_SUITE_END()

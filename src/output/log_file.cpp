@@ -45,6 +45,8 @@ std::string currentTimestamp()
     return std::format("{:%Y-%m-%dT%H:%M:%S}Z", now);
 }
 
+} // namespace
+
 // Replace every invalid UTF-8 byte sequence with U+FFFD (0xEF 0xBF 0xBD).
 // This ensures all string fields written to JSONL are valid UTF-8 regardless
 // of the encoding of the incoming syslog datagram.
@@ -150,6 +152,9 @@ std::string sanitizeUtf8(std::string_view s)
 
     return out;
 }
+
+namespace
+{
 
 std::string toJsonlRecord(const SyslogMessage& msg, const std::string& rcv)
 {
