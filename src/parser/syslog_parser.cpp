@@ -146,13 +146,11 @@ std::optional<std::string> parse3164Timestamp(std::string_view& sv)
     {
         return std::nullopt;
     }
+    const int day =
+        (p - day0 == 1) ? (sv[day0] - '0') : (sv[day0] - '0') * 10 + (sv[day0 + 1] - '0');
+    if (day < 1 || day > 31)
     {
-        const int day =
-            (p - day0 == 1) ? (sv[day0] - '0') : (sv[day0] - '0') * 10 + (sv[day0 + 1] - '0');
-        if (day < 1 || day > 31)
-        {
-            return std::nullopt;
-        }
+        return std::nullopt;
     }
     if (p >= sv.size() || sv[p] != ' ')
     {
@@ -173,14 +171,12 @@ std::optional<std::string> parse3164Timestamp(std::string_view& sv)
     {
         return std::nullopt;
     }
+    const int hh = (t[0] - '0') * 10 + (t[1] - '0');
+    const int mm = (t[3] - '0') * 10 + (t[4] - '0');
+    const int ss = (t[6] - '0') * 10 + (t[7] - '0');
+    if (hh > 23 || mm > 59 || ss > 59)
     {
-        const int hh = (t[0] - '0') * 10 + (t[1] - '0');
-        const int mm = (t[3] - '0') * 10 + (t[4] - '0');
-        const int ss = (t[6] - '0') * 10 + (t[7] - '0');
-        if (hh > 23 || mm > 59 || ss > 59)
-        {
-            return std::nullopt;
-        }
+        return std::nullopt;
     }
     p += 8;
     std::string ts(sv.substr(0, p));

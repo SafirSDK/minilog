@@ -107,7 +107,7 @@ struct Fixture
     // (m_closed == true).  Instead, we join first so the io_context fully drains
     // (all receives → process tasks → strand writes complete), then let the
     // OutputManager/LogFile destructors close files synchronously.
-    void shutdown(UdpServer& server, OutputManager& /*om*/, std::vector<std::thread>& ioThreads)
+    void shutdown(UdpServer& server, std::vector<std::thread>& ioThreads)
     {
         server.stop();
         for (auto& t : ioThreads)
@@ -167,7 +167,7 @@ BOOST_AUTO_TEST_CASE(ten_thousand_messages_no_loss)
     // At least half must arrive — exact count is not checked because UDP may
     // drop datagrams under CI load.
     BOOST_CHECK(waitForLines(dir / "syslog.log", N / 2, std::chrono::seconds(10)));
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
 
     BOOST_CHECK_GE(countLines(dir / "syslog.log"), N / 2);
 }
@@ -216,7 +216,7 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
     // drop datagrams under CI load.
     constexpr int N_TOTAL = N_THREADS * N_PER_THREAD;
     BOOST_CHECK(waitForLines(dir / "syslog.log", N_TOTAL / 2, std::chrono::seconds(30)));
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
 
     std::ifstream f(dir / "syslog.log");
     std::string line;
@@ -257,7 +257,7 @@ BOOST_AUTO_TEST_CASE(max_udp_payload_no_crash)
     sendUdp(payload, port);
 
     BOOST_CHECK(waitForLines(dir / "syslog.log", 1, std::chrono::seconds(5)));
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
     // At least one must arrive — exact count depends on socket buffer.
     BOOST_CHECK_GE(countLines(dir / "syslog.log"), 1);
 }
@@ -289,7 +289,7 @@ BOOST_AUTO_TEST_CASE(degenerate_payloads_do_not_crash)
     sendUdp(std::string(256, 'A'), port);   // plain ASCII, no PRI
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
 
     // Server must still be alive (no exception propagated to io_context).
     // The file may or may not exist depending on include_malformed, but we
@@ -324,7 +324,7 @@ BOOST_AUTO_TEST_CASE(correct_file_count_after_flood)
     }
 
     BOOST_CHECK(waitForLines(dir / "syslog.log", 1, std::chrono::seconds(5)));
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
 
     // Count rotated files — must not exceed max_files.
     int rotated = 0;
@@ -408,7 +408,7 @@ BOOST_AUTO_TEST_CASE(flood_no_crash)
         }
     }
 
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
     // No count assertion — message loss is expected under overload.
 }
 
@@ -456,7 +456,7 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         t.join();
     }
 
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
 
     // Every line that did arrive must be structurally complete.  Message loss
     // is expected under overload (no count assertion), but any line written to
@@ -506,7 +506,7 @@ BOOST_AUTO_TEST_CASE(server_keeps_running_when_forward_target_is_down)
     }
 
     BOOST_CHECK(waitForLines(dir / "syslog.log", N, std::chrono::seconds(5)));
-    shutdown(server, om, ioThreads);
+    shutdown(server, ioThreads);
 
     // All messages must have been written locally despite the failing forwarding.
     BOOST_CHECK_EQUAL(countLines(dir / "syslog.log"), N);

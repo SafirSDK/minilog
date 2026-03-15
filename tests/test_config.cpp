@@ -91,7 +91,6 @@ BOOST_AUTO_TEST_CASE(all_fields_parsed)
     TempFile tmp("[server]\n"
                  "host = 127.0.0.1\n"
                  "udp_port = 5514\n"
-                 "encoding = latin-1\n"
                  "workers = 8\n"
                  "\n"
                  "[output.main]\n"

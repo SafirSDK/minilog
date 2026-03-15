@@ -58,29 +58,6 @@ void Forwarder::doForward(const SyslogMessage& msg)
     }
 }
 
-bool Forwarder::facilityMatches(const std::vector<int>& filter,
-                                const std::optional<int>& msgFacility)
-{
-    // Empty filter = wildcard: forward everything.
-    if (filter.empty())
-    {
-        return true;
-    }
-    // Non-wildcard filter: message must have a facility that is in the list.
-    if (!msgFacility.has_value())
-    {
-        return false;
-    }
-    for (const int f : filter)
-    {
-        if (f == *msgFacility)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 std::string Forwarder::truncateIfNeeded(const std::string& raw, uint32_t maxSize)
 {
     if (maxSize == 0 || raw.size() <= maxSize)

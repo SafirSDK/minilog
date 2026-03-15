@@ -40,8 +40,6 @@ public:
 private:
     void doForward(const SyslogMessage& msg);
 
-    static bool facilityMatches(const std::vector<int>& filter,
-                                const std::optional<int>& msgFacility);
     static std::string truncateIfNeeded(const std::string& raw, uint32_t maxSize);
 
     ForwardingConfig m_cfg;

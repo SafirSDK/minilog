@@ -46,9 +46,6 @@ private:
         std::unique_ptr<LogFile> file;
     };
 
-    static bool facilityMatches(const std::vector<int>& filter,
-                                const std::optional<int>& msgFacility);
-
     std::vector<Sink> m_sinks;
 };
 

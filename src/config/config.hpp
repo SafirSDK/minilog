@@ -14,7 +14,9 @@
  ******************************************************************************/
 
 #pragma once
+#include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -54,5 +56,20 @@ struct Config
 // Load and validate config from an INI file.
 // Throws std::runtime_error on parse or validation failure.
 Config loadConfig(const std::string& path);
+
+// Returns true if msgFacility is accepted by the filter.
+// An empty filter is a wildcard and accepts every message.
+inline bool facilityMatches(const std::vector<int>& filter, const std::optional<int>& msgFacility)
+{
+    if (filter.empty())
+    {
+        return true; // wildcard — matches everything
+    }
+    if (!msgFacility)
+    {
+        return false; // message has no facility; only wildcard sinks receive it
+    }
+    return std::find(filter.begin(), filter.end(), *msgFacility) != filter.end();
+}
 
 } // namespace minilog

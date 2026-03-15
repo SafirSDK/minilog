@@ -15,8 +15,6 @@
 
 #include "output_manager.hpp"
 
-#include <algorithm>
-
 namespace minilog
 {
 
@@ -48,21 +46,6 @@ void OutputManager::close()
     {
         sink.file->close();
     }
-}
-
-// static
-bool OutputManager::facilityMatches(const std::vector<int>& filter,
-                                    const std::optional<int>& msgFacility)
-{
-    if (filter.empty())
-    {
-        return true; // wildcard — matches everything
-    }
-    if (!msgFacility)
-    {
-        return false; // message has no facility; only wildcard sinks receive it
-    }
-    return std::find(filter.begin(), filter.end(), *msgFacility) != filter.end();
 }
 
 } // namespace minilog
