@@ -161,6 +161,7 @@ jobs:
             --output-folder=build/windows-release `
             --build=missing `
             --settings=build_type=RelWithDebInfo `
+            --settings=compiler.runtime=static `
             -c tools.cmake.cmaketoolchain:generator=Ninja
 
       - name: Set up MSVC environment
