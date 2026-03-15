@@ -44,6 +44,7 @@ struct Fixture
     {
         static int counter = 0;
         dir = fs::temp_directory_path() / ("minilog_itest_" + std::to_string(++counter));
+        fs::remove_all(dir);
         fs::create_directories(dir);
     }
 
