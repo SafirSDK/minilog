@@ -213,9 +213,10 @@ BOOST_AUTO_TEST_CASE(invalid_utf8_replaced_with_replacement_character)
     cfg.jsonlFile        = (dir / "syslog.jsonl").string();
     cfg.includeMalformed = true;
 
-    SyslogMessage msg  = rfc3164Msg();
-    msg.hostname       = "host\xFF" "name"; // 0xFF is never valid UTF-8
-    msg.message        = "caf\xe9";         // Latin-1 é (incomplete UTF-8 sequence)
+    SyslogMessage msg = rfc3164Msg();
+    msg.hostname      = "host\xFF"
+                        "name";    // 0xFF is never valid UTF-8
+    msg.message       = "caf\xe9"; // Latin-1 é (incomplete UTF-8 sequence)
 
     LogFile lf(ioc, cfg);
     writeSync(lf, msg);
