@@ -210,10 +210,9 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         t.join();
     }
 
-    // Wait for all messages to be processed.  With 4 io_context threads this
-    // should be well within the timeout even on a slow CI machine.  Use a
-    // generous limit scaled by the stress multiplier so sanitiser builds don't
-    // time out under the extra overhead.
+    // Wait for all messages to be processed.  Sanitiser builds skip this suite
+    // entirely (#if !MINILOG_STRESS_LOSSY), so 30 s is generous for any build
+    // that actually runs here.
     constexpr int N_TOTAL = N_THREADS * N_PER_THREAD;
     BOOST_CHECK(waitForLines(dir / "syslog.log", N_TOTAL, std::chrono::seconds(30)));
     shutdown(server, om, ioThreads);
