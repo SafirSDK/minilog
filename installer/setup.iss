@@ -43,8 +43,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; No Start Menu entries — this is a service, not a GUI application.
 DisableProgramGroupPage=yes
 SetupIconFile=..\artwork\minilog.ico
-WizardImageFile=..\artwork\minilog-logo.png
-WizardSmallImageFile=..\artwork\minilog-icon.png
+WizardImageFile=..\artwork\minilog-icon.png
+WizardSmallImageFile=..\artwork\minilog-logo.png
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
