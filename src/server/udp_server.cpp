@@ -29,7 +29,7 @@ UdpServer::UdpServer(boost::asio::io_context& ioc,
                      const Config& cfg,
                      OutputManager& outputMgr,
                      Forwarder* forwarder)
-    : m_cfg(cfg), m_socket(ioc), m_outputMgr(outputMgr), m_forwarder(forwarder),
+    : m_cfg(cfg), m_socket(boost::asio::make_strand(ioc)), m_outputMgr(outputMgr), m_forwarder(forwarder),
       m_recvBuffer(BUFFER_SIZE)
 {
 }
