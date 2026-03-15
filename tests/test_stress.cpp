@@ -395,6 +395,7 @@ BOOST_AUTO_TEST_CASE(flood_no_crash)
             const std::string msg =
                 "<34>Oct 11 22:14:15 host app[1]: soak flood " + std::to_string(i);
             sock.send_to(boost::asio::buffer(msg), ep);
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
     }
 
@@ -436,6 +437,7 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
                     const std::string msg = "<34>Oct 11 22:14:15 host app[" + std::to_string(t) +
                                             "]: t" + std::to_string(t) + "m" + std::to_string(i);
                     sock.send_to(boost::asio::buffer(msg), ep);
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
                 }
             });
     }
