@@ -103,8 +103,7 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
         // bad_descriptor: receive() was called on a socket that was already
         // closed (race between the re-arm in the success path and stop()).
         // Either way the socket is gone — do not re-arm.
-        if (ec != boost::asio::error::operation_aborted &&
-            ec != boost::asio::error::bad_descriptor)
+        if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::bad_descriptor)
         {
             osLogError("minilog: receive error: " + ec.message());
             receive();
