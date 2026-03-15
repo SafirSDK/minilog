@@ -178,6 +178,12 @@ jobs:
       - name: Test
         run: ctest --preset windows-release
 
+      - name: Test installer
+        shell: pwsh
+        run: |
+          $exe = Get-Item "build/windows-release/minilog-*-setup.exe" | Select-Object -First 1
+          python tests/installer/test_installer.py $exe.FullName
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
