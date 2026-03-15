@@ -35,8 +35,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 
     // raw is always populated unless the input is entirely CR/LF (which the
     // parser strips before processing, leaving nothing to record).
-    const bool hasContent = std::any_of(data, data + size,
-                                        [](uint8_t b) { return b != '\r' && b != '\n'; });
+    const bool hasContent =
+        std::any_of(data, data + size, [](uint8_t b) { return b != '\r' && b != '\n'; });
     assert(!hasContent || !msg.raw.empty());
 
     return 0;
