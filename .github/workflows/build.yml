@@ -230,10 +230,10 @@ jobs:
 
       - name: Fuzz (30 s)
         run: |
-          ./build/linux-fuzz/fuzz_parser \
+          ./build/linux-fuzz/tests/fuzz_parser \
             -max_total_time=30 \
             -jobs=2 \
-            fuzz/corpus/
+            tests/fuzz/corpus/
 
   # ─── Docker ──────────────────────────────────────────────────────────────────
   docker:
