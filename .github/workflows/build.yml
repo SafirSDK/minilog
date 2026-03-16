@@ -175,7 +175,7 @@ jobs:
             -c tools.cmake.cmaketoolchain:generator=Ninja
 
       - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: TheMrMilchmann/setup-msvc-dev@v4
 
       - name: Configure
         run: cmake --preset windows-release
@@ -198,7 +198,7 @@ jobs:
           python tests/installer/test_installer.py $exe.FullName
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: minilog-installer
           path: build/windows-release/minilog-*-setup.exe
