@@ -188,6 +188,37 @@ void installService(const std::string& exePath, const std::string& configPath)
     SERVICE_DESCRIPTIONA desc{const_cast<char*>(SERVICE_DESC)};
     ChangeServiceConfig2A(svc, SERVICE_CONFIG_DESCRIPTION, &desc);
 
+    // Register the event source so Event Viewer can display messages from the exe.
+    static constexpr char EVENT_LOG_KEY[] =
+        "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\minilog";
+    HKEY hKey = nullptr;
+    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE,
+                        EVENT_LOG_KEY,
+                        0,
+                        nullptr,
+                        REG_OPTION_NON_VOLATILE,
+                        KEY_SET_VALUE,
+                        nullptr,
+                        &hKey,
+                        nullptr) == ERROR_SUCCESS)
+    {
+        RegSetValueExA(hKey,
+                       "EventMessageFile",
+                       0,
+                       REG_EXPAND_SZ,
+                       reinterpret_cast<const BYTE*>(exePath.c_str()),
+                       static_cast<DWORD>(exePath.size() + 1));
+        const DWORD types =
+            EVENTLOG_ERROR_TYPE | EVENTLOG_WARNING_TYPE | EVENTLOG_INFORMATION_TYPE;
+        RegSetValueExA(hKey,
+                       "TypesSupported",
+                       0,
+                       REG_DWORD,
+                       reinterpret_cast<const BYTE*>(&types),
+                       sizeof(types));
+        RegCloseKey(hKey);
+    }
+
     osLogInfo(std::string("minilog service installed (") + binPath + ")");
     CloseServiceHandle(svc);
     CloseServiceHandle(scm);
@@ -220,6 +251,9 @@ void uninstallService()
         CloseServiceHandle(scm);
         throw std::runtime_error("DeleteService failed: " + std::to_string(err));
     }
+
+    RegDeleteKeyA(HKEY_LOCAL_MACHINE,
+                  "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\minilog");
 
     osLogInfo("minilog service uninstalled");
     CloseServiceHandle(svc);

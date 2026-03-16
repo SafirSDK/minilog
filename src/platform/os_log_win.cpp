@@ -18,6 +18,7 @@
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>
+#include "messages.h"
 #endif
 
 namespace minilog
@@ -30,7 +31,7 @@ void osLogError(const std::string& message)
     if (h)
     {
         const char* msg = message.c_str();
-        ReportEventA(h, EVENTLOG_ERROR_TYPE, 0, 0, nullptr, 1, 0, &msg, nullptr);
+        ReportEventA(h, EVENTLOG_ERROR_TYPE, 0, MSG_LOG, nullptr, 1, 0, &msg, nullptr);
         DeregisterEventSource(h);
     }
 #endif
@@ -44,7 +45,7 @@ void osLogInfo(const std::string& message)
     if (h)
     {
         const char* msg = message.c_str();
-        ReportEventA(h, EVENTLOG_INFORMATION_TYPE, 0, 0, nullptr, 1, 0, &msg, nullptr);
+        ReportEventA(h, EVENTLOG_INFORMATION_TYPE, 0, MSG_LOG, nullptr, 1, 0, &msg, nullptr);
         DeregisterEventSource(h);
     }
 #endif

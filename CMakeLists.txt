@@ -39,9 +39,27 @@ find_package(Boost REQUIRED COMPONENTS json program_options unit_test_framework)
 
 # Platform-specific sources
 if(WIN32)
+    find_program(MC_EXECUTABLE mc REQUIRED)
+    add_custom_command(
+        OUTPUT
+            ${CMAKE_CURRENT_BINARY_DIR}/messages.h
+            ${CMAKE_CURRENT_BINARY_DIR}/messages.rc
+            ${CMAKE_CURRENT_BINARY_DIR}/MSG00001.bin
+        COMMAND ${MC_EXECUTABLE}
+            -h ${CMAKE_CURRENT_BINARY_DIR}
+            -r ${CMAKE_CURRENT_BINARY_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/messages.mc
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/messages.mc
+        COMMENT "Compiling Windows message table..."
+    )
     set(PLATFORM_SOURCES
         src/platform/os_log_win.cpp
         src/platform/service_win.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/messages.rc
+    )
+    set_source_files_properties(
+        ${CMAKE_CURRENT_BINARY_DIR}/messages.rc
+        PROPERTIES COMPILE_FLAGS "/I\"${CMAKE_CURRENT_BINARY_DIR}\""
     )
 else()
     set(PLATFORM_SOURCES
@@ -80,6 +98,7 @@ target_link_libraries(minilog PRIVATE
 
 if(WIN32)
     target_link_libraries(minilog PRIVATE ws2_32 advapi32)
+    target_include_directories(minilog PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
 enable_testing()
