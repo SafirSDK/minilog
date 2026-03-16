@@ -23,6 +23,8 @@ pkgs.mkShell {
     gdb
     gh
     imagemagick
+    gcovr
+    llvm # provides llvm-cov, needed by gcovr for clang coverage builds
 
     # Container tools
     docker
