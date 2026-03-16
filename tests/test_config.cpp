@@ -465,4 +465,14 @@ BOOST_AUTO_TEST_CASE(empty_config_throws)
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
+BOOST_AUTO_TEST_CASE(duplicate_output_section_name_throws)
+{
+    TempFile tmp("[output.main]\n"
+                 "text_file = /tmp/a.log\n"
+                 "\n"
+                 "[output.main]\n"
+                 "text_file = /tmp/b.log\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
