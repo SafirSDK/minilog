@@ -115,3 +115,56 @@ if(Python3_FOUND)
     )
     set_tests_properties(test_binary PROPERTIES TIMEOUT 120)
 endif()
+
+# libFuzzer target (Clang only, enabled via linux-fuzz preset).
+option(MINILOG_FUZZ "Build libFuzzer fuzz_parser target" OFF)
+if(MINILOG_FUZZ)
+    add_executable(fuzz_parser
+        fuzz/fuzz_parser.cpp
+        ../src/parser/syslog_parser.cpp
+    )
+    target_include_directories(fuzz_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+    target_compile_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
+    target_link_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
+endif()
+
+# clang-tidy static analysis.
+# Run with: cmake --build <build-dir> --target clang-tidy-check
+find_program(RUN_CLANG_TIDY NAMES
+    run-clang-tidy
+    run-clang-tidy-21 run-clang-tidy-20 run-clang-tidy-19
+    run-clang-tidy-18 run-clang-tidy-17 run-clang-tidy-16
+)
+if(RUN_CLANG_TIDY)
+    # Under Nix (and similar wrapper-based toolchains) the compiler wrapper
+    # injects system -isystem paths at runtime; these are not captured in
+    # compile_commands.json.  Pass them explicitly so clang-tidy's built-in
+    # Clang frontend can find standard headers.
+    set(_tidy_extra_args "")
+    foreach(_dir ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+        list(APPEND _tidy_extra_args "-extra-arg=-isystem${_dir}")
+    endforeach()
+
+    add_custom_target(clang-tidy-check
+        COMMAND "${RUN_CLANG_TIDY}"
+            -p "${CMAKE_BINARY_DIR}"
+            ${_tidy_extra_args}
+            "${CMAKE_SOURCE_DIR}/src"
+        COMMENT "Running clang-tidy..."
+        VERBATIM
+    )
+endif()
+
+# clang-format compliance check (warning only, does not break the build).
+find_program(CLANG_FORMAT clang-format)
+if(CLANG_FORMAT)
+    add_custom_target(clang-format-check ALL
+        COMMAND "${CMAKE_COMMAND}"
+            "-DCLANG_FORMAT=${CLANG_FORMAT}"
+            "-DSRC_DIR=${CMAKE_SOURCE_DIR}/src"
+            "-DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/clang_format_check.cmake"
+        COMMENT "Checking clang-format..."
+        VERBATIM
+    )
+endif()

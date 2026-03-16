@@ -128,7 +128,7 @@ gcovr -r . --html-details build/linux-coverage/coverage.html
 
 ```
 cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
-build/linux-fuzz/fuzz_parser -max_total_time=60
+build/linux-fuzz/tests/fuzz_parser -max_total_time=60
 ```
 
 ### Extended soak (ASan + UBSan / TSan, ~30 min each)
