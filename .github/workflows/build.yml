@@ -2,7 +2,7 @@ name: Build & Test
 
 on:
   push:
-    branches: [ master, cpp-rewrite ]
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]

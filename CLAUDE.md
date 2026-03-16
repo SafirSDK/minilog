@@ -6,7 +6,7 @@ Minimal but production-worthy C++20 syslog server (UDP receiver, RFC3164 + RFC54
 messages, INI config, multiple output sinks with rotation, facility-based routing, UDP forwarding,
 Windows service + Inno Setup installer). Intended primarily for Windows deployment; developed on Linux.
 
-- Branch: `cpp-rewrite` (merges to `master` — see checklist below)
+- Branch: `master`
 - Build: CMake + Boost (system package on Linux, Conan on Windows); Boost is the only external dep
 - Test framework: Boost.Test + Python binary tests (`tests/test_binary.py`)
 - Build presets: `linux-debug`, `linux-release`, `linux-docker`, `linux-coverage`, `linux-asan`,
@@ -48,7 +48,4 @@ Fields: `rcv` (ISO8601 UTC), `src` (sender IP, no port), `proto` (`"RFC3164"`/`"
 `facility`, `severity`, `hostname`, `app`, `pid`, `msgid`, `message`. Absent optionals → `null`.
 Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 
-## Merge checklist (cpp-rewrite → master)
-- Update `codecov.yml` branch from `cpp-rewrite` to `master`
-- Update README badge URL from `branch/cpp-rewrite` to `branch/master`
 
