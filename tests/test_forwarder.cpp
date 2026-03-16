@@ -248,4 +248,21 @@ BOOST_AUTO_TEST_CASE(truncated_message_suffix_contains_original_size)
     BOOST_CHECK(got.find("200") != std::string::npos);
 }
 
+BOOST_AUTO_TEST_CASE(maxSize_smaller_than_suffix_truncates_to_maxSize)
+{
+    // When maxSize is smaller than the "[TRUNCATED: N bytes]" suffix itself,
+    // the message is simply clipped to maxSize bytes with no suffix appended.
+    Receiver rx;
+    boost::asio::io_context ioc;
+    constexpr uint32_t limit = 5;
+    Forwarder fwd(ioc, makeConfig(rx.port(), true, {}, limit));
+
+    const std::string longMsg(200, 'X');
+    fwd.forward(makeMsg(longMsg));
+    drain(ioc);
+
+    const std::string got = rx.receive();
+    BOOST_CHECK_EQUAL(got, std::string(5, 'X'));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
