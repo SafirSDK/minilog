@@ -1,0 +1,217 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-docker",
+      "displayName": "Linux Release (static Boost, for Docker)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-docker",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "Boost_USE_STATIC_LIBS": "ON"
+      }
+    },
+    {
+      "name": "linux-asan",
+      "displayName": "Linux ASan+UBSan (Clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "displayName": "Linux TSan (Clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1"
+      }
+    },
+    {
+      "name": "linux-coverage",
+      "displayName": "Linux Coverage (GCC)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-coverage",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "--coverage -fno-inline -fprofile-update=atomic",
+        "CMAKE_EXE_LINKER_FLAGS": "--coverage",
+        "MINILOG_STRESS_MULTIPLIER": "10"
+      }
+    },
+    {
+      "name": "linux-asan-extended",
+      "displayName": "Linux ASan+UBSan extended soak (Clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-asan-extended",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1",
+        "MINILOG_STRESS_SOAK_SECONDS": "900"
+      }
+    },
+    {
+      "name": "linux-tsan-extended",
+      "displayName": "Linux TSan extended soak (Clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-tsan-extended",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "MINILOG_STRESS_MULTIPLIER": "10",
+        "MINILOG_STRESS_LOSSY": "1",
+        "MINILOG_STRESS_SOAK_SECONDS": "900"
+      }
+    },
+    {
+      "name": "linux-fuzz",
+      "displayName": "Linux libFuzzer (Clang + ASan)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-fuzz",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,fuzzer-no-link -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address",
+        "MINILOG_FUZZ": "ON"
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows RelWithDebInfo (MSVC + Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-release",
+      "toolchainFile": "${sourceDir}/build/windows-release/conan_toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "name": "linux-docker",
+      "configurePreset": "linux-docker"
+    },
+    {
+      "name": "linux-asan",
+      "configurePreset": "linux-asan"
+    },
+    {
+      "name": "linux-tsan",
+      "configurePreset": "linux-tsan"
+    },
+    {
+      "name": "linux-coverage",
+      "configurePreset": "linux-coverage"
+    },
+    {
+      "name": "linux-asan-extended",
+      "configurePreset": "linux-asan-extended"
+    },
+    {
+      "name": "linux-tsan-extended",
+      "configurePreset": "linux-tsan-extended"
+    },
+    {
+      "name": "linux-fuzz",
+      "configurePreset": "linux-fuzz"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
+    },
+    {
+      "name": "linux-asan",
+      "configurePreset": "linux-asan",
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
+    },
+    {
+      "name": "linux-tsan",
+      "configurePreset": "linux-tsan",
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
+    },
+    {
+      "name": "linux-coverage",
+      "configurePreset": "linux-coverage",
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
+    },
+    {
+      "name": "linux-asan-extended",
+      "configurePreset": "linux-asan-extended",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-tsan-extended",
+      "configurePreset": "linux-tsan-extended",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 120 }
+    }
+  ]
+}

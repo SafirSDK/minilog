@@ -1,0 +1,160 @@
+cmake_minimum_required(VERSION 3.25)
+project(minilog VERSION 1.0.0 LANGUAGES CXX)
+
+# Scale factor for stress test message counts.
+# Full load (100) is used in normal builds.  Instrumented builds (coverage,
+# sanitizers) should use a smaller value (e.g. 10) so tests complete in time.
+set(MINILOG_STRESS_MULTIPLIER "100" CACHE STRING
+    "Stress test scale factor: flood = 100×N, concurrent = 10×N messages per thread")
+
+# When ON, the soak test suites are compiled in and count-sensitive assertions
+# in the flood/concurrent tests are replaced by a fixed soak window.  Intended
+# for the extended sanitizer presets where intentional UDP overload is expected.
+set(MINILOG_STRESS_LOSSY "0" CACHE STRING
+    "Set to 1 to enable lossy soak tests (extended ASan/TSan presets)")
+
+# Duration (seconds) of each soak test when MINILOG_STRESS_LOSSY=1.
+set(MINILOG_STRESS_SOAK_SECONDS "10" CACHE STRING
+    "Soak window in seconds per lossy test case (default 10, extended presets use 1800)")
+
+cmake_policy(SET CMP0167 NEW)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Generate compile_commands.json for clang-tidy and editor tooling.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Treat warnings as errors project-wide.
+set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+add_compile_options(
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wextra>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wpedantic>
+)
+
+find_package(Boost REQUIRED COMPONENTS json program_options unit_test_framework)
+
+# Platform-specific sources
+if(WIN32)
+    set(PLATFORM_SOURCES
+        src/platform/os_log_win.cpp
+        src/platform/service_win.cpp
+    )
+else()
+    set(PLATFORM_SOURCES
+        src/platform/os_log_linux.cpp
+        src/platform/service_linux.cpp
+    )
+endif()
+
+add_executable(minilog
+    src/main.cpp
+    src/config/config.cpp
+    src/parser/syslog_parser.cpp
+    src/server/udp_server.cpp
+    src/output/output_manager.cpp
+    src/output/log_file.cpp
+    src/forwarder/forwarder.cpp
+    ${PLATFORM_SOURCES}
+)
+
+target_include_directories(minilog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_compile_definitions(minilog PRIVATE
+    BOOST_ASIO_NO_DEPRECATED
+    $<$<PLATFORM_ID:Windows>:
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0601
+    >
+)
+
+target_link_libraries(minilog PRIVATE
+    Boost::headers
+    Boost::json
+    Boost::program_options
+)
+
+if(WIN32)
+    target_link_libraries(minilog PRIVATE ws2_32 advapi32)
+endif()
+
+enable_testing()
+add_subdirectory(tests)
+
+# Inno Setup installer (Windows only).
+if(WIN32)
+    find_program(ISCC ISCC HINTS
+        "C:/Program Files (x86)/Inno Setup 6"
+        "C:/Program Files/Inno Setup 6"
+    )
+    if(ISCC)
+        add_custom_target(package
+            COMMAND "${ISCC}"
+                "/DSourceDir=$<TARGET_FILE_DIR:minilog>"
+                "/DConfigDir=${CMAKE_SOURCE_DIR}/installer"
+                "/DAppVersion=${PROJECT_VERSION}"
+                "/DOutputDir=${CMAKE_BINARY_DIR}"
+                "${CMAKE_SOURCE_DIR}/installer/setup.iss"
+            DEPENDS minilog
+            COMMENT "Building Inno Setup installer..."
+            VERBATIM
+        )
+    endif()
+endif()
+
+# libFuzzer target (Clang only, enabled via linux-fuzz preset).
+option(MINILOG_FUZZ "Build libFuzzer fuzz_parser target" OFF)
+if(MINILOG_FUZZ)
+    add_executable(fuzz_parser
+        fuzz/fuzz_parser.cpp
+        src/parser/syslog_parser.cpp
+    )
+    target_include_directories(fuzz_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
+    target_link_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
+endif()
+
+# clang-tidy static analysis.
+# Run with: cmake --build <build-dir> --target clang-tidy-check
+find_program(RUN_CLANG_TIDY NAMES
+    run-clang-tidy
+    run-clang-tidy-21 run-clang-tidy-20 run-clang-tidy-19
+    run-clang-tidy-18 run-clang-tidy-17 run-clang-tidy-16
+)
+if(RUN_CLANG_TIDY)
+    # Under Nix (and similar wrapper-based toolchains) the compiler wrapper
+    # injects system -isystem paths at runtime; these are not captured in
+    # compile_commands.json.  Pass them explicitly so clang-tidy's built-in
+    # Clang frontend can find standard headers.
+    set(_tidy_extra_args "")
+    foreach(_dir ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+        list(APPEND _tidy_extra_args "-extra-arg=-isystem${_dir}")
+    endforeach()
+
+    add_custom_target(clang-tidy-check
+        COMMAND "${RUN_CLANG_TIDY}"
+            -p "${CMAKE_BINARY_DIR}"
+            ${_tidy_extra_args}
+            "${CMAKE_SOURCE_DIR}/src"
+        COMMENT "Running clang-tidy..."
+        VERBATIM
+    )
+endif()
+
+# clang-format compliance check (warning only, does not break the build).
+find_program(CLANG_FORMAT clang-format)
+if(CLANG_FORMAT)
+    add_custom_target(clang-format-check ALL
+        COMMAND "${CMAKE_COMMAND}"
+            "-DCLANG_FORMAT=${CLANG_FORMAT}"
+            "-DSRC_DIR=${CMAKE_SOURCE_DIR}/src"
+            "-DTEST_DIR=${CMAKE_SOURCE_DIR}/tests"
+            -P "${CMAKE_SOURCE_DIR}/cmake/clang_format_check.cmake"
+        COMMENT "Checking clang-format..."
+        VERBATIM
+    )
+endif()

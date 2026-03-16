@@ -1,0 +1,9 @@
+services:
+  minilog:
+    build: .
+    ports:
+      - "514:514/udp"
+    volumes:
+      - ./conf/minilog.conf:/etc/minilog/minilog.conf:ro
+      - ./logs:/var/log/minilog
+    restart: unless-stopped

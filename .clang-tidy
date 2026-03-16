@@ -1,0 +1,99 @@
+---
+Checks: >
+  readability-identifier-naming,
+  modernize-avoid-bind,
+  modernize-loop-convert,
+  modernize-make-shared,
+  modernize-make-unique,
+  modernize-pass-by-value,
+  modernize-use-default-member-init,
+  modernize-use-emplace,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  modernize-use-nodiscard,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-using,
+  bugprone-argument-comment,
+  bugprone-assert-side-effect,
+  bugprone-dangling-handle,
+  bugprone-exception-escape,
+  bugprone-implicit-widening-of-multiplication-result,
+  bugprone-infinite-loop,
+  bugprone-integer-division,
+  bugprone-move-forwarding-reference,
+  bugprone-narrowing-conversions,
+  bugprone-sizeof-container,
+  bugprone-sizeof-expression,
+  bugprone-string-constructor,
+  bugprone-suspicious-enum-usage,
+  bugprone-suspicious-semicolon,
+  bugprone-swapped-arguments,
+  bugprone-throw-keyword-missing,
+  bugprone-too-small-loop-variable,
+  bugprone-undelegated-constructor,
+  bugprone-unhandled-self-assignment,
+  bugprone-unused-raii,
+  bugprone-unused-return-value,
+  bugprone-use-after-move,
+  performance-avoid-endl,
+  performance-faster-string-find,
+  performance-for-range-copy,
+  performance-inefficient-algorithm,
+  performance-inefficient-string-concatenation,
+  performance-inefficient-vector-operation,
+  performance-move-const-arg,
+  performance-move-constructor-init,
+  performance-no-automatic-move,
+  performance-trivially-destructible,
+  performance-unnecessary-copy-initialization,
+  performance-unnecessary-value-param,
+  misc-const-correctness,
+  misc-misleading-identifier,
+  misc-misplaced-const,
+  misc-non-private-member-variables-in-classes,
+  misc-redundant-expression,
+  misc-throw-by-value-catch-by-reference,
+  misc-uniqueptr-reset-release,
+  misc-unused-alias-decls,
+  misc-unused-parameters,
+  misc-use-anonymous-namespace
+
+# Only diagnose issues in our own headers, not in Boost or system headers.
+HeaderFilterRegex: '^.*/minilog/src/.*'
+
+# Do not treat clang-tidy warnings as errors; the compiler's -Werror already
+# covers GCC/Clang warnings.  Tidy findings are advisory during development.
+WarningsAsErrors: ''
+
+CheckOptions:
+  # Private member variables: m_lowerCamelCase
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: m_
+
+  # Protected member variables: same convention
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: camelBack
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: m_
+
+  # Local variables: lowerCamelCase
+  - key: readability-identifier-naming.LocalVariableCase
+    value: camelBack
+
+  # Function parameters: lowerCamelCase
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+
+  # Free functions and member functions (non-virtual): lowerCamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.MemberCase
+    value: camelBack
+
+  # misc-const-correctness: allow pointer-to-const, but don't warn about
+  # value parameters (too noisy with Boost.Asio completion handlers).
+  - key: misc-const-correctness.WarnPointersAsValues
+    value: false
