@@ -587,6 +587,20 @@ BOOST_AUTO_TEST_CASE(valid_4byte_unchanged)
     BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
 }
 
+BOOST_AUTO_TEST_CASE(valid_3byte_ee_range_unchanged)
+{
+    // U+E000 (Private Use Area): 0xEE 0x80 0x80 — tests the 0xEE–0xEF lead branch.
+    const std::string in = "\xee\x80\x80";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(valid_4byte_f1_range_unchanged)
+{
+    // U+40000: 0xF1 0x80 0x80 0x80 — tests the 0xF1–0xF3 lead branch.
+    const std::string in = "\xf1\x80\x80\x80";
+    BOOST_CHECK_EQUAL(sanitizeUtf8(in), in);
+}
+
 BOOST_AUTO_TEST_CASE(valid_3byte_e0_boundary_unchanged)
 {
     // U+0800 — minimum code point that uses a 3-byte sequence with 0xE0 lead.
