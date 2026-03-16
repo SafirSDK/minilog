@@ -4,8 +4,8 @@
 
 ![minilog logo](artwork/minilog-logo.png)
 
-[![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg?branch=cpp-rewrite)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
-[![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/cpp-rewrite/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
+[![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
+[![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/master/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
 
 A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datagrams, routes them to text and/or JSONL log files with rotation, and can forward to another syslog endpoint. Runs as a Windows service or a Linux process (systemd-friendly).
 
