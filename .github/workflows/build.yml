@@ -2,10 +2,10 @@ name: Build & Test
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, develop ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, develop ]
 
 jobs:
   # ─── clang-format check ─────────────────────────────────────────────────────
