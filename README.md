@@ -1,5 +1,7 @@
 # minilog
 
+> **Looking for the Python version?** See the [python-version](https://github.com/SafirSDK/minilog/tree/python-version) tag.
+
 ![minilog logo](artwork/minilog-logo.png)
 
 [![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg?branch=cpp-rewrite)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
