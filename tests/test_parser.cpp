@@ -178,6 +178,26 @@ BOOST_AUTO_TEST_CASE(too_few_spaces_falls_through)
     BOOST_TEST((m.protocol == Protocol::Unknown));
 }
 
+BOOST_AUTO_TEST_CASE(msgid_is_last_field_no_trailing_space)
+{
+    // When msgId is the last header field and has no trailing space, parseNilable
+    // consumes it via the "no space found" branch (tok = sv, sv = {}).
+    const auto m = parse("<14>1 2026-01-01T00:00:00Z - - - mymsgid");
+    BOOST_TEST((m.protocol == Protocol::RFC5424));
+    BOOST_TEST(*m.msgId == "mymsgid");
+    BOOST_TEST(m.message == "");
+}
+
+BOOST_AUTO_TEST_CASE(msgid_absent_trailing_space_only)
+{
+    // When exactly 4 spaces follow the version field and the last field ends with
+    // a space, the fifth parseNilable call receives an empty string_view.
+    const auto m = parse("<14>1 2026-01-01T00:00:00Z - - - ");
+    BOOST_TEST((m.protocol == Protocol::RFC5424));
+    BOOST_TEST(!m.msgId.has_value());
+    BOOST_TEST(m.message == "");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── RFC3164 ─────────────────────────────────────────────────────────────────
@@ -309,6 +329,43 @@ BOOST_AUTO_TEST_CASE(bad_month_falls_through)
 {
     const auto m = parse("<13>Xyz 12 00:00:00 host app: msg");
     BOOST_TEST((m.protocol == Protocol::Unknown));
+}
+
+BOOST_AUTO_TEST_CASE(no_space_after_month_falls_through)
+{
+    // No space between month and day: "Jan12" fails timestamp parsing.
+    const auto m = parse("<13>Jan12 00:00:00 host app: msg");
+    BOOST_TEST((m.protocol == Protocol::Unknown));
+}
+
+BOOST_AUTO_TEST_CASE(day_too_many_digits_falls_through)
+{
+    // Three-digit day (e.g. 123) exceeds the 2-digit maximum.
+    const auto m = parse("<13>Jan 123 00:00:00 host app: msg");
+    BOOST_TEST((m.protocol == Protocol::Unknown));
+}
+
+BOOST_AUTO_TEST_CASE(no_space_after_day_falls_through)
+{
+    // No space between day and time: "12x..." fails timestamp parsing.
+    const auto m = parse("<13>Jan 12x00:00:00 host app: msg");
+    BOOST_TEST((m.protocol == Protocol::Unknown));
+}
+
+BOOST_AUTO_TEST_CASE(time_field_too_short_falls_through)
+{
+    // Timestamp truncated before the full HH:MM:SS is present.
+    const auto m = parse("<13>Jan 12 00:00");
+    BOOST_TEST((m.protocol == Protocol::Unknown));
+}
+
+BOOST_AUTO_TEST_CASE(tag_with_trailing_space_trimmed)
+{
+    // RFC3164 tag "myapp " (space before colon) — trailing spaces are trimmed.
+    const auto m = parse("<13>Jan 12 00:00:00 host myapp : message");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(*m.appName == "myapp");
+    BOOST_TEST(m.message == "message");
 }
 
 BOOST_AUTO_TEST_CASE(bad_time_format_falls_through)
