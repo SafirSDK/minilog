@@ -175,9 +175,7 @@ jobs:
             -c tools.cmake.cmaketoolchain:generator=Ninja
 
       - name: Set up MSVC environment
-        uses: TheMrMilchmann/setup-msvc-dev@v4
-        with:
-          arch: x64
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure
         run: cmake --preset windows-release
