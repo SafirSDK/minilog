@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: python3 scripts/check_headers.py
+      - run: python3 tests/check_headers.py
 
   # ─── Linux (GCC) ────────────────────────────────────────────────────────────
   linux:
