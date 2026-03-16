@@ -52,6 +52,11 @@ if(WIN32)
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/messages.mc
         COMMENT "Compiling Windows message table..."
     )
+    # Named target so test executables can add_dependencies() on the generated header.
+    add_custom_target(minilog_generate_messages
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/messages.h
+    )
+
     set(PLATFORM_SOURCES
         src/platform/os_log_win.cpp
         src/platform/service_win.cpp

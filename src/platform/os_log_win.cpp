@@ -17,8 +17,11 @@
 
 #include <iostream>
 #ifdef _WIN32
+// clang-format off
+// windows.h must precede messages.h — DWORD is defined there.
 #include <windows.h>
 #include "messages.h"
+// clang-format on
 #endif
 
 namespace minilog

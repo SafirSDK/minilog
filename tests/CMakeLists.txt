@@ -34,6 +34,8 @@ target_sources(test_output     PRIVATE
 )
 if(WIN32)
     target_sources(test_output PRIVATE ../src/platform/os_log_win.cpp)
+    target_include_directories(test_output PRIVATE ${CMAKE_BINARY_DIR})
+    add_dependencies(test_output minilog_generate_messages)
 else()
     target_sources(test_output PRIVATE ../src/platform/os_log_linux.cpp)
 endif()
@@ -46,6 +48,8 @@ target_sources(test_forwarder  PRIVATE
 )
 if(WIN32)
     target_sources(test_forwarder PRIVATE ../src/platform/os_log_win.cpp)
+    target_include_directories(test_forwarder PRIVATE ${CMAKE_BINARY_DIR})
+    add_dependencies(test_forwarder minilog_generate_messages)
 else()
     target_sources(test_forwarder PRIVATE ../src/platform/os_log_linux.cpp)
 endif()
@@ -64,6 +68,8 @@ if(WIN32)
         ../src/platform/os_log_win.cpp
         ../src/platform/service_win.cpp
     )
+    target_include_directories(test_integration PRIVATE ${CMAKE_BINARY_DIR})
+    add_dependencies(test_integration minilog_generate_messages)
     target_link_libraries(test_integration PRIVATE ws2_32)
 else()
     target_sources(test_integration PRIVATE
@@ -95,6 +101,8 @@ if(WIN32)
         ../src/platform/os_log_win.cpp
         ../src/platform/service_win.cpp
     )
+    target_include_directories(test_stress PRIVATE ${CMAKE_BINARY_DIR})
+    add_dependencies(test_stress minilog_generate_messages)
     target_link_libraries(test_stress PRIVATE ws2_32)
 else()
     target_sources(test_stress PRIVATE

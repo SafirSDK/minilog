@@ -208,8 +208,7 @@ void installService(const std::string& exePath, const std::string& configPath)
                        REG_EXPAND_SZ,
                        reinterpret_cast<const BYTE*>(exePath.c_str()),
                        static_cast<DWORD>(exePath.size() + 1));
-        const DWORD types =
-            EVENTLOG_ERROR_TYPE | EVENTLOG_WARNING_TYPE | EVENTLOG_INFORMATION_TYPE;
+        const DWORD types = EVENTLOG_ERROR_TYPE | EVENTLOG_WARNING_TYPE | EVENTLOG_INFORMATION_TYPE;
         RegSetValueExA(hKey,
                        "TypesSupported",
                        0,
