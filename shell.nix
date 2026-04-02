@@ -25,6 +25,7 @@ pkgs.mkShell {
     imagemagick
     gcovr
     llvm # provides llvm-cov, needed by gcovr for clang coverage builds
+    ruff # Python linter
 
     # Container tools
     docker

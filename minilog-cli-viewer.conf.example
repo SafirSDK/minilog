@@ -1,0 +1,52 @@
+; minilog-cli-viewer configuration file
+;
+; This file configures the display and filtering options for minilog-cli-viewer.py.
+; The viewer automatically reads minilog.conf to find log file locations, so you
+; only need to configure display preferences and filters here.
+;
+; Place this file as:
+;   - ./minilog-cli-viewer.conf (current directory), or
+;   - In the same directory as minilog.conf (e.g., /etc/minilog/)
+;
+; If no config file is found, the viewer uses sensible defaults.
+
+; ─────────────────────────────────────────────────────────────────────────────
+; Display settings
+; ─────────────────────────────────────────────────────────────────────────────
+[viewer]
+
+; Columns to display (comma-separated, in order)
+; Available columns: rcv, src, proto, facility, severity, hostname, app, pid, msgid, message
+; Default: rcv, facility, severity, hostname, app, pid, message
+columns = rcv, facility, severity, hostname, app, pid, message
+
+; Timestamp format (applies when 'rcv' column is shown)
+; Options:
+;   iso   - Full ISO8601 format: 2026-03-29T14:30:22Z
+;   short - Short format:        03-29 14:30:22
+;   time  - Time only:           14:30:22
+; Default: short
+timestamp_format = short
+
+; Use colored output (facility/severity color-coding)
+; Colors are automatically disabled when output is not a TTY
+; Default: true
+use_colors = true
+
+; ─────────────────────────────────────────────────────────────────────────────
+; Filtering
+; ─────────────────────────────────────────────────────────────────────────────
+[filters]
+
+; Exclude messages containing any of these strings (one per line)
+; Matching is case-insensitive and searches the entire message field
+; Default: none
+exclude =
+    nodecom
+    Turning logging
+
+; Include only messages matching ANY of these patterns (one per line)
+; If empty or not specified, all messages pass (except excluded ones)
+; Matching is case-insensitive
+; Default: none (include all)
+include =

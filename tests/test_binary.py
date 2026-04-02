@@ -218,8 +218,8 @@ class TestGracefulShutdown(unittest.TestCase):
             proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
             try:
                 self.assertTrue(wait_for_port(port))
-                N = 20
-                for i in range(N):
+                n_messages = 20
+                for i in range(n_messages):
                     send_udp(f"<34>Oct 11 22:14:15 mymachine su[1]: msg{i:04d}", port)
                 # Give the server enough time to receive and process everything
                 # before signalling shutdown.
@@ -229,7 +229,7 @@ class TestGracefulShutdown(unittest.TestCase):
                 proc.wait(timeout=10)
 
             self.assertEqual(proc.returncode, 0)
-            self.assertEqual(count_lines(d / "syslog.log"), N)
+            self.assertEqual(count_lines(d / "syslog.log"), n_messages)
 
 
 # ── Forward-to-self (two binary instances) ───────────────────────────────────
@@ -275,8 +275,8 @@ class TestForwardToSelf(unittest.TestCase):
 class TestMultiWorker(unittest.TestCase):
     def test_concurrent_senders_no_corruption(self):
         """8 concurrent sender threads with workers=4 — no torn lines."""
-        N_THREADS = 8
-        N_PER_THREAD = 50  # 400 total; fast enough for CI
+        n_threads = 8
+        n_per_thread = 50  # 400 total; fast enough for CI
 
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -288,14 +288,14 @@ class TestMultiWorker(unittest.TestCase):
                 self.assertTrue(wait_for_port(port))
 
                 def sender(tid: int) -> None:
-                    for i in range(N_PER_THREAD):
+                    for i in range(n_per_thread):
                         send_udp(
                             f"<34>Oct 11 22:14:15 mymachine su[{tid}]: t{tid:02d}m{i:04d}",
                             port,
                         )
 
                 threads = [
-                    threading.Thread(target=sender, args=(t,)) for t in range(N_THREADS)
+                    threading.Thread(target=sender, args=(t,)) for t in range(n_threads)
                 ]
                 for t in threads:
                     t.start()
@@ -313,7 +313,7 @@ class TestMultiWorker(unittest.TestCase):
                 self.assertRegex(line, r"t\d{2}m\d{4}$", f"corrupted line: {line!r}")
 
             # On loopback UDP is reliable; allow a small margin for loaded CI.
-            total = N_THREADS * N_PER_THREAD
+            total = n_threads * n_per_thread
             self.assertGreaterEqual(len(lines), total * 9 // 10)
 
 

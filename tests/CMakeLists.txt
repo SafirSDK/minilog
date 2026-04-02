@@ -122,6 +122,15 @@ if(Python3_FOUND)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     set_tests_properties(test_binary PROPERTIES TIMEOUT 120)
+
+    add_test(
+        NAME test_viewer
+        COMMAND Python3::Interpreter
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_viewer.py
+            ${CMAKE_SOURCE_DIR}/minilog-cli-viewer.py
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(test_viewer PROPERTIES TIMEOUT 60)
 endif()
 
 # libFuzzer target (Clang only, enabled via linux-fuzz preset).

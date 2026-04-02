@@ -1,0 +1,48 @@
+# Ruff configuration for minilog Python scripts
+# https://docs.astral.sh/ruff/
+
+target-version = "py310"
+line-length = 100
+
+[lint]
+# Enable recommended rules plus some extras
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+
+# Ignore specific rules that are too strict for test code
+ignore = [
+    "E501",   # Line too long (we use line-length setting instead)
+    "SIM108", # Use ternary operator (sometimes if/else is clearer)
+]
+
+[lint.per-file-ignores]
+# Conan requires specific class naming convention
+"conanfile.py" = [
+    "N801",  # Class name should use CapWords (Conan convention)
+]
+
+# Windows environment variables use PascalCase (ProgramFiles, ProgramData)
+"tests/installer/test_installer.py" = [
+    "SIM112",  # Capitalized environment variable (Windows uses PascalCase)
+]
+"minilog-cli-viewer.py" = [
+    "SIM112",  # Capitalized environment variable (Windows uses PascalCase)
+]
+
+# Test files can have unused imports, assert statements, etc.
+"tests/**/*.py" = [
+    "F401",  # Unused import
+    "F841",  # Unused variable
+]
+
+[lint.isort]
+known-first-party = ["minilog"]

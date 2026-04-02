@@ -22,16 +22,18 @@ import sys
 import time
 from pathlib import Path
 
-
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
 PROGRAM_FILES  = Path(os.environ["ProgramFiles"])
 PROGRAM_DATA   = Path(os.environ["ProgramData"])
 APP_DIR        = PROGRAM_FILES / "minilog"
+TOOLS_DIR      = APP_DIR / "tools"
 DATA_DIR       = PROGRAM_DATA / "minilog"
 EXE_PATH       = APP_DIR / "minilog.exe"
+VIEWER_PATH    = TOOLS_DIR / "minilog-cli-viewer.py"
 UNINST_PATH    = APP_DIR / "unins000.exe"
 CONFIG_PATH    = DATA_DIR / "minilog.conf"
+VIEWER_CONFIG  = DATA_DIR / "minilog-cli-viewer.conf"
 LOG_DIR        = DATA_DIR / "logs"
 LOG_FILE       = LOG_DIR / "syslog.log"
 SERVICE_NAME   = "minilog"
@@ -113,11 +115,26 @@ def test_clean_install(installer: Path) -> None:
     run_installer(installer)
 
     check(EXE_PATH.exists(),    f"minilog.exe present at {APP_DIR}")
+    check(TOOLS_DIR.exists(),   f"Tools directory created at {TOOLS_DIR}")
+    check(VIEWER_PATH.exists(), f"minilog-cli-viewer.py present at {TOOLS_DIR}")
     check(LOG_DIR.exists(),     f"Log directory created at {LOG_DIR}")
     check(CONFIG_PATH.exists(), f"Config file present at {DATA_DIR}")
+    check(VIEWER_CONFIG.exists(), f"Viewer config file present at {DATA_DIR}")
     check(service_exists(),                       f"Service '{SERVICE_NAME}' registered")
     check(service_start_type() == "AUTO_START",   "Service start type is AUTO_START")
     check(wait_service_running(),                  "Service is Running")
+
+    # Test that the viewer script is runnable
+    if VIEWER_PATH.exists():
+        result = subprocess.run(
+            ["python", str(VIEWER_PATH), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        check(result.returncode == 0, "Viewer script runs successfully (--help)")
+        check("minilog-cli-viewer" in result.stdout, "Viewer help output looks correct")
 
 
 # ─── Test 2: UDP smoke test ───────────────────────────────────────────────────
@@ -162,9 +179,11 @@ def test_uninstall() -> None:
 
     run_uninstaller()
 
-    check(not service_exists(),  "Service removed after uninstall")
-    check(not EXE_PATH.exists(), "minilog.exe removed after uninstall")
-    check(CONFIG_PATH.exists(),  "Config file survives uninstall")
+    check(not service_exists(),     "Service removed after uninstall")
+    check(not EXE_PATH.exists(),    "minilog.exe removed after uninstall")
+    check(not VIEWER_PATH.exists(), "minilog-cli-viewer.py removed after uninstall")
+    check(CONFIG_PATH.exists(),     "Config file survives uninstall")
+    check(VIEWER_CONFIG.exists(),   "Viewer config file survives uninstall")
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
