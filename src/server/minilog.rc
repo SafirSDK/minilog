@@ -1,0 +1,18 @@
+/******************************************************************************
+ *
+ * Copyright Saab AB, 2026 (https://github.com/SafirSDK/minilog)
+ *
+ * Created by: Lars Hagström / lars@foldspace.nu
+ *
+ *******************************************************************************
+ *
+ * This file is part of minilog.
+ *
+ * minilog is free software: you can redistribute it and/or modify
+ * it under the terms of the MIT License as published by the Open Source
+ * Initiative. See the LICENSE file for details.
+ *
+ ******************************************************************************/
+
+// Application icon — embedded into minilog.exe so it shows in Explorer and shortcuts.
+1 ICON "../../artwork/minilog.ico"
