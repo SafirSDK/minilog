@@ -67,6 +67,7 @@ if(WIN32)
     set(PLATFORM_SOURCES
         src/server/platform/os_log_win.cpp
         src/server/platform/service_win.cpp
+        src/server/minilog.rc
         ${CMAKE_CURRENT_BINARY_DIR}/messages.rc
     )
     set_source_files_properties(
