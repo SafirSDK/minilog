@@ -6,6 +6,10 @@ Minimal but production-worthy C++20 syslog server (UDP receiver, RFC3164 + RFC54
 messages, INI config, multiple output sinks with rotation, facility-based routing, UDP forwarding,
 Windows service + Inno Setup installer). Intended primarily for Windows deployment; developed on Linux.
 
+**WSL note:** If the host OS is Windows, development is done inside WSL (Ubuntu). All shell
+commands (git, cmake, ctest, go, python, etc.) must be run via `wsl bash -c "..."` rather than
+directly in PowerShell/CMD.
+
 - Branch: `master`
 - Build: CMake + Boost (system package on Linux, Conan on Windows); Boost is the only external dep
 - Test framework: Boost.Test + Python binary tests (`tests/binary/test_binary.py`)
