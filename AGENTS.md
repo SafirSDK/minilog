@@ -6,6 +6,10 @@ Minimal but production-worthy C++20 syslog server (UDP receiver, RFC3164 + RFC54
 messages, INI config, multiple output sinks with rotation, facility-based routing, UDP forwarding,
 Windows service + Inno Setup installer). Intended primarily for Windows deployment; developed on Linux.
 
+**WSL note:** If the host OS is Windows, development is done inside WSL (Ubuntu). All shell
+commands (git, cmake, ctest, go, python, etc.) must be run via `wsl bash -c "..."` rather than
+directly in PowerShell/CMD.
+
 - Branch: `master`
 - Build: CMake + Boost (system package on Linux, Conan on Windows); Boost is the only external dep
 - Test framework: Boost.Test + Python binary tests (`tests/binary/test_binary.py`)
@@ -15,6 +19,15 @@ Windows service + Inno Setup installer). Intended primarily for Windows deployme
 ## Technology choices
 Boost throughout: Asio (networking), PropertyTree (INI parsing), JSON (JSONL output), Test (tests).
 Direct WinAPI/POSIX for OS logging. Inno Setup 6 for the Windows installer.
+
+Both Windows executables embed `artwork/minilog.ico`. The server uses `src/server/minilog.rc`
+(compiled by MSVC). The Go web-viewer uses a pre-generated `src/web-viewer/rsrc_windows_amd64.syso`.
+If the icon changes, regenerate the `.syso`:
+```
+cd src/web-viewer
+go-winres simply --icon ../../artwork/minilog.ico --arch amd64
+```
+Install `go-winres` with `go install github.com/tc-hib/go-winres@latest` if needed.
 
 ## Conventions
 Formatting enforced by `.clang-format` (Allman braces, 100-col limit, include grouping — read it).
