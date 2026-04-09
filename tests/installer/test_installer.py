@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import random
 import re
@@ -20,6 +21,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -30,6 +32,7 @@ APP_DIR        = PROGRAM_FILES / "minilog"
 TOOLS_DIR      = APP_DIR / "tools"
 DATA_DIR       = PROGRAM_DATA / "minilog"
 EXE_PATH       = APP_DIR / "minilog.exe"
+WEB_VIEWER_EXE = APP_DIR / "minilog-web-viewer.exe"
 VIEWER_PATH    = TOOLS_DIR / "minilog-cli-viewer.py"
 UNINST_PATH    = APP_DIR / "unins000.exe"
 CONFIG_PATH    = DATA_DIR / "minilog.conf"
@@ -37,6 +40,8 @@ VIEWER_CONFIG  = DATA_DIR / "minilog-cli-viewer.conf"
 LOG_DIR        = DATA_DIR / "logs"
 LOG_FILE       = LOG_DIR / "syslog.log"
 SERVICE_NAME   = "minilog"
+WEB_SERVICE    = "minilog-web-viewer"
+WEB_VIEWER_URL = "http://localhost:8080"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -82,27 +87,27 @@ def sc(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def service_exists() -> bool:
-    return sc("query", SERVICE_NAME).returncode == 0
+def service_exists(name: str = SERVICE_NAME) -> bool:
+    return sc("query", name).returncode == 0
 
 
-def service_state() -> str:
+def service_state(name: str = SERVICE_NAME) -> str:
     """Return the service state string, e.g. 'RUNNING', or '' if not found."""
-    result = sc("query", SERVICE_NAME)
+    result = sc("query", name)
     m = re.search(r"STATE\s*:\s*\d+\s+(\w+)", result.stdout)
     return m.group(1) if m else ""
 
 
-def service_start_type() -> str:
+def service_start_type(name: str = SERVICE_NAME) -> str:
     """Return the start type string, e.g. 'AUTO_START', or '' if not found."""
-    result = sc("qc", SERVICE_NAME)
+    result = sc("qc", name)
     m = re.search(r"START_TYPE\s*:\s*\d+\s+(\w+)", result.stdout)
     return m.group(1) if m else ""
 
 
-def wait_service_running(timeout: int = 15) -> bool:
+def wait_service_running(name: str = SERVICE_NAME, timeout: int = 15) -> bool:
     for _ in range(timeout):
-        if service_state() == "RUNNING":
+        if service_state(name) == "RUNNING":
             return True
         time.sleep(1)
     return False
@@ -136,6 +141,24 @@ def test_clean_install(installer: Path) -> None:
         check(result.returncode == 0, "Viewer script runs successfully (--help)")
         check("minilog-cli-viewer" in result.stdout, "Viewer help output looks correct")
 
+    # Web viewer checks
+    check(WEB_VIEWER_EXE.exists(), f"minilog-web-viewer.exe present at {APP_DIR}")
+    check(service_exists(WEB_SERVICE), f"Service '{WEB_SERVICE}' registered")
+    check(wait_service_running(WEB_SERVICE), f"Service '{WEB_SERVICE}' is Running")
+
+    # Verify the web viewer responds to HTTP requests
+    if service_state(WEB_SERVICE) == "RUNNING":
+        ok = False
+        for _ in range(10):
+            try:
+                resp = urllib.request.urlopen(f"{WEB_VIEWER_URL}/sinks", timeout=3)
+                data = json.loads(resp.read())
+                ok = isinstance(data, list)
+                break
+            except Exception:
+                time.sleep(1)
+        check(ok, "Web viewer /sinks endpoint returns a JSON array")
+
 
 # ─── Test 2: UDP smoke test ───────────────────────────────────────────────────
 
@@ -167,6 +190,7 @@ def test_upgrade(installer: Path) -> None:
 
     run_installer(installer)
     check(wait_service_running(), "Service running after upgrade")
+    check(wait_service_running(WEB_SERVICE), "Web viewer service running after upgrade")
 
     content = CONFIG_PATH.read_text(encoding="utf-8")
     check(sentinel in content, "Config not overwritten on upgrade")
@@ -180,7 +204,9 @@ def test_uninstall() -> None:
     run_uninstaller()
 
     check(not service_exists(),     "Service removed after uninstall")
+    check(not service_exists(WEB_SERVICE), "Web viewer service removed after uninstall")
     check(not EXE_PATH.exists(),    "minilog.exe removed after uninstall")
+    check(not WEB_VIEWER_EXE.exists(), "minilog-web-viewer.exe removed after uninstall")
     check(not VIEWER_PATH.exists(), "minilog-cli-viewer.py removed after uninstall")
     check(CONFIG_PATH.exists(),     "Config file survives uninstall")
     check(VIEWER_CONFIG.exists(),   "Viewer config file survives uninstall")
