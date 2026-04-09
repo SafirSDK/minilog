@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.0 — 2026-04-10
+
+### New
+
+- **Web viewer — message detail panel**: clicking a log row expands an inline detail panel
+  showing all fields. Columns are resizable by dragging header edges.
+- **Web viewer — Clear Screen button**: hides all current messages so only new incoming entries
+  are shown. Implemented via a server-side `since` parameter on `/lines`.
+- **Web viewer — toolbar improvements**: renamed Clear/Reset buttons with descriptive tooltips,
+  repositioned Clear Screen to a centered toolbar zone, and gave it a distinct visual style.
+- **Installer shortcuts**: the Windows installer now creates Start Menu and Desktop shortcuts for
+  the web viewer (optional component, selected by default).
+- **Application icon**: both Windows executables (server and web viewer) now embed the minilog
+  icon.
+- **Pre-release support**: tagged pre-releases (e.g. `v1.3.0-rc1`) are automatically published as
+  pre-release GitHub Releases.
+
+### Changed
+
+- **README**: the summary, features, and limitations sections now mention the bundled viewers,
+  default Windows installation, and the lack of authentication/TLS on the web viewer.
+- **Installer tests**: added web viewer smoke tests — verifies the binary is installed, the
+  service is registered and running, and the HTTP `/sinks` endpoint responds after installation.
+
 ## v1.2.0 — 2026-04-09
 
 ### New
