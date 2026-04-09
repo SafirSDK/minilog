@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.1 — 2026-04-09
+
+### New
+
+- **Installer shortcuts**: the Windows installer now creates Start Menu and Desktop shortcuts for
+  the web viewer (optional component, selected by default). The shortcuts open the viewer URL in
+  the default browser.
+- **Pre-release support**: tagged pre-releases (e.g. `v1.2.1-rc1`) are automatically published as
+  pre-release GitHub Releases, making installers downloadable without a GitHub account.
+
+### Changed
+
+- **README**: the summary, features, and limitations sections now mention the bundled viewers,
+  default Windows installation, and the lack of authentication/TLS on the web viewer.
+- **Installer tests**: added web viewer smoke tests — verifies the binary is installed, the
+  service is registered and running, and the HTTP `/sinks` endpoint responds after installation.
+
 ## v1.2.0 — 2026-04-09
 
 ### New

@@ -24,7 +24,7 @@
   #define ConfigDir "."
 #endif
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.2.1"
 #endif
 #ifndef OutputDir
   #define OutputDir "{#SourceDir}"
