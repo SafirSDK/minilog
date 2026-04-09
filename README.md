@@ -372,6 +372,12 @@ minilog-web-viewer [options]
 The server reads all `[output.*]` sections that have `jsonl_file` configured and exposes each as
 a named **sink**. Open `http://localhost:8080` in a browser to access the UI.
 
+**Security note:** The web viewer does not implement any authentication or access control.
+Anyone who can reach the listen address can read all exposed log data. Bind to `127.0.0.1:8080`
+(via `--addr 127.0.0.1:8080`) to restrict access to the local machine, or place the viewer
+behind a reverse proxy that provides authentication. Do not expose it on an untrusted network
+without additional protection.
+
 **Windows service:** `--install` registers the binary as an auto-start service named
 `minilog-web-viewer`. Pass `--config` and `--addr` at install time; those values are baked into
 the service entry. `--uninstall` stops and removes it.
