@@ -259,6 +259,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/windows-release/minilog-*-setup.exe
+          prerelease: ${{ contains(github.ref, '-') }}
 
   # ─── Linux (Clang, libFuzzer) ────────────────────────────────────────────
   linux-fuzz:
