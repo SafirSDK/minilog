@@ -2,7 +2,6 @@
 __pycache__/
 *.py[codz]
 *$py.class
-.direnv/
 
 # C extensions
 *.so
@@ -26,6 +25,9 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.direnv/
+.vscode/
+.kiro/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -210,3 +212,7 @@ __marimo__/
 
 # CMake / C++
 CMakeUserPresets.json
+
+# web-viewer demo runtime artifacts
+src/web-viewer/minilog-web-viewer
+src/web-viewer/demo/logs/

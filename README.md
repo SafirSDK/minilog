@@ -128,7 +128,7 @@ gcovr -r . --html-details build/linux-coverage/coverage.html
 
 ```
 cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
-build/linux-fuzz/tests/fuzz_parser -max_total_time=60
+build/linux-fuzz/bin/fuzz_parser -max_total_time=60
 ```
 
 ### Extended soak (ASan + UBSan / TSan, ~30 min each)
@@ -169,7 +169,7 @@ See [`minilog.conf.example`](minilog.conf.example) for a fully commented example
 | Key | Default | Description |
 |-----|---------|-------------|
 | `host` | `0.0.0.0` | IP address to bind |
-| `udp_port` | `514` | UDP port (1–65535) |
+| `udp_port` | `514` | UDP port (0–65535; 0 = OS-assigned) |
 | `workers` | `4` | Number of I/O worker threads |
 
 ### `[output.<name>]`
@@ -215,20 +215,21 @@ Raw UDP payload bytes written verbatim, followed by a single `\n`. No decoding o
 One UTF-8 JSON object per line:
 
 ```json
-{"rcv":"2026-03-12T14:30:22Z","src":"192.168.1.50","proto":"RFC3164","facility":"daemon","severity":"NOTICE","hostname":"mymachine","app":"su","pid":"123","msgid":null,"message":"text here"}
+{"rcv":"2026-03-12T14:30:22Z","src":"192.168.1.50","proto":"RFC3164","facility":"daemon","severity":"NOTICE","hostname":"mymachine","app":"su","pid":"123","msgid":null,"msg_time":"Mar 12 14:30:22","message":"text here"}
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `rcv` | string | ISO 8601 UTC receive time |
+| `rcv` | string | ISO 8601 UTC receive time (when minilog received the datagram) |
 | `src` | string | Source IP address |
 | `proto` | string | `"RFC3164"`, `"RFC5424"`, or `"UNKNOWN"` |
-| `facility` | string\|null | Facility name |
-| `severity` | string\|null | Severity name |
+| `facility` | string\|null | Facility name (e.g. `"daemon"`, `"auth"`, `"local0"`) |
+| `severity` | string\|null | Severity name (e.g. `"INFO"`, `"ERROR"`, `"DEBUG"`) |
 | `hostname` | string\|null | Syslog hostname field |
 | `app` | string\|null | Application name |
 | `pid` | string\|null | Process ID |
 | `msgid` | string\|null | RFC 5424 MSGID field |
+| `msg_time` | string\|null | Timestamp from the syslog message itself, verbatim and unnormalised. RFC 3164 example: `"Mar 12 14:30:22"` (no year, no timezone). RFC 5424 example: `"2026-03-12T14:30:22.000Z"`. `null` if the message carried no timestamp. |
 | `message` | string | Message text. For RFC 5424, structured data is kept as a prefix of this field. |
 
 For `UNKNOWN` messages, only `rcv`, `src`, and `message` are populated; all other fields are `null`.
@@ -248,6 +249,8 @@ docker compose up
 ```
 
 Log file paths in the config must match the container's volume mount. With the default `docker-compose.yml` the log directory is `/var/log/minilog/`, so use paths like `/var/log/minilog/syslog.log`.
+
+The Docker image contains only the syslog server. The web-viewer and cli-viewer are not included — run them on the host against the mounted log volume if needed.
 
 ## Linux deployment (systemd)
 
@@ -292,6 +295,105 @@ import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.sendto(b"<14>Mar 15 12:00:00 myhost app[99]: hello", ("127.0.0.1", 514))
 ```
+
+## Viewers
+
+Two optional viewer tools ship alongside the server. Both read minilog's JSONL output files
+directly — no special server-side support required.
+
+### cli-viewer
+
+`src/cli-viewer/minilog-cli-viewer.py` — Python 3 script. Works on Linux and Windows. Behaves
+like `tail -f`: shows the last N lines on startup and then follows new entries in real time,
+surviving log rotation transparently.
+
+**Config discovery** (in order):
+
+1. `./minilog.conf` (current directory)
+2. `/etc/minilog/minilog.conf` (Linux) or `%ProgramData%\minilog\minilog.conf` (Windows)
+3. Same directory as the script
+
+The viewer also looks for `minilog-cli-viewer.conf` next to `minilog.conf` (or `./`) for display
+and filter settings. See [`src/cli-viewer/minilog-cli-viewer.conf.example`](src/cli-viewer/minilog-cli-viewer.conf.example).
+
+**Usage:**
+
+```
+python3 minilog-cli-viewer.py [options]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--output-section NAME` | `main` | Read `[output.NAME]` from `minilog.conf` |
+| `--lines N` / `-n N` | `10` | Lines to show on startup; `0` = follow-only |
+| `--show-all` | — | Print all existing entries and exit (no follow) |
+| `--include PATTERN` | — | Show only messages containing PATTERN (repeatable, additive with config file) |
+| `--exclude PATTERN` | — | Hide messages containing PATTERN (repeatable, additive with config file; exclude wins) |
+| `--no-color` | — | Disable ANSI colour output |
+| `--verbose` / `-v` | — | Print config discovery and filter info to stderr |
+
+**`minilog-cli-viewer.conf` settings:**
+
+| Section | Key | Default | Description |
+|---------|-----|---------|-------------|
+| `[viewer]` | `columns` | `rcv, facility, severity, hostname, app, pid, message` | Columns to display (comma-separated). Available: `rcv src proto facility severity hostname app pid msgid message` |
+| `[viewer]` | `timestamp_format` | `short` | `iso` (full ISO8601), `short` (`MM-DD HH:MM:SS`), or `time` (`HH:MM:SS`) |
+| `[viewer]` | `use_colors` | `true` | ANSI colour coding; auto-disabled when stdout is not a TTY |
+| `[filters]` | `exclude` | — | One pattern per line; combined with `--exclude` CLI flags |
+| `[filters]` | `include` | — | One pattern per line; combined with `--include` CLI flags |
+
+### web-viewer
+
+`src/web-viewer/` — Go 1.25 HTTP server with an embedded single-page app. Reads JSONL files
+(including the full rotation chain) and exposes them via a REST API; the browser UI handles
+paging, filtering, and search without a database.
+
+**Build:**
+
+```
+go build -o minilog-web-viewer ./src/web-viewer
+```
+
+On Windows, cross-compile with `GOOS=windows GOARCH=amd64` or build natively with Go for Windows.
+
+**Usage:**
+
+```
+minilog-web-viewer [options]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--config PATH` | `<exe dir>/minilog.conf` | Path to `minilog.conf` |
+| `--addr ADDR` | `:8080` | HTTP listen address |
+| `--install` | — | Register as a Windows service (Windows only) |
+| `--uninstall` | — | Remove the Windows service (Windows only) |
+
+The server reads all `[output.*]` sections that have `jsonl_file` configured and exposes each as
+a named **sink**. Open `http://localhost:8080` in a browser to access the UI.
+
+**Windows service:** `--install` registers the binary as an auto-start service named
+`minilog-web-viewer`. Pass `--config` and `--addr` at install time; those values are baked into
+the service entry. `--uninstall` stops and removes it.
+
+**Browser UI features:**
+
+- Sink selector (one tab per `[output.*]` section)
+- Infinite scroll — loads older pages as you scroll up; live-tail polling for new entries
+- Column visibility toggle (Msg Time, Rcv Time, Source, Hostname, App, PID, Severity, Proto, Msg ID, Message)
+- Severity and facility filter dropdowns
+- Include / exclude text pattern filters
+- Full-chain search (searches across all rotated generations, returns total match count)
+
+**REST API:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /sinks` | JSON array of `{name}` objects, one per configured output sink |
+| `GET /lines?sink=NAME&[tail=true\|offset=N&dir=forward\|backward]&count=N&sev=…&fac=…&inc=…&exc=…` | Page of log lines with offsets |
+| `GET /search?sink=NAME&q=TEXT&limit=N&sev=…&fac=…&inc=…&exc=…` | Full-chain search |
+
+Filter parameters `sev` and `fac` accept comma-separated name strings (e.g. `sev=info,warning`, `fac=auth,daemon`).
 
 ## License
 

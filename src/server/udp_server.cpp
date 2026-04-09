@@ -29,7 +29,7 @@ UdpServer::UdpServer(boost::asio::io_context& ioc,
                      const Config& cfg,
                      OutputManager& outputMgr,
                      Forwarder* forwarder)
-    : m_cfg(cfg), m_socket(boost::asio::make_strand(ioc)), m_outputMgr(outputMgr),
+    : m_cfg(cfg), m_ioc(ioc), m_socket(boost::asio::make_strand(ioc)), m_outputMgr(outputMgr),
       m_forwarder(forwarder), m_recvBuffer(BUFFER_SIZE)
 {
 }
@@ -118,8 +118,9 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
     // Re-arm immediately so the next datagram isn't missed.
     receive();
 
-    // Post the parse + dispatch work so it can run on any io_context thread.
-    boost::asio::post(m_socket.get_executor(),
+    // Post the parse + dispatch work to the io_context so it can run on any
+    // thread in the pool, not serialised on the receive strand.
+    boost::asio::post(m_ioc,
                       [this, data = std::move(data), srcIp = std::move(srcIp)]()
                       {
                           SyslogMessage msg = parseSyslog(data);

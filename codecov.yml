@@ -1,2 +1,26 @@
 codecov:
   branch: master
+
+fixes:
+  - "github.com/SafirSDK/minilog-web-viewer/::src/web-viewer/"
+
+flags:
+  server:
+    paths:
+      - src/server/
+    carryforward: true
+  web-viewer:
+    paths:
+      - src/web-viewer/
+    carryforward: true
+
+component_management:
+  individual_components:
+    - component_id: server
+      name: C++ Server
+      flag_regexes:
+        - server
+    - component_id: web-viewer
+      name: Go Web Viewer
+      flag_regexes:
+        - web-viewer

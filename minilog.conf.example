@@ -11,7 +11,8 @@
 ; 0.0.0.0 listens on all interfaces; use 127.0.0.1 to restrict to localhost.
 host = 0.0.0.0
 
-; UDP port to listen on (1–65535).
+; UDP port to listen on (0–65535).
+; 0 lets the OS assign an ephemeral port (useful for testing).
 ; Note: binding to port 514 may require elevated privileges on Linux.
 udp_port = 514
 

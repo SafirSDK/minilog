@@ -47,6 +47,7 @@ private:
     void onReceive(const boost::system::error_code& ec, std::size_t bytes);
 
     const Config& m_cfg;
+    boost::asio::io_context& m_ioc;
     boost::asio::ip::udp::socket m_socket;
     boost::asio::ip::udp::endpoint m_senderEndpoint;
     OutputManager& m_outputMgr;

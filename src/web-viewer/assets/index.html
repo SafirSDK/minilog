@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>minilog viewer</title>
+  <link rel="icon" href="/assets/favicon.ico" type="image/x-icon" />
+  <link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="toolbar-left">
+      <img class="logo-icon" src="/assets/icon.png" alt="" aria-hidden="true" />
+      <span class="logo">minilog</span>
+      <span class="logo-version" id="logo-version"></span>
+      <select id="sink-select" aria-label="Select sink"></select>
+    </div>
+    <div class="toolbar-right">
+      <!-- Columns dropdown -->
+      <div class="dropdown" id="col-dropdown">
+        <button class="dropdown-btn" id="col-btn" aria-haspopup="true" aria-expanded="false">
+          Columns
+        </button>
+        <div class="dropdown-panel" id="col-panel" hidden>
+          <div class="chip-group" id="col-chips"></div>
+        </div>
+      </div>
+      <!-- Severity dropdown -->
+      <div class="dropdown" id="sev-dropdown">
+        <button class="dropdown-btn" id="sev-btn" aria-haspopup="true" aria-expanded="false">
+          Severity <span class="dropdown-badge" id="sev-badge" hidden></span>
+        </button>
+        <div class="dropdown-panel" id="sev-panel" hidden>
+          <div class="chip-group" id="sev-chips"></div>
+        </div>
+      </div>
+      <!-- Facility dropdown -->
+      <div class="dropdown" id="fac-dropdown">
+        <button class="dropdown-btn" id="fac-btn" aria-haspopup="true" aria-expanded="false">
+          Facility <span class="dropdown-badge" id="fac-badge" hidden></span>
+        </button>
+        <div class="dropdown-panel" id="fac-panel" hidden>
+          <div class="chip-group" id="fac-chips"></div>
+        </div>
+      </div>
+      <!-- Filters dropdown -->
+      <div class="dropdown" id="filter-dropdown">
+        <button class="dropdown-btn" id="filter-btn" aria-haspopup="true" aria-expanded="false">
+          Filters <span class="dropdown-badge" id="filter-badge" hidden></span>
+        </button>
+        <div class="dropdown-panel dropdown-panel--wide" id="filter-panel" hidden>
+          <div class="filter-section">
+            <div class="filter-section-label">Include</div>
+            <div class="filter-input-row">
+              <input id="inc-input" type="text" placeholder="pattern…" autocomplete="off" spellcheck="false" />
+              <button class="filter-add-btn" id="inc-add">Add</button>
+            </div>
+            <div class="chip-group" id="inc-chips"></div>
+          </div>
+          <div class="filter-section filter-section--sep">
+            <div class="filter-section-label">Exclude</div>
+            <div class="filter-input-row">
+              <input id="exc-input" type="text" placeholder="pattern…" autocomplete="off" spellcheck="false" />
+              <button class="filter-add-btn" id="exc-add">Add</button>
+            </div>
+            <div class="chip-group" id="exc-chips"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Reset -->
+      <button class="toolbar-reset-btn" id="reset-btn" title="Reset all filters and settings to defaults">Reset</button>
+      <!-- Search -->
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search… (Enter)" autocomplete="off" spellcheck="false" />
+        <button id="jump-tail-btn" hidden>↓ Jump to tail</button>
+        <div id="match-nav" hidden>
+          <button id="match-prev" title="Previous match">◀</button>
+          <span id="match-counter"></span>
+          <button id="match-next" title="Next match">▶</button>
+          <button id="match-close" title="Clear search">✕</button>
+        </div>
+      </div>
+      <div class="status-dot" id="status-dot" title="Disconnected"></div>
+    </div>
+  </header>
+
+  <main id="main">
+    <table id="log-table" aria-label="Log entries">
+      <thead>
+        <tr>
+          <th class="col-time"     data-col="time">Msg Time</th>
+          <th class="col-rcv"      data-col="rcv">Rcv Time</th>
+          <th class="col-src"      data-col="src">Source</th>
+          <th class="col-hostname" data-col="hostname">Hostname</th>
+          <th class="col-app"      data-col="app">App</th>
+          <th class="col-pid"      data-col="pid">PID</th>
+          <th class="col-sev"      data-col="sev">Sev</th>
+          <th class="col-proto"    data-col="proto">Proto</th>
+          <th class="col-msgid"    data-col="msgid">Msg ID</th>
+          <th class="col-msg"      data-col="msg">Message</th>
+        </tr>
+      </thead>
+      <tbody id="log-body"></tbody>
+    </table>
+    <div id="empty-state" class="empty-state" hidden>
+      <p>No log entries match the current filters.</p>
+    </div>
+    <!-- Sentinel row watched by IntersectionObserver for upward scroll -->
+    <div id="top-sentinel"></div>
+  </main>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

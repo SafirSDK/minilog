@@ -12,6 +12,7 @@ pkgs.mkShell {
     # Compilers
     gcc
     clang
+    go
 
     # Boost (used directly on Linux; Conan only manages it on Windows)
     boost

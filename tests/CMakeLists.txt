@@ -3,7 +3,7 @@ find_package(Boost REQUIRED COMPONENTS unit_test_framework)
 # Helper to register a Boost.Test executable
 function(add_boost_test name source)
     add_executable(${name} ${source})
-    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/server)
     target_compile_definitions(${name} PRIVATE
         # DYN_LINK only on Linux where system Boost is a shared library;
         # on Windows Conan provides a static lib and this macro must be absent.
@@ -19,66 +19,66 @@ function(add_boost_test name source)
 endfunction()
 
 # Test executables — each links the sources it needs directly
-add_boost_test(test_parser     test_parser.cpp)
-target_sources(test_parser     PRIVATE ../src/parser/syslog_parser.cpp)
+add_boost_test(test_parser     server/test_parser.cpp)
+target_sources(test_parser     PRIVATE ../src/server/parser/syslog_parser.cpp)
 
-add_boost_test(test_config     test_config.cpp)
-target_sources(test_config     PRIVATE ../src/config/config.cpp)
+add_boost_test(test_config     server/test_config.cpp)
+target_sources(test_config     PRIVATE ../src/server/config/config.cpp)
 
-add_boost_test(test_output     test_output.cpp)
+add_boost_test(test_output     server/test_output.cpp)
 target_sources(test_output     PRIVATE
-    ../src/config/config.cpp
-    ../src/output/log_file.cpp
-    ../src/output/output_manager.cpp
-    ../src/parser/syslog_parser.cpp
+    ../src/server/config/config.cpp
+    ../src/server/output/log_file.cpp
+    ../src/server/output/output_manager.cpp
+    ../src/server/parser/syslog_parser.cpp
 )
 if(WIN32)
-    target_sources(test_output PRIVATE ../src/platform/os_log_win.cpp)
+    target_sources(test_output PRIVATE ../src/server/platform/os_log_win.cpp)
     target_include_directories(test_output PRIVATE ${CMAKE_BINARY_DIR})
     add_dependencies(test_output minilog_generate_messages)
 else()
-    target_sources(test_output PRIVATE ../src/platform/os_log_linux.cpp)
+    target_sources(test_output PRIVATE ../src/server/platform/os_log_linux.cpp)
 endif()
 
-add_boost_test(test_forwarder  test_forwarder.cpp)
+add_boost_test(test_forwarder  server/test_forwarder.cpp)
 target_sources(test_forwarder  PRIVATE
-    ../src/config/config.cpp
-    ../src/forwarder/forwarder.cpp
-    ../src/parser/syslog_parser.cpp
+    ../src/server/config/config.cpp
+    ../src/server/forwarder/forwarder.cpp
+    ../src/server/parser/syslog_parser.cpp
 )
 if(WIN32)
-    target_sources(test_forwarder PRIVATE ../src/platform/os_log_win.cpp)
+    target_sources(test_forwarder PRIVATE ../src/server/platform/os_log_win.cpp)
     target_include_directories(test_forwarder PRIVATE ${CMAKE_BINARY_DIR})
     add_dependencies(test_forwarder minilog_generate_messages)
 else()
-    target_sources(test_forwarder PRIVATE ../src/platform/os_log_linux.cpp)
+    target_sources(test_forwarder PRIVATE ../src/server/platform/os_log_linux.cpp)
 endif()
 
-add_boost_test(test_integration test_integration.cpp)
+add_boost_test(test_integration server/test_integration.cpp)
 target_sources(test_integration PRIVATE
-    ../src/config/config.cpp
-    ../src/parser/syslog_parser.cpp
-    ../src/output/log_file.cpp
-    ../src/output/output_manager.cpp
-    ../src/forwarder/forwarder.cpp
+    ../src/server/config/config.cpp
+    ../src/server/parser/syslog_parser.cpp
+    ../src/server/output/log_file.cpp
+    ../src/server/output/output_manager.cpp
+    ../src/server/forwarder/forwarder.cpp
     ../src/server/udp_server.cpp
 )
 if(WIN32)
     target_sources(test_integration PRIVATE
-        ../src/platform/os_log_win.cpp
-        ../src/platform/service_win.cpp
+        ../src/server/platform/os_log_win.cpp
+        ../src/server/platform/service_win.cpp
     )
     target_include_directories(test_integration PRIVATE ${CMAKE_BINARY_DIR})
     add_dependencies(test_integration minilog_generate_messages)
     target_link_libraries(test_integration PRIVATE ws2_32)
 else()
     target_sources(test_integration PRIVATE
-        ../src/platform/os_log_linux.cpp
-        ../src/platform/service_linux.cpp
+        ../src/server/platform/os_log_linux.cpp
+        ../src/server/platform/service_linux.cpp
     )
 endif()
 
-add_boost_test(test_stress test_stress.cpp)
+add_boost_test(test_stress server/test_stress.cpp)
 target_compile_definitions(test_stress PRIVATE
     MINILOG_STRESS_MULTIPLIER=${MINILOG_STRESS_MULTIPLIER}
     MINILOG_STRESS_LOSSY=${MINILOG_STRESS_LOSSY}
@@ -89,25 +89,25 @@ if(MINILOG_STRESS_LOSSY)
     set_tests_properties(test_stress PROPERTIES TIMEOUT ${_soak_timeout})
 endif()
 target_sources(test_stress PRIVATE
-    ../src/config/config.cpp
-    ../src/parser/syslog_parser.cpp
-    ../src/output/log_file.cpp
-    ../src/output/output_manager.cpp
-    ../src/forwarder/forwarder.cpp
+    ../src/server/config/config.cpp
+    ../src/server/parser/syslog_parser.cpp
+    ../src/server/output/log_file.cpp
+    ../src/server/output/output_manager.cpp
+    ../src/server/forwarder/forwarder.cpp
     ../src/server/udp_server.cpp
 )
 if(WIN32)
     target_sources(test_stress PRIVATE
-        ../src/platform/os_log_win.cpp
-        ../src/platform/service_win.cpp
+        ../src/server/platform/os_log_win.cpp
+        ../src/server/platform/service_win.cpp
     )
     target_include_directories(test_stress PRIVATE ${CMAKE_BINARY_DIR})
     add_dependencies(test_stress minilog_generate_messages)
     target_link_libraries(test_stress PRIVATE ws2_32)
 else()
     target_sources(test_stress PRIVATE
-        ../src/platform/os_log_linux.cpp
-        ../src/platform/service_linux.cpp
+        ../src/server/platform/os_log_linux.cpp
+        ../src/server/platform/service_linux.cpp
     )
 endif()
 
@@ -117,30 +117,41 @@ if(Python3_FOUND)
     add_test(
         NAME test_binary
         COMMAND Python3::Interpreter
-            ${CMAKE_CURRENT_SOURCE_DIR}/test_binary.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/binary/test_binary.py
             $<TARGET_FILE:minilog>
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     set_tests_properties(test_binary PROPERTIES TIMEOUT 120)
 
     add_test(
-        NAME test_viewer
+        NAME test_cli_viewer
         COMMAND Python3::Interpreter
-            ${CMAKE_CURRENT_SOURCE_DIR}/test_viewer.py
-            ${CMAKE_SOURCE_DIR}/minilog-cli-viewer.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/cli-viewer/test_cli_viewer.py
+            ${CMAKE_SOURCE_DIR}/src/cli-viewer/minilog-cli-viewer.py
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(test_viewer PROPERTIES TIMEOUT 60)
+    set_tests_properties(test_cli_viewer PROPERTIES TIMEOUT 60)
+endif()
+
+# Go tests for the web-viewer.
+find_program(GO_EXECUTABLE go)
+if(GO_EXECUTABLE)
+    add_test(
+        NAME test_web_viewer
+        COMMAND "${GO_EXECUTABLE}" test -v -count=1 -timeout 120s ./...
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/src/web-viewer"
+    )
+    set_tests_properties(test_web_viewer PROPERTIES TIMEOUT 150)
 endif()
 
 # libFuzzer target (Clang only, enabled via linux-fuzz preset).
 option(MINILOG_FUZZ "Build libFuzzer fuzz_parser target" OFF)
 if(MINILOG_FUZZ)
     add_executable(fuzz_parser
-        fuzz/fuzz_parser.cpp
-        ../src/parser/syslog_parser.cpp
+        server/fuzz/fuzz_parser.cpp
+        ../src/server/parser/syslog_parser.cpp
     )
-    target_include_directories(fuzz_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+    target_include_directories(fuzz_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/server)
     target_compile_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
     target_link_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address)
 endif()
@@ -166,7 +177,7 @@ if(RUN_CLANG_TIDY)
         COMMAND "${RUN_CLANG_TIDY}"
             -p "${CMAKE_BINARY_DIR}"
             ${_tidy_extra_args}
-            "${CMAKE_SOURCE_DIR}/src"
+            "${CMAKE_SOURCE_DIR}/src/server"
         COMMENT "Running clang-tidy..."
         VERBATIM
     )
@@ -178,8 +189,8 @@ if(CLANG_FORMAT)
     add_custom_target(clang-format-check ALL
         COMMAND "${CMAKE_COMMAND}"
             "-DCLANG_FORMAT=${CLANG_FORMAT}"
-            "-DSRC_DIR=${CMAKE_SOURCE_DIR}/src"
-            "-DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DSRC_DIR=${CMAKE_SOURCE_DIR}/src/server"
+            "-DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/server"
             -P "${CMAKE_SOURCE_DIR}/cmake/clang_format_check.cmake"
         COMMENT "Checking clang-format..."
         VERBATIM

@@ -22,7 +22,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find src tests fuzz -name "*.cpp" -o -name "*.hpp" \
+          find src/server tests/server -name "*.cpp" -o -name "*.hpp" \
             | xargs clang-format --dry-run --Werror
 
   # ─── File header check ───────────────────────────────────────────────────────
@@ -52,6 +52,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/web-viewer/go.mod
+          cache: false
+
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -74,6 +79,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/web-viewer/go.mod
+          cache: false
 
       - name: Install system dependencies
         run: |
@@ -98,6 +108,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/web-viewer/go.mod
+          cache: false
+
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -120,10 +135,23 @@ jobs:
           lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
           lcov --list coverage.info
 
-      - name: Upload to Codecov
+      - name: Generate web-viewer coverage report
+        run: |
+          go test -coverprofile=web-viewer-coverage.out -covermode=atomic ./...
+        working-directory: src/web-viewer
+
+      - name: Upload server coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: coverage.info
+          flags: server
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload web-viewer coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: src/web-viewer/web-viewer-coverage.out
+          flags: web-viewer
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # ─── Linux (Clang, TSan) ────────────────────────────────────────────────────
@@ -132,6 +160,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/web-viewer/go.mod
+          cache: false
 
       - name: Install system dependencies
         run: |
@@ -155,6 +188,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/web-viewer/go.mod
+          cache: false
 
       - name: Install Conan
         run: pip install conan
@@ -242,10 +280,10 @@ jobs:
 
       - name: Fuzz (30 s)
         run: |
-          ./build/linux-fuzz/tests/fuzz_parser \
+          ./build/linux-fuzz/bin/fuzz_parser \
             -max_total_time=30 \
             -jobs=2 \
-            tests/fuzz/corpus/
+            tests/server/fuzz/corpus/
 
   # ─── Docker ──────────────────────────────────────────────────────────────────
   docker:

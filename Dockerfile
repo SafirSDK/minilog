@@ -1,4 +1,7 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
+# Only the C++ syslog server is built here.  The Go web-viewer and the Python
+# cli-viewer are not included — this image is intended for headless syslog
+# collection.  Use the viewers on the host or in a separate container.
 FROM debian:trixie AS build
 
 RUN apt-get update -qq && \
@@ -17,7 +20,7 @@ FROM debian:trixie-slim AS runtime
 
 RUN useradd --system --no-create-home minilog
 
-COPY --from=build /src/build/linux-docker/minilog /usr/local/bin/minilog
+COPY --from=build /src/build/linux-docker/bin/minilog /usr/local/bin/minilog
 
 USER minilog
 
