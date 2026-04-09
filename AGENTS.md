@@ -81,3 +81,43 @@ Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 - Filter params on `/lines` and `/search`: `sev` (severity names), `fac` (facility names),
   `inc` (include substrings), `exc` (exclude substrings).
 - Tests: `*_test.go` files in `src/web-viewer/`; run with `go test ./src/web-viewer/`.
+
+## Release checklist
+
+Before tagging a release, verify all of the following:
+
+1. **Version numbers** — all three must match:
+   - `CMakeLists.txt`: `project(minilog VERSION x.y.z ...)`
+   - `installer/setup.iss`: `#define AppVersion "x.y.z"` (the fallback default)
+   - `CHANGES.md`: `## vx.y.z` entry at the top
+
+2. **Changelog** — `CHANGES.md` has a dated entry for the new version with all user-visible
+   changes documented under `### New`, `### Changed`, `### Fixed` as appropriate.
+
+3. **CI green** — all GitHub Actions jobs pass on the `develop` branch (or the release branch):
+   - clang-format, header check, ruff lint
+   - Linux GCC, Clang ASan+UBSan, Clang TSan
+   - Linux coverage (C++ and Go)
+   - Windows MSVC (build, tests, installer)
+   - Docker build
+   - libFuzzer
+
+4. **README** — verify any new features, config options, or CLI flags are documented.
+
+5. **AGENTS.md** — update if architecture, conventions, or component layout changed.
+
+6. **Merge to master** — verify, tag, then merge:
+   ```
+   # Verify develop is a fast-forward of master (no divergence)
+   git fetch origin
+   git merge-base --is-ancestor origin/master develop
+
+   # Tag on develop so the tag points to the tested commit
+   git checkout develop
+   git tag -a v1.2.0 -m "v1.2.0"
+
+   # Fast-forward master to develop and push everything
+   git checkout master && git merge --ff-only develop
+   git push origin master develop --tags
+   ```
+   The tag push triggers the Windows installer build and GitHub Release upload.

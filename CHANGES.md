@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.2.0 — 2026-04-09
+
+### New
+
+- **minilog-web-viewer**: a Go HTTP server with an embedded single-page app for browsing minilog
+  JSONL logs in a browser. Supports multi-sink selection, severity/facility/text filtering,
+  full-chain search across rotated files, infinite scroll, and live tail polling. Runs as a
+  Windows service or standalone process. Bundled in the Windows installer as an optional component.
+
+### Changed
+
+- **Repository restructure**: server sources moved to `src/server/`, cli-viewer to
+  `src/cli-viewer/`, tests to `tests/server/`, `tests/cli-viewer/`, `tests/binary/`.
+- **JSONL severity/facility fields** are now string names (e.g. `"daemon"`, `"INFO"`) rather than
+  integer codes, matching the server's actual output. The web-viewer filters on these strings.
+- **`udp_port = 0`** is now accepted in the config file (OS-assigned ephemeral port).
+- **Go coverage** is now uploaded to Codecov alongside the C++ coverage, with separate flags.
+
+### Fixed
+
+- **Receive strand serialised parsing**: parse+dispatch work is now posted to the `io_context`
+  directly, enabling parallel parsing across the worker thread pool.
+- **Rotation gap detection**: the server now probes all slots up to `max_files` instead of
+  stopping at the first missing generation, preventing orphaned files after manual deletion.
+- **Forwarder socket** is now created on its strand for consistency with the strand-per-sink
+  pattern.
+- **LogFile destructor** no longer calls `closeFiles()` directly, preventing a potential data race
+  with queued strand work.
+- **`parseSize` error messages** now include the output section name for easier debugging.
+- **cli-viewer tests** replaced `select()`-based synchronisation with a thread-based accumulator,
+  fixing failures on Windows.
+- **Go INI parser** now strips `#` inline comments, matching the C++ parser behaviour.
+
 ## v1.1.0 — 2026-04-02
 
 ### New
