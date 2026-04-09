@@ -7,7 +7,7 @@
 [![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
 [![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/master/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
 
-A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datagrams, routes them to text and/or JSONL log files with rotation, and can forward to another syslog endpoint. Runs as a Windows service or a Linux process (systemd-friendly).
+A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datagrams, routes them to text and/or JSONL log files with rotation, and can forward to another syslog endpoint. Ships with a browser-based log viewer and a CLI tail tool for reading logs. Runs as a Windows service or a Linux process (systemd-friendly); the Windows installer sets up both the server and the web viewer by default.
 
 ## Features
 
@@ -18,7 +18,9 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 - Log rotation by file size with configurable retention count
 - UDP forwarding with per-facility filtering and message truncation
 - Windows service installation/removal via CLI flags
-- Single external dependency: Boost
+- Web viewer — browser UI with paging, filtering, search across rotated log files (installed by default on Windows)
+- CLI viewer — Python `tail -f` style tool with colour output and filtering
+- Single external dependency: Boost (server only; viewers are standalone)
 
 ## Limitations
 
@@ -26,6 +28,7 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 - **IPv4 only** — the server binds a UDP v4 socket; IPv6 is not supported
 - **RFC 5424 structured data is not parsed** — it is just passed along to the output files
 - **Rotated files are not compressed** — generation files are plain text/JSONL; no gzip
+- **Web viewer has no authentication or TLS** — anyone who can reach the listen port can read all exposed logs; bind to localhost or place behind a reverse proxy on untrusted networks
 
 ## Requirements
 
