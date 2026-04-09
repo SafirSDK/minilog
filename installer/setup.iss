@@ -48,7 +48,7 @@ Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
-; No Start Menu entries — this is a service, not a GUI application.
+; Program group page not needed — shortcuts are managed via the components tree.
 DisableProgramGroupPage=yes
 SetupIconFile=..\artwork\minilog.ico
 WizardImageFile=wizard-image.png
@@ -60,6 +60,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Components]
 Name: "main";       Description: "minilog Syslog Server";  Types: full compact custom; Flags: fixed
 Name: "webviewer";  Description: "minilog Web Viewer";     Types: full
+Name: "webviewer\shortcuts"; Description: "Start Menu and Desktop Shortcuts"; \
+    Types: full
 Name: "pdb";        Description: "Debug Symbols (.pdb)"
 
 [Dirs]
@@ -94,6 +96,15 @@ Source: "..\src\cli-viewer\minilog-cli-viewer.conf.example"; \
     DestDir: "{commonappdata}\minilog"; \
     DestName: "minilog-cli-viewer.conf"; \
     Components: main; Flags: onlyifdoesntexist uninsneveruninstall
+
+[Icons]
+; Web viewer shortcuts — open the viewer URL in the default browser.
+Name: "{autoprograms}\minilog Web Viewer"; Filename: "http://localhost{#WebViewerAddr}"; \
+    IconFilename: "{app}\minilog-web-viewer.exe"; IconIndex: 0; \
+    Components: webviewer\shortcuts
+Name: "{autodesktop}\minilog Web Viewer"; Filename: "http://localhost{#WebViewerAddr}"; \
+    IconFilename: "{app}\minilog-web-viewer.exe"; IconIndex: 0; \
+    Components: webviewer\shortcuts
 
 [Registry]
 ; Add tools directory to system PATH so CLI utilities are accessible from anywhere.
