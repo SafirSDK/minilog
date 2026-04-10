@@ -108,6 +108,7 @@ async function init() {
   buildSevChips();
   buildFacChips();
   buildFilterPanel();
+  initColumnResize();
   await Promise.all([loadVersion(), loadSinks()]);
   bindControls();
 }
@@ -956,6 +957,40 @@ function formatTime(iso) {
 const escMap = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' };
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c => escMap[c]);
+}
+
+// ── Column resizing ───────────────────────────────────────────────────────────
+
+function initColumnResize() {
+  const table = document.getElementById('log-table');
+  const ths = table.querySelectorAll('thead th');
+
+  for (const th of ths) {
+    const handle = document.createElement('div');
+    handle.className = 'col-resize-handle';
+    th.appendChild(handle);
+
+    let startX, startW;
+
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      startX = e.clientX;
+      startW = th.offsetWidth;
+      handle.classList.add('active');
+
+      const onMove = ev => {
+        const w = Math.max(40, startW + ev.clientX - startX);
+        th.style.width = w + 'px';
+      };
+      const onUp = () => {
+        handle.classList.remove('active');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
