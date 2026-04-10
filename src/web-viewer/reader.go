@@ -265,12 +265,16 @@ const backwardChunkSize = 64 * 1024 // 64 KB per backward read
 //   - offsets: logical byte offset of each returned line
 //   - firstOffset: logical offset of the first (oldest) returned line
 //   - nextOffset: == logicalOffset (the start of the already-loaded window)
-func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter) (
+func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter, since int64) (
 	lines [][]byte, offsets []int64, firstOffset, nextOffset int64, err error,
 ) {
 	nextOffset = logicalOffset
 
 	if fc.Empty() || count == 0 || logicalOffset == 0 {
+		return nil, nil, logicalOffset, logicalOffset, nil
+	}
+
+	if since >= 0 && logicalOffset <= since {
 		return nil, nil, logicalOffset, logicalOffset, nil
 	}
 
@@ -338,6 +342,10 @@ func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter) (
 					raw := bytes.TrimRight(buf[lineStart:end], "\r")
 					logicalLineStart := cf.start + chunkStart + int64(lineStart)
 
+					if since >= 0 && logicalLineStart < since {
+						break
+					}
+
 					if len(raw) > 0 && f.Match(raw) {
 						cp := make([]byte, len(raw))
 						copy(cp, raw)
@@ -387,7 +395,7 @@ type SearchResult struct {
 // (case-insensitive substring of raw JSON) that also pass filter f.
 //
 // Returns up to limit results plus the true total match count.
-func (fc *FileChain) Search(q string, limit int, f *Filter) (results []SearchResult, totalMatches int, err error) {
+func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (results []SearchResult, totalMatches int, err error) {
 	qLower := []byte(strings.ToLower(q))
 
 	for _, cf := range fc.files {
@@ -404,6 +412,12 @@ func (fc *FileChain) Search(q string, limit int, f *Filter) (results []SearchRes
 			raw := scanner.Bytes()
 			lineLen := int64(len(raw)) + 1
 			logicalOffset := cf.start + physOffset
+
+			if since >= 0 && logicalOffset < since {
+				physOffset += lineLen
+				continue
+			}
+
 			physOffset += lineLen
 
 			if len(raw) == 0 {

@@ -510,7 +510,7 @@ func TestReadBackward_SingleFile_LastN(t *testing.T) {
 	writeLines(t, p, lines)
 	fc := chainFromFiles(t, []string{p})
 
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestReadBackward_ReturnsOldestFirst(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -556,7 +556,7 @@ func TestReadBackward_NextOffsetEqualsInput(t *testing.T) {
 	fc := chainFromFiles(t, []string{p})
 
 	tail := fc.TailOffset()
-	_, _, _, nextOff, err := fc.ReadBackward(tail, 10, noFilter())
+	_, _, _, nextOff, err := fc.ReadBackward(tail, 10, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -574,7 +574,7 @@ func TestReadBackward_CountLargerThanAvailable_ReturnsAll(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 100, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -591,7 +591,7 @@ func TestReadBackward_MultiFile_CrossesBoundary(t *testing.T) {
 	writeLines(t, p1, []string{makeLine("new1", "info", "daemon"), makeLine("new2", "info", "daemon")})
 
 	fc := chainFromFiles(t, []string{p0, p1})
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestReadBackward_Filter_Applied(t *testing.T) {
 	fc := chainFromFiles(t, []string{p})
 	f := &Filter{Severities: []string{"info"}}
 
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, f)
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, f, -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -632,7 +632,7 @@ func TestReadBackward_Filter_Applied(t *testing.T) {
 
 func TestReadBackward_EmptyChain(t *testing.T) {
 	fc := &FileChain{}
-	got, _, _, _, err := fc.ReadBackward(0, 10, noFilter())
+	got, _, _, _, err := fc.ReadBackward(0, 10, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -649,7 +649,7 @@ func TestReadBackward_OffsetZero_ReturnsNothing(t *testing.T) {
 	writeLines(t, p, []string{makeLine("msg", "info", "daemon")})
 	fc := chainFromFiles(t, []string{p})
 
-	got, _, _, _, err := fc.ReadBackward(0, 10, noFilter())
+	got, _, _, _, err := fc.ReadBackward(0, 10, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -664,7 +664,7 @@ func TestReadBackward_CountZero_ReturnsNothing(t *testing.T) {
 	writeLines(t, p, []string{makeLine("msg", "info", "daemon")})
 	fc := chainFromFiles(t, []string{p})
 
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 0, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 0, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -683,7 +683,7 @@ func TestReadBackward_FirstOffset_IsOldestLine(t *testing.T) {
 	fc := chainFromFiles(t, []string{p})
 
 	// Read the last 2 lines; firstOffset should point to l1, not l0.
-	_, _, firstOff, _, err := fc.ReadBackward(fc.TailOffset(), 2, noFilter())
+	_, _, firstOff, _, err := fc.ReadBackward(fc.TailOffset(), 2, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -703,7 +703,7 @@ func TestReadBackward_AllFiltered_ReturnsEmpty(t *testing.T) {
 	fc := chainFromFiles(t, []string{p})
 	f := &Filter{Severities: []string{"info"}} // nothing matches sev 7
 
-	got, _, firstOff, nextOff, err := fc.ReadBackward(fc.TailOffset(), 10, f)
+	got, _, firstOff, nextOff, err := fc.ReadBackward(fc.TailOffset(), 10, f, -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestReadBackward_OffsetAtFileBoundary(t *testing.T) {
 
 	// Read backward from exactly the boundary between the two files.
 	boundary := fc.files[0].size // == fc.files[1].start
-	got, _, _, _, err := fc.ReadBackward(boundary, 10, noFilter())
+	got, _, _, _, err := fc.ReadBackward(boundary, 10, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -755,7 +755,7 @@ func TestReadBackward_CountClampsCorrectly(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -783,7 +783,7 @@ func TestSearch_FindsMatches(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	results, total, err := fc.Search("nginx", 100, noFilter())
+	results, total, err := fc.Search("nginx", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -804,7 +804,7 @@ func TestSearch_CaseInsensitive(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	_, total, err := fc.Search("nginx", 100, noFilter())
+	_, total, err := fc.Search("nginx", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -823,7 +823,7 @@ func TestSearch_TotalMatchesExceedsLimit(t *testing.T) {
 	writeLines(t, p, lines)
 	fc := chainFromFiles(t, []string{p})
 
-	results, total, err := fc.Search("target", 3, noFilter())
+	results, total, err := fc.Search("target", 3, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -845,7 +845,7 @@ func TestSearch_FilterCombinedWithQuery(t *testing.T) {
 	fc := chainFromFiles(t, []string{p})
 	f := &Filter{Severities: []string{"info"}}
 
-	_, total, err := fc.Search("target", 100, f)
+	_, total, err := fc.Search("target", 100, f, -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -860,7 +860,7 @@ func TestSearch_NoMatches(t *testing.T) {
 	writeLines(t, p, []string{makeLine("hello world", "info", "daemon")})
 	fc := chainFromFiles(t, []string{p})
 
-	results, total, err := fc.Search("notpresent", 100, noFilter())
+	results, total, err := fc.Search("notpresent", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -877,7 +877,7 @@ func TestSearch_MultiFile_CrossesBoundary(t *testing.T) {
 	writeLines(t, p1, []string{makeLine("target in new", "info", "daemon")})
 
 	fc := chainFromFiles(t, []string{p0, p1})
-	_, total, err := fc.Search("target", 100, noFilter())
+	_, total, err := fc.Search("target", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -900,7 +900,7 @@ func TestSearch_EmptyQuery_MatchesAllLines(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	_, total, err := fc.Search("", 100, noFilter())
+	_, total, err := fc.Search("", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -916,7 +916,7 @@ func TestSearch_FirstResult_AbsoluteOffsetIsZero(t *testing.T) {
 	writeLines(t, p, []string{makeLine("target", "info", "daemon")})
 	fc := chainFromFiles(t, []string{p})
 
-	results, _, err := fc.Search("target", 100, noFilter())
+	results, _, err := fc.Search("target", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -939,7 +939,7 @@ func TestSearch_LimitZero_NoResultsButCountIsCorrect(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	results, total, err := fc.Search("target", 0, noFilter())
+	results, total, err := fc.Search("target", 0, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -961,7 +961,7 @@ func TestSearch_OffsetOrdering(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	results, _, err := fc.Search("target", 100, noFilter())
+	results, _, err := fc.Search("target", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -1200,7 +1200,7 @@ func TestReadBackward_FileDeletedAfterChainBuild_SkipsGracefully(t *testing.T) {
 		t.Fatalf("remove: %v", err)
 	}
 
-	got, _, _, _, err := fc.ReadBackward(tail, 10, noFilter())
+	got, _, _, _, err := fc.ReadBackward(tail, 10, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1231,7 +1231,7 @@ func TestReadBackward_MultiFile_TrimToCount(t *testing.T) {
 	})
 
 	fc := chainFromFiles(t, []string{p0, p1})
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 3, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -1261,7 +1261,7 @@ func TestSearch_EmptyLinesInFile_Skipped(t *testing.T) {
 	}
 	fc := chainFromFiles(t, []string{p})
 
-	results, total, err := fc.Search("target", 100, noFilter())
+	results, total, err := fc.Search("target", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
@@ -1355,7 +1355,7 @@ func TestReadBackward_LargeFile_MultipleChunks(t *testing.T) {
 	writeLines(t, p, lines)
 
 	fc := chainFromFiles(t, []string{p})
-	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 5, noFilter())
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 5, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
@@ -1406,6 +1406,192 @@ func TestNewFileChain_IncludesRotatedFiles_ReadOrder(t *testing.T) {
 	}
 	if !strings.Contains(string(got[2]), "newest") {
 		t.Errorf("last line should be newest, got %q", string(got[2]))
+	}
+}
+
+// ── ReadBackward / Search — since parameter ──────────────────────────────────
+
+func TestReadBackward_Since_ClampsAtBoundary(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+	lines := []string{
+		makeLine("zero", "info", "daemon"),
+		makeLine("one", "info", "daemon"),
+		makeLine("two", "info", "daemon"),
+		makeLine("three", "info", "daemon"),
+		makeLine("four", "info", "daemon"),
+	}
+	writeLines(t, p, lines)
+	fc := chainFromFiles(t, []string{p})
+
+	// Compute offset of line 3 (0-indexed): sum of lengths of lines 0..2 + newlines.
+	since := int64(len(lines[0])+1) + int64(len(lines[1])+1) + int64(len(lines[2])+1)
+
+	got, offsets, _, _, err := fc.ReadBackward(fc.TailOffset(), 100, noFilter(), since)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 lines (three, four), got %d: %v", len(got), lineTexts(got))
+	}
+	if !strings.Contains(string(got[0]), "three") {
+		t.Errorf("first line should be 'three', got %q", string(got[0]))
+	}
+	if !strings.Contains(string(got[1]), "four") {
+		t.Errorf("second line should be 'four', got %q", string(got[1]))
+	}
+	for i, off := range offsets {
+		if off < since {
+			t.Errorf("offset[%d]=%d is below since=%d", i, off, since)
+		}
+	}
+}
+
+func TestReadBackward_Since_AtTail_ReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+	writeLines(t, p, []string{
+		makeLine("one", "info", "daemon"),
+		makeLine("two", "info", "daemon"),
+	})
+	fc := chainFromFiles(t, []string{p})
+
+	since := fc.TailOffset()
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 100, noFilter(), since)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want 0 lines when since=TailOffset, got %d", len(got))
+	}
+}
+
+func TestReadBackward_Since_Negative_ReturnsAll(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+	lines := []string{
+		makeLine("one", "info", "daemon"),
+		makeLine("two", "info", "daemon"),
+		makeLine("three", "info", "daemon"),
+	}
+	writeLines(t, p, lines)
+	fc := chainFromFiles(t, []string{p})
+
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 100, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 lines with since=-1 (no boundary), got %d", len(got))
+	}
+	if !strings.Contains(string(got[0]), "one") {
+		t.Errorf("first line should be 'one', got %q", string(got[0]))
+	}
+	if !strings.Contains(string(got[2]), "three") {
+		t.Errorf("last line should be 'three', got %q", string(got[2]))
+	}
+}
+
+func TestReadBackward_Since_MultiFile(t *testing.T) {
+	dir := t.TempDir()
+	p0 := filepath.Join(dir, "old.jsonl")
+	p1 := filepath.Join(dir, "new.jsonl")
+	oldLines := []string{
+		makeLine("old0", "info", "daemon"),
+		makeLine("old1", "info", "daemon"),
+		makeLine("old2", "info", "daemon"),
+	}
+	newLines := []string{
+		makeLine("new0", "info", "daemon"),
+		makeLine("new1", "info", "daemon"),
+	}
+	writeLines(t, p0, oldLines)
+	writeLines(t, p1, newLines)
+	fc := chainFromFiles(t, []string{p0, p1})
+
+	// Set since in the middle of the first file: offset of old1 (skip old0).
+	since := int64(len(oldLines[0]) + 1)
+
+	got, offsets, _, _, err := fc.ReadBackward(fc.TailOffset(), 100, noFilter(), since)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	// Should return old1, old2, new0, new1 (4 lines).
+	if len(got) != 4 {
+		t.Fatalf("want 4 lines (old1, old2, new0, new1), got %d: %v", len(got), lineTexts(got))
+	}
+	if !strings.Contains(string(got[0]), "old1") {
+		t.Errorf("first line should be 'old1', got %q", string(got[0]))
+	}
+	if !strings.Contains(string(got[3]), "new1") {
+		t.Errorf("last line should be 'new1', got %q", string(got[3]))
+	}
+	for i, off := range offsets {
+		if off < since {
+			t.Errorf("offset[%d]=%d is below since=%d", i, off, since)
+		}
+	}
+}
+
+func TestSearch_Since_SkipsOlderLines(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+	lines := []string{
+		makeLine("target zero", "info", "daemon"),
+		makeLine("target one", "info", "daemon"),
+		makeLine("target two", "info", "daemon"),
+		makeLine("target three", "info", "daemon"),
+		makeLine("target four", "info", "daemon"),
+	}
+	writeLines(t, p, lines)
+	fc := chainFromFiles(t, []string{p})
+
+	// Set since to offset of line 3 (0-indexed): skip lines 0, 1, 2.
+	since := int64(len(lines[0])+1) + int64(len(lines[1])+1) + int64(len(lines[2])+1)
+
+	results, total, err := fc.Search("target", 100, noFilter(), since)
+	if err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("totalMatches: want 2, got %d", total)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results: want 2, got %d", len(results))
+	}
+	if !strings.Contains(string(results[0].Line), "three") {
+		t.Errorf("first result should contain 'three', got %q", string(results[0].Line))
+	}
+	if !strings.Contains(string(results[1].Line), "four") {
+		t.Errorf("second result should contain 'four', got %q", string(results[1].Line))
+	}
+	for i, r := range results {
+		if r.Offset < since {
+			t.Errorf("result[%d].Offset=%d is below since=%d", i, r.Offset, since)
+		}
+	}
+}
+
+func TestSearch_Since_Negative_SearchesAll(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+	lines := []string{
+		makeLine("target one", "info", "daemon"),
+		makeLine("other", "info", "daemon"),
+		makeLine("target two", "info", "daemon"),
+	}
+	writeLines(t, p, lines)
+	fc := chainFromFiles(t, []string{p})
+
+	results, total, err := fc.Search("target", 100, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("totalMatches: want 2, got %d", total)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results: want 2, got %d", len(results))
 	}
 }
 

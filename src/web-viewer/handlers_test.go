@@ -650,3 +650,244 @@ func TestHandler_Root_ContentType_IsHTML(t *testing.T) {
 		t.Errorf("content-type for /: want html, got %q", ct)
 	}
 }
+
+// ── /lines and /search — since parameter ──────────────────────────────────────
+
+func TestHandler_Lines_Since_Forward_ClampsOffset(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("msg%d", i), "info", "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	// Compute the offset of line 3 (after lines 0, 1, 2).
+	since := int64(0)
+	for i := 0; i < 3; i++ {
+		since += int64(len(lines[i]) + 1) // +1 for newline
+	}
+
+	resp := get(t, ts, fmt.Sprintf("/lines?sink=main&offset=0&dir=forward&count=100&since=%d", since))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	var result linesResponse
+	decodeJSON(t, resp, &result)
+
+	// Should return only lines at or after since (lines 3 and 4).
+	if len(result.Lines) != 2 {
+		t.Fatalf("want 2 lines, got %d: %v", len(result.Lines), result.Lines)
+	}
+	if !strings.Contains(result.Lines[0], "msg3") {
+		t.Errorf("first line should be msg3, got %q", result.Lines[0])
+	}
+	if !strings.Contains(result.Lines[1], "msg4") {
+		t.Errorf("second line should be msg4, got %q", result.Lines[1])
+	}
+	// All offsets must be >= since.
+	for i, off := range result.Offsets {
+		if off < since {
+			t.Errorf("offset[%d]=%d < since=%d", i, off, since)
+		}
+	}
+}
+
+func TestHandler_Lines_Since_Backward_ClampsAtBoundary(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("msg%d", i), "info", "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	// since = offset of line 3.
+	since := int64(0)
+	for i := 0; i < 3; i++ {
+		since += int64(len(lines[i]) + 1)
+	}
+
+	// Read backward from the tail with since set.
+	tailOffset := int64(0)
+	for _, l := range lines {
+		tailOffset += int64(len(l) + 1)
+	}
+
+	resp := get(t, ts, fmt.Sprintf("/lines?sink=main&offset=%d&dir=backward&count=100&since=%d", tailOffset, since))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	var result linesResponse
+	decodeJSON(t, resp, &result)
+
+	// Should return only lines 3 and 4 (at or after since).
+	if len(result.Lines) != 2 {
+		t.Fatalf("want 2 lines, got %d: %v", len(result.Lines), result.Lines)
+	}
+	// No offset should be before since.
+	for i, off := range result.Offsets {
+		if off < since {
+			t.Errorf("offset[%d]=%d < since=%d", i, off, since)
+		}
+	}
+}
+
+func TestHandler_Lines_Since_Tail_RespectsClamp(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("msg%d", i), "info", "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	// since = offset of line 3.
+	since := int64(0)
+	for i := 0; i < 3; i++ {
+		since += int64(len(lines[i]) + 1)
+	}
+
+	resp := get(t, ts, fmt.Sprintf("/lines?sink=main&tail=true&count=100&since=%d", since))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	var result linesResponse
+	decodeJSON(t, resp, &result)
+
+	// Should return only lines >= since (lines 3 and 4).
+	if len(result.Lines) != 2 {
+		t.Fatalf("want 2 lines, got %d: %v", len(result.Lines), result.Lines)
+	}
+	for i, off := range result.Offsets {
+		if off < since {
+			t.Errorf("offset[%d]=%d < since=%d", i, off, since)
+		}
+	}
+	if !strings.Contains(result.Lines[0], "msg3") {
+		t.Errorf("first line should be msg3, got %q", result.Lines[0])
+	}
+}
+
+func TestHandler_Lines_Since_AtTail_ReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("msg%d", i), "info", "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	// since = total file size (tail offset).
+	tailOffset := int64(0)
+	for _, l := range lines {
+		tailOffset += int64(len(l) + 1)
+	}
+
+	resp := get(t, ts, fmt.Sprintf("/lines?sink=main&tail=true&count=100&since=%d", tailOffset))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	var result linesResponse
+	decodeJSON(t, resp, &result)
+
+	if len(result.Lines) != 0 {
+		t.Errorf("want 0 lines when since=tailOffset, got %d: %v", len(result.Lines), result.Lines)
+	}
+}
+
+func TestHandler_Lines_NoSince_FullHistory(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("msg%d", i), "info", "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	// Request without since — should return all 5 lines.
+	resp := get(t, ts, "/lines?sink=main&tail=true&count=100")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	var result linesResponse
+	decodeJSON(t, resp, &result)
+
+	if len(result.Lines) != 5 {
+		t.Fatalf("want 5 lines (full history), got %d: %v", len(result.Lines), result.Lines)
+	}
+	if !strings.Contains(result.Lines[0], "msg0") {
+		t.Errorf("first line should be msg0, got %q", result.Lines[0])
+	}
+	if !strings.Contains(result.Lines[4], "msg4") {
+		t.Errorf("last line should be msg4, got %q", result.Lines[4])
+	}
+}
+
+func TestHandler_Search_Since_SkipsOlderLines(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("target%d", i), "info", "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	// since = offset of line 3.
+	since := int64(0)
+	for i := 0; i < 3; i++ {
+		since += int64(len(lines[i]) + 1)
+	}
+
+	resp := get(t, ts, fmt.Sprintf("/search?sink=main&q=target&since=%d", since))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	var result searchResponse
+	decodeJSON(t, resp, &result)
+
+	// Should only find matches in lines 3 and 4.
+	if result.TotalMatches != 2 {
+		t.Errorf("total_matches: want 2, got %d", result.TotalMatches)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("results: want 2, got %d", len(result.Results))
+	}
+	for i, r := range result.Results {
+		if r.Offset < since {
+			t.Errorf("result[%d].offset=%d < since=%d", i, r.Offset, since)
+		}
+	}
+}
+
+func TestHandler_Search_NoSince_FullSearch(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("target%d", i), "info", "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	// Search without since — should find all 5 matches.
+	resp := get(t, ts, "/search?sink=main&q=target")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	var result searchResponse
+	decodeJSON(t, resp, &result)
+
+	if result.TotalMatches != 5 {
+		t.Errorf("total_matches: want 5, got %d", result.TotalMatches)
+	}
+	if len(result.Results) != 5 {
+		t.Errorf("results: want 5, got %d", len(result.Results))
+	}
+}

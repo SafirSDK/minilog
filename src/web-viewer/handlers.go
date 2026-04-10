@@ -69,6 +69,7 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 		if dir == "" {
 			dir = "forward"
 		}
+		since := parseInt64(q.Get("since"), -1)
 		f := parseFilter(r)
 
 		fc, err := NewFileChain(sink)
@@ -96,16 +97,19 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 		var rawLines [][]byte
 		var offsets []int64
 
-		if fc.Empty() {
-			// Nothing to read yet.
+		if fc.Empty() || (since >= 0 && since >= fc.TailOffset()) {
+			// Nothing to read yet, or since is at/past tail.
 		} else if tail {
 			// Read last `count` matching lines from the end.
 			rawLines, offsets, resp.FirstOffset, resp.NextOffset, err =
-				fc.ReadBackward(fc.TailOffset(), count, f)
+				fc.ReadBackward(fc.TailOffset(), count, f, since)
 		} else if dir == "backward" {
 			rawLines, offsets, resp.FirstOffset, resp.NextOffset, err =
-				fc.ReadBackward(offset, count, f)
+				fc.ReadBackward(offset, count, f, since)
 		} else {
+			if since >= 0 && offset < since {
+				offset = since
+			}
 			rawLines, offsets, resp.FirstOffset, resp.NextOffset, err =
 				fc.ReadForward(offset, count, f)
 		}
@@ -137,6 +141,7 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 		q := r.URL.Query()
 		query := q.Get("q")
 		limit := parseInt(q.Get("limit"), 200)
+		since := parseInt64(q.Get("since"), -1)
 		f := parseFilter(r)
 
 		if query == "" {
@@ -150,7 +155,7 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 			return
 		}
 
-		results, total, err := fc.Search(query, limit, f)
+		results, total, err := fc.Search(query, limit, f, since)
 		if err != nil {
 			http.Error(w, "search error: "+err.Error(), http.StatusInternalServerError)
 			return
