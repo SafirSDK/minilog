@@ -44,6 +44,7 @@ def generate(seed=42, count=400, now=None):
             "GET /health 200 0ms",
             "upstream timed out (110: Connection timed out) while reading response header",
             "worker process 12345 exited with code 1",
+            "client 10.0.0.5 request: GET /api/v2/reports/annual-summary?year=2025&department=engineering&include_subteams=true&format=detailed HTTP/2.0, host: app.example.com, referrer: https://app.example.com/dashboard/reports?tab=annual&view=expanded&filter=active, user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36, upstream response time: 12.532s, upstream addr: 10.0.0.6:8080, request_id: a]b3c4d5-e6f7-8901-2345-6789abcdef01",
         ],
         "postgres": [
             "connection received: host=10.0.0.5 port=54321",
@@ -51,6 +52,7 @@ def generate(seed=42, count=400, now=None):
             "checkpoint complete: wrote 142 buffers (0.9%)",
             "duration: 1523.421 ms  statement: SELECT * FROM events WHERE ts > NOW() - INTERVAL '1 day'",
             "ERROR: deadlock detected",
+            "LOG: duration: 8234.192 ms  statement: SELECT e.id, e.event_type, e.created_at, e.payload, u.username, u.email, u.department, t.team_name, t.manager_id FROM events e JOIN users u ON e.user_id = u.id LEFT JOIN teams t ON u.team_id = t.id WHERE e.created_at BETWEEN '2025-01-01' AND '2025-12-31' AND e.event_type IN ('login', 'logout', 'password_change', 'role_update', 'permission_grant', 'api_key_rotation') AND u.department = 'engineering' ORDER BY e.created_at DESC LIMIT 10000",
         ],
         "sshd": [
             "Accepted publickey for deploy from 10.0.0.5 port 44321 ssh2",
@@ -69,6 +71,7 @@ def generate(seed=42, count=400, now=None):
             'audit: type=1400 audit(1234567890.123:42): apparmor="ALLOWED"',
             "oom_reaper: reaped process 9876 (python3)",
             "TCP: Possible SYN flooding on port 443. Sending cookies.",
+            "Call Trace: [<ffffffff81234567>] ? schedule+0x3f/0x90 [<ffffffff81234890>] ? io_schedule+0x16/0x40 [<ffffffff812fab30>] ? get_request_wait+0x1c0/0x250 [<ffffffff812fac10>] ? blk_queue_bio+0x50/0x2b0 [<ffffffff81234567>] ? generic_make_request+0xc0/0x110 [<ffffffff81234890>] ? submit_bio+0x73/0x140 [<ffffffff811fa230>] ? ext4_io_submit+0x40/0x50 [<ffffffff811fa890>] ? ext4_bio_write_page+0x190/0x2a0 [<ffffffff811e3450>] ? mpage_submit_page+0x60/0x80 [<ffffffff811e3890>] ? mpage_map_and_submit_buffers+0x110/0x200",
         ],
         "systemd": [
             "Started nginx.service.",
