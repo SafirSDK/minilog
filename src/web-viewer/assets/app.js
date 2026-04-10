@@ -57,6 +57,9 @@ const knownFacilities = new Set();
 // IntersectionObserver for upward infinite scroll
 let topObserver = null;
 
+// Currently expanded row (accordion — at most one)
+let expandedRow = null;
+
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 
 const sinkSelect    = document.getElementById('sink-select');
@@ -109,6 +112,7 @@ async function init() {
   buildFacChips();
   buildFilterPanel();
   initColumnResize();
+  initRowExpansion();
   await Promise.all([loadVersion(), loadSinks()]);
   bindControls();
 }
@@ -370,9 +374,10 @@ function buildRow(entry, isNew, offset, rawLine) {
   }
 
   const tr = document.createElement('tr');
-  tr.dataset.raw    = (rawLine ?? JSON.stringify(entry)).toLowerCase();
-  tr.dataset.sev    = sev;
-  tr.dataset.offset = String(offset);
+  tr.dataset.raw     = (rawLine ?? JSON.stringify(entry)).toLowerCase();
+  tr.dataset.rawJson = rawLine ?? JSON.stringify(entry);
+  tr.dataset.sev     = sev;
+  tr.dataset.offset  = String(offset);
 
   if (isNew) tr.classList.add('row-new');
 
@@ -386,7 +391,7 @@ function buildRow(entry, isNew, offset, rawLine) {
     <td class="col-sev"     >${badge(sev)}</td>
     <td class="col-proto"   >${escHtml(entry.proto ?? '')}</td>
     <td class="col-msgid"   >${escHtml(entry.msgid ?? '')}</td>
-    <td class="col-msg"     >${escHtml(entry.message ?? '')}</td>
+    <td class="col-msg"      title="${escHtml(entry.message ?? '')}">${escHtml(entry.message ?? '')}</td>
   `;
 
   // Apply column visibility
@@ -886,6 +891,7 @@ function hideOverlays() {
 function clearDOM() {
   logBody.innerHTML = '';
   topOffset = 0;
+  expandedRow = null;
   if (topObserver) { topObserver.disconnect(); topObserver = null; }
 }
 
@@ -957,6 +963,83 @@ function formatTime(iso) {
 const escMap = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' };
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c => escMap[c]);
+}
+
+// ── Row expansion (detail panel) ──────────────────────────────────────────────
+
+const DETAIL_FIELDS = [
+  ['rcv',      'Rcv Time'],
+  ['src',      'Source'],
+  ['proto',    'Proto'],
+  ['facility', 'Facility'],
+  ['severity', 'Severity'],
+  ['hostname', 'Hostname'],
+  ['app',      'App'],
+  ['pid',      'PID'],
+  ['msgid',    'Msg ID'],
+  ['msg_time', 'Msg Time'],
+  ['message',  'Message'],
+];
+
+function toggleDetail(tr) {
+  // Already expanded — collapse it
+  if (tr.classList.contains('row-expanded')) {
+    collapseDetail(tr);
+    return;
+  }
+
+  // Accordion: collapse any other expanded row
+  if (expandedRow) collapseDetail(expandedRow);
+
+  let entry;
+  try { entry = JSON.parse(tr.dataset.rawJson); } catch { entry = null; }
+
+  if (!entry) return;
+
+  // Build detail row
+  const colCount = document.querySelectorAll('#log-table thead th').length;
+  const detailTr = document.createElement('tr');
+  detailTr.className = 'detail-row';
+  const td = document.createElement('td');
+  td.colSpan = colCount;
+  td.className = 'detail-cell';
+
+  const grid = document.createElement('div');
+  grid.className = 'detail-grid';
+  for (const [key, label] of DETAIL_FIELDS) {
+    const k = document.createElement('div');
+    k.className = 'detail-key';
+    k.textContent = label;
+    const v = document.createElement('div');
+    v.className = 'detail-val';
+    const val = entry[key];
+    v.textContent = val != null ? String(val) : '—';
+    grid.appendChild(k);
+    grid.appendChild(v);
+  }
+  td.appendChild(grid);
+  detailTr.appendChild(td);
+
+  tr.after(detailTr);
+  tr.classList.add('row-expanded');
+  expandedRow = tr;
+}
+
+function collapseDetail(tr) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('detail-row')) next.remove();
+  tr.classList.remove('row-expanded');
+  if (expandedRow === tr) expandedRow = null;
+}
+
+function initRowExpansion() {
+  logBody.addEventListener('click', e => {
+    // Don't toggle when clicking a resize handle
+    if (e.target.closest('.col-resize-handle')) return;
+    const tr = e.target.closest('tr');
+    if (!tr || tr.classList.contains('detail-row')) return;
+    toggleDetail(tr);
+  });
 }
 
 // ── Column resizing ───────────────────────────────────────────────────────────
