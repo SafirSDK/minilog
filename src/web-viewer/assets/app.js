@@ -37,6 +37,7 @@ let tailOffset      = 0;
 let atTail          = true;
 let pollTimer       = 0;
 let loadingUp       = false;
+let clearOffset     = null;
 
 let searchMatches      = [];
 let searchTotalMatches = 0;
@@ -177,6 +178,10 @@ function filterParams() {
 
   for (const p2 of includePatterns) p.append('inc', p2);
   for (const p2 of excludePatterns) p.append('exc', p2);
+
+  if (clearOffset !== null) {
+    p.set('since', String(clearOffset));
+  }
 
   return p;
 }
@@ -752,6 +757,7 @@ function toggleDropdown(key) {
 // ── Control bindings ──────────────────────────────────────────────────────────
 
 function resetSettings() {
+  clearOffset = null;
   [LS.COLS, LS.SEV, LS.FAC, LS.INC, LS.EXC].forEach(k => localStorage.removeItem(k));
   loadState();
   buildColChips();
@@ -765,9 +771,11 @@ function resetSettings() {
 
 function bindControls() {
   document.getElementById('reset-btn').addEventListener('click', resetSettings);
+  document.getElementById('clear-btn').addEventListener('click', clearView);
 
   sinkSelect.addEventListener('change', () => {
     activeSink = sinkSelect.value;
+    clearOffset = null;
     knownFacilities.clear();
     buildFacChips();
     onFilterChange();
@@ -842,6 +850,17 @@ function clearSearch() {
   }
   hideOverlays();
   if (!atTail) showJumpTail();
+}
+
+function clearView() {
+  clearOffset = tailOffset;
+  clearSearch();
+  stopPoll();
+  clearDOM();
+  atTail = true;
+  hideOverlays();
+  updateEmptyState();
+  startPoll();
 }
 
 // ── Overlay helpers ───────────────────────────────────────────────────────────

@@ -15,6 +15,9 @@
       <span class="logo-version" id="logo-version"></span>
       <select id="sink-select" aria-label="Select sink"></select>
     </div>
+    <div class="toolbar-center">
+      <button class="toolbar-clear-btn" id="clear-btn" title="Hide all current messages — only new incoming entries will appear">Clear Screen</button>
+    </div>
     <div class="toolbar-right">
       <!-- Columns dropdown -->
       <div class="dropdown" id="col-dropdown">
@@ -67,8 +70,8 @@
           </div>
         </div>
       </div>
-      <!-- Reset -->
-      <button class="toolbar-reset-btn" id="reset-btn" title="Reset all filters and settings to defaults">Reset</button>
+      <!-- Reset belongs with the filter group -->
+      <button class="toolbar-reset-btn" id="reset-btn" title="Restore all filters, columns, and settings to defaults and show all previous log entries">Reset</button>
       <!-- Search -->
       <div class="search-wrap">
         <input id="search" type="search" placeholder="Search… (Enter)" autocomplete="off" spellcheck="false" />
