@@ -343,7 +343,7 @@ select option { background: var(--surface-2); }
   z-index: 10;
 }
 
-.col-time     { width: 165px; }
+.col-time     { width: 200px; }
 .col-rcv      { width: 165px; }
 .col-src      { width: 115px; }
 .col-hostname { width: 160px; }
@@ -353,6 +353,24 @@ select option { background: var(--surface-2); }
 .col-proto    { width: 75px;  }
 .col-msgid    { width: 90px;  }
 .col-msg      { /* fills remaining */ }
+
+/* ── Column resize handles ───────────────────────────────── */
+
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 11;
+}
+.col-resize-handle:hover,
+.col-resize-handle.active {
+  background: var(--accent);
+  opacity: 0.5;
+}
 
 #log-table tbody tr {
   border-bottom: 1px solid var(--border);
