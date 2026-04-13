@@ -12,6 +12,7 @@ jobs:
   clang-format:
     name: clang-format check
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v6
 
@@ -29,6 +30,7 @@ jobs:
   check-headers:
     name: File header check
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v6
       - run: python3 tests/check_headers.py
@@ -37,6 +39,7 @@ jobs:
   ruff:
     name: Ruff (Python linting)
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
@@ -49,6 +52,7 @@ jobs:
   linux:
     name: Linux (GCC)
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
 
@@ -77,6 +81,7 @@ jobs:
   linux-sanitizers:
     name: Linux (Clang ASan+UBSan)
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
 
@@ -105,6 +110,7 @@ jobs:
   linux-coverage:
     name: Linux (Coverage)
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
 
@@ -158,6 +164,7 @@ jobs:
   linux-tsan:
     name: Linux (Clang TSan)
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
 
@@ -186,6 +193,7 @@ jobs:
   windows:
     name: Windows (MSVC)
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -265,6 +273,7 @@ jobs:
   linux-fuzz:
     name: Linux (libFuzzer)
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
 
@@ -290,6 +299,7 @@ jobs:
   docker:
     name: Docker build
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v6
 
