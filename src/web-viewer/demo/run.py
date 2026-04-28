@@ -2,10 +2,10 @@
 """
 Start the minilog-web-viewer demo with live log appending.
 
-Usage: python3 run.py [--addr :8080] [--interval 2.5] [--burst 3]
+Usage: python3 run.py [--addr :9514] [--interval 2.5] [--burst 3]
                       [--viewer /path/to/minilog-web-viewer]
 
-  --addr      Address for the web viewer to listen on  (default: :8080)
+  --addr      Address for the web viewer to listen on  (default: :9514)
   --interval  Average seconds between appended batches (default: 2.5)
   --burst     Max entries per appended batch           (default: 3)
   --viewer    Explicit path to the minilog-web-viewer binary
@@ -81,7 +81,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--addr", default=":8080", help="listener address for the web viewer (default: :8080)"
+        "--addr", default=":9514", help="listener address for the web viewer (default: :9514)"
     )
     parser.add_argument(
         "--interval",

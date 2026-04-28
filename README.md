@@ -368,16 +368,16 @@ minilog-web-viewer [options]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--config PATH` | `<exe dir>/minilog.conf` | Path to `minilog.conf` |
-| `--addr ADDR` | `:8080` | HTTP listen address |
+| `--addr ADDR` | `:9514` | HTTP listen address |
 | `--install` | — | Register as a Windows service (Windows only) |
 | `--uninstall` | — | Remove the Windows service (Windows only) |
 
 The server reads all `[output.*]` sections that have `jsonl_file` configured and exposes each as
-a named **sink**. Open `http://localhost:8080` in a browser to access the UI.
+a named **sink**. Open `http://localhost:9514` in a browser to access the UI.
 
 **Security note:** The web viewer does not implement any authentication or access control.
-Anyone who can reach the listen address can read all exposed log data. Bind to `127.0.0.1:8080`
-(via `--addr 127.0.0.1:8080`) to restrict access to the local machine, or place the viewer
+Anyone who can reach the listen address can read all exposed log data. Bind to `127.0.0.1:9514`
+(via `--addr 127.0.0.1:9514`) to restrict access to the local machine, or place the viewer
 behind a reverse proxy that provides authentication. Do not expose it on an untrusted network
 without additional protection.
 

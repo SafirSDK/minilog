@@ -12,7 +12,7 @@
 ;   ConfigDir      — directory containing the default minilog.conf
 ;   AppVersion     — version string, e.g. "0.1.0"
 ;   OutputDir      — where to write the installer .exe (default: SourceDir)
-;   WebViewerAddr  — listen address for the web viewer (default: :8080)
+;   WebViewerAddr  — listen address for the web viewer (default: :9514)
 
 #ifndef SourceDir
   #define SourceDir "..\build\windows-release"
@@ -30,7 +30,7 @@
   #define OutputDir "{#SourceDir}"
 #endif
 #ifndef WebViewerAddr
-  #define WebViewerAddr ":8080"
+  #define WebViewerAddr ":9514"
 #endif
 
 [Setup]

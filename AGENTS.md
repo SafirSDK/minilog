@@ -79,7 +79,7 @@ Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 ### web-viewer (`src/web-viewer/`)
 - Language: Go 1.25; single external dep: `golang.org/x/sys` (Windows service support only).
 - Entry point: `main.go`; build with `go build ./src/web-viewer`.
-- Serves an embedded SPA (`assets/`) over HTTP (default `:8080`).
+- Serves an embedded SPA (`assets/`) over HTTP (default `:9514`).
 - Reads `minilog.conf` to discover all `[output.*]` sections with `jsonl_file`; each becomes a
   named **sink** available in the browser's sink selector.
 - Key packages/files:

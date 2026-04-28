@@ -41,7 +41,7 @@ LOG_DIR        = DATA_DIR / "logs"
 LOG_FILE       = LOG_DIR / "syslog.log"
 SERVICE_NAME   = "minilog"
 WEB_SERVICE    = "minilog-web-viewer"
-WEB_VIEWER_URL = "http://localhost:8080"
+WEB_VIEWER_URL = "http://localhost:9514"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 

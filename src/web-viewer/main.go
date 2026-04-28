@@ -36,7 +36,7 @@ func main() {
 	defaultConfig := filepath.Join(filepath.Dir(exe), "minilog.conf")
 
 	configPath := flag.String("config", defaultConfig, "path to minilog.conf")
-	addr := flag.String("addr", ":8080", "HTTP listen address")
+	addr := flag.String("addr", ":9514", "HTTP listen address")
 	doInstall := flag.Bool("install", false, "install as a Windows service (Windows only)")
 	doUninstall := flag.Bool("uninstall", false, "remove the Windows service (Windows only)")
 	flag.Parse()
