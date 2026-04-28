@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.3.0 — 2026-04-10
+## v1.3.0 — 2026-04-28
 
 ### New
 
@@ -19,6 +19,8 @@
 
 ### Changed
 
+- **Web viewer default port**: changed from 8080 to 9514 to avoid conflicts with commonly used
+  development ports. The port 9514 is unregistered with IANA and alludes to the syslog port (514).
 - **README**: the summary, features, and limitations sections now mention the bundled viewers,
   default Windows installation, and the lack of authentication/TLS on the web viewer.
 - **Installer tests**: added web viewer smoke tests — verifies the binary is installed, the
