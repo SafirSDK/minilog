@@ -216,3 +216,4 @@ CMakeUserPresets.json
 # web-viewer demo runtime artifacts
 src/web-viewer/minilog-web-viewer
 src/web-viewer/demo/logs/
+src/web-viewer/minilog-web-viewer.exe
