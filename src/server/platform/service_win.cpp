@@ -21,6 +21,8 @@
 #include <boost/asio/signal_set.hpp>
 
 #include <csignal>
+#include <cstdlib>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -34,6 +36,22 @@ static constexpr char SERVICE_NAME[]    = "minilog";
 static constexpr char SERVICE_DISPLAY[] = "minilog Syslog Server";
 static constexpr char SERVICE_DESC[] = "Minimal syslog server. https://github.com/SafirSDK/minilog";
 
+// Upper bound on config load + sink open + socket bind, reported to the SCM as
+// the SERVICE_START_PENDING wait hint. Startup is milliseconds in practice; the
+// margin is there so a slow or contended disk is not mistaken for a hang.
+static constexpr DWORD STARTUP_WAIT_HINT_MS = 10000;
+
+// Recovery actions configured at install time: restart twice, then leave the
+// service stopped. The reset period is what separates the two failure modes.
+// A service that fails at startup fails again within seconds, so the counter
+// keeps climbing and it stops after two attempts, leaving one clearly stopped
+// service and a short, readable Event Log rather than an endless restart loop.
+// A service that crashes after running healthily for longer than the reset
+// period is treated as a fresh first failure each time, so an intermittent
+// fault is always retried instead of exhausting its restarts.
+static constexpr DWORD RESTART_DELAY_MS       = 5000;
+static constexpr DWORD FAILURE_RESET_PERIOD_S = 300;
+
 // ─── Global state shared between SCM callbacks and tryRunAsService ────────────
 
 namespace
@@ -44,15 +62,21 @@ HANDLE g_stopEvent                   = nullptr;
 std::function<int()> g_serviceMain;
 int g_serviceExitCode = EXIT_FAILURE;
 
-void reportStatus(DWORD state, DWORD exitCode = NO_ERROR, DWORD waitHint = 0)
+// exitCode is the SCM-visible Win32 status. When it is ERROR_SERVICE_SPECIFIC_ERROR,
+// specificExitCode carries minilog's own exit code.
+void reportStatus(DWORD state,
+                  DWORD exitCode         = NO_ERROR,
+                  DWORD waitHint         = 0,
+                  DWORD specificExitCode = 0)
 {
     static DWORD checkPoint = 1;
 
     SERVICE_STATUS status{};
-    status.dwServiceType      = SERVICE_WIN32_OWN_PROCESS;
-    status.dwCurrentState     = state;
-    status.dwControlsAccepted = (state == SERVICE_RUNNING) ? SERVICE_ACCEPT_STOP : 0;
-    status.dwWin32ExitCode    = exitCode;
+    status.dwServiceType             = SERVICE_WIN32_OWN_PROCESS;
+    status.dwCurrentState            = state;
+    status.dwControlsAccepted        = (state == SERVICE_RUNNING) ? SERVICE_ACCEPT_STOP : 0;
+    status.dwWin32ExitCode           = exitCode;
+    status.dwServiceSpecificExitCode = specificExitCode;
     status.dwCheckPoint = (state == SERVICE_RUNNING || state == SERVICE_STOPPED) ? 0 : checkPoint++;
     status.dwWaitHint   = waitHint;
 
@@ -83,8 +107,11 @@ void WINAPI serviceMsgMain(DWORD /*argc*/, LPSTR* /*argv*/)
         return;
     }
 
-    reportStatus(SERVICE_START_PENDING, NO_ERROR, 3000);
-    reportStatus(SERVICE_RUNNING);
+    // Stay in START_PENDING until runServer() has loaded the config, opened the
+    // sinks and bound the socket; reportServiceStarted() makes the transition to
+    // SERVICE_RUNNING. Reporting RUNNING here instead would make `sc start`
+    // succeed even when startup is about to fail.
+    reportStatus(SERVICE_START_PENDING, NO_ERROR, STARTUP_WAIT_HINT_MS);
 
     if (g_serviceMain)
     {
@@ -93,7 +120,22 @@ void WINAPI serviceMsgMain(DWORD /*argc*/, LPSTR* /*argv*/)
 
     CloseHandle(g_stopEvent);
     g_stopEvent = nullptr;
-    reportStatus(SERVICE_STOPPED);
+
+    if (g_serviceExitCode == EXIT_SUCCESS)
+    {
+        reportStatus(SERVICE_STOPPED);
+    }
+    else
+    {
+        // Reporting a non-zero exit code is what tells the SCM this was a failure
+        // rather than a clean stop, and is the precondition for the recovery
+        // actions configured by installService() to fire. The reason itself is
+        // already in the Event Log, written by osLogError().
+        reportStatus(SERVICE_STOPPED,
+                     ERROR_SERVICE_SPECIFIC_ERROR,
+                     0,
+                     static_cast<DWORD>(g_serviceExitCode));
+    }
 }
 
 } // namespace
@@ -130,6 +172,14 @@ void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop)
                     onStop();
                 }
             });
+    }
+}
+
+void reportServiceStarted()
+{
+    if (g_statusHandle != nullptr)
+    {
+        reportStatus(SERVICE_RUNNING);
     }
 }
 
@@ -187,6 +237,33 @@ void installService(const std::string& exePath, const std::string& configPath)
 
     SERVICE_DESCRIPTIONA desc{const_cast<char*>(SERVICE_DESC)};
     ChangeServiceConfig2A(svc, SERVICE_CONFIG_DESCRIPTION, &desc);
+
+    // The SCM repeats the last action for every further failure, so the trailing
+    // SC_ACTION_NONE is what stops the restarts after the second attempt.
+    SC_ACTION actions[] = {
+        {SC_ACTION_RESTART, RESTART_DELAY_MS},
+        {SC_ACTION_RESTART, RESTART_DELAY_MS},
+        {SC_ACTION_NONE, 0},
+    };
+    SERVICE_FAILURE_ACTIONSA failureActions{};
+    failureActions.dwResetPeriod = FAILURE_RESET_PERIOD_S;
+    failureActions.cActions      = static_cast<DWORD>(std::size(actions));
+    failureActions.lpsaActions   = actions;
+    if (!ChangeServiceConfig2A(svc, SERVICE_CONFIG_FAILURE_ACTIONS, &failureActions))
+    {
+        osLogError("minilog: failed to configure service recovery actions: " +
+                   std::to_string(GetLastError()));
+    }
+
+    // Without this flag the SCM runs the recovery actions only when the process
+    // dies outright. minilog reports its own failures as SERVICE_STOPPED with a
+    // non-zero exit code, which counts as a failure only when the flag is set.
+    SERVICE_FAILURE_ACTIONS_FLAG failureFlag{TRUE};
+    if (!ChangeServiceConfig2A(svc, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &failureFlag))
+    {
+        osLogError("minilog: failed to enable recovery actions on non-crash failures: " +
+                   std::to_string(GetLastError()));
+    }
 
     // Register the event source so Event Viewer can display messages from the exe.
     static constexpr char EVENT_LOG_KEY[] =

@@ -81,6 +81,11 @@ int runServer(const std::string& configPath)
         return EXIT_FAILURE;
     }
 
+    // Everything that can fail at startup has now succeeded, so it is safe to
+    // tell the SCM the service is running. Any failure above returns non-zero
+    // instead, which the service layer reports to the SCM as a failed start.
+    minilog::reportServiceStarted();
+
     // Spin up workers-1 additional threads; main thread also calls run().
     std::vector<std::thread> threads;
     threads.reserve(static_cast<std::size_t>(cfg.workers - 1));

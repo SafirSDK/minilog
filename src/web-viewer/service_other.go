@@ -14,7 +14,7 @@ import (
 
 // tryRunAsService is a no-op on non-Windows platforms.
 // It always returns false (not running as a service).
-func tryRunAsService(_ func()) (bool, error) {
+func tryRunAsService(_ func(ready func()) error) (bool, error) {
 	return false, nil
 }
 

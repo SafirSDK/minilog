@@ -184,6 +184,17 @@ minilog --uninstall                # stop and remove the Windows service
 
 The config path is stored in the service registry entry so the same path is used when the service starts automatically on boot.
 
+`--install` also configures the service's recovery actions: the SCM restarts it 5 seconds after
+a failure, twice, and then leaves it stopped; the failure counter resets after 300 seconds with
+no failures. A service that fails at startup — bad config, unbindable port — therefore stops
+after two attempts rather than looping, while one that crashes after running healthily for
+longer than the reset period is always retried.
+
+The service reports `SERVICE_RUNNING` only after the config has loaded, the sinks have opened and
+the UDP socket has bound, so `sc start minilog` fails when startup fails instead of reporting
+success and stopping a moment later. A failed run is reported to the SCM as a service-specific
+error with a non-zero exit code, visible in `sc query minilog`; the reason is in the Event Log.
+
 ## Configuration
 
 minilog reads a single INI file passed on the command line. There is no config reload; restart the process to pick up changes.
@@ -409,6 +420,14 @@ without additional protection.
 **Windows service:** `--install` registers the binary as an auto-start service named
 `minilog-web-viewer`. Pass `--config` and `--addr` at install time; those values are baked into
 the service entry. `--uninstall` stops and removes it.
+
+`--install` also registers a Windows Event Log source named `minilog-web-viewer` (removed again
+by `--uninstall`) and configures the same recovery actions as the server: two restarts 5 seconds
+apart, then stopped, with the failure counter resetting after 300 seconds. A service process has
+no console, so the Event Log is where startup failures — an unreadable `minilog.conf`, a listen
+address that cannot be bound — are recorded. The viewer reports `SERVICE_RUNNING` only once the
+listen address is bound, so `sc start minilog-web-viewer` fails when startup fails. Interactive
+runs continue to log to stderr.
 
 **Browser UI features:**
 

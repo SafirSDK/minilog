@@ -77,7 +77,8 @@ Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 - Tests: `tests/cli-viewer/test_cli_viewer.py` (invoked via CTest).
 
 ### web-viewer (`src/web-viewer/`)
-- Language: Go 1.25; single external dep: `golang.org/x/sys` (Windows service support only).
+- Language: Go 1.25; single external dep: `golang.org/x/sys` (Windows service and Event Log
+  support only), vendored under `src/web-viewer/vendor/`.
 - Entry point: `main.go`; build with `go build ./src/web-viewer`.
 - Serves an embedded SPA (`assets/`) over HTTP (default `:9514`).
 - Reads `minilog.conf` to discover all `[output.*]` sections with `jsonl_file`; each becomes a
@@ -87,8 +88,11 @@ Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
   - `reader.go` — `FileChain` (logical byte-offset abstraction over rotation chain),
     `ReadForward()`, `ReadBackward()`, `Search()`, `Filter` struct
   - `handlers.go` — HTTP routes: `GET /sinks`, `GET /lines`, `GET /search`
-  - `service_windows.go` — Windows NT service install/uninstall/run via `golang.org/x/sys/windows/svc`
+  - `service_windows.go` — Windows NT service install/uninstall/run via `golang.org/x/sys/windows/svc`,
+    including recovery actions (two restarts, 5 s apart, 300 s reset period)
   - `service_other.go` — no-op stubs for non-Windows
+  - `os_log_windows.go` / `os_log_other.go` — `osLogError`/`osLogInfo`; on Windows these also write
+    to the `minilog-web-viewer` Event Log source registered by `--install`
 - `FileChain` is rebuilt per request (snapshots the filesystem); supports forward paging,
   backward paging (for infinite-scroll upward), and full-chain search across all rotated generations.
 - Filter params on `/lines` and `/search`: `sev` (severity names), `fac` (facility names),

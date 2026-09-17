@@ -37,6 +37,8 @@ void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop)
         });
 }
 
+void reportServiceStarted() {}
+
 std::optional<int> tryRunAsService(const std::function<int()>& /*serviceMain*/)
 {
     return std::nullopt;

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,7 +22,8 @@ var assets embed.FS
 // version is set at build time via -ldflags "-X main.version=x.y.z".
 var version = "dev"
 
-// globalStop is closed to signal all goroutines to shut down.
+// globalStop is closed to signal all goroutines to shut down.  It is the stop
+// channel main passes to serve(); tests pass their own.
 // NOTE: this channel is single-use — closing it twice will panic.  Currently
 // safe because serve() is only called once, but keep this in mind if the
 // startup path is ever changed to support retries.
@@ -67,10 +69,11 @@ func main() {
 		return
 	}
 
-	run := func() {
-		if err := serve(*configPath, *addr); err != nil {
-			log.Printf("minilog-web-viewer: %v", err)
-		}
+	// ready is called once the config has loaded and the listen address is
+	// bound; the service wrapper uses it to delay reporting SERVICE_RUNNING
+	// until startup has actually succeeded.
+	run := func(ready func()) error {
+		return serve(*configPath, *addr, globalStop, ready)
 	}
 
 	// Attempt to run as a Windows NT service. On Linux this is a no-op and
@@ -85,13 +88,37 @@ func main() {
 
 	// Interactive mode (Linux or Windows console).
 	setupShutdown()
-	run()
+	if err := run(func() {}); err != nil {
+		osLogError(fmt.Sprintf("minilog-web-viewer: %v", err))
+		os.Exit(1)
+	}
 }
 
-func serve(configPath, addr string) error {
+// serve loads the sinks, binds addr and serves until stop is closed.
+//
+// ready is called exactly once, after the config has loaded and the listen
+// address is bound — i.e. after everything that can fail at startup has
+// succeeded.  Every failure before that point is returned as an error rather
+// than logged and swallowed, so that a service start reports failure instead of
+// reporting success and then stopping a moment later.
+func serve(configPath, addr string, stop <-chan struct{}, ready func()) error {
 	sinks, err := loadSinks(configPath)
 	if err != nil {
 		return fmt.Errorf("config error: %w", err)
+	}
+
+	mux := http.NewServeMux()
+	registerHandlers(mux, sinks)
+
+	srv := &http.Server{
+		Handler: mux,
+	}
+
+	// Bind explicitly rather than via ListenAndServe, so that an unusable listen
+	// address is reported before ready() rather than after.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("cannot listen on %s: %w", addr, err)
 	}
 
 	log.Printf("minilog-web-viewer starting — %d sink(s), listening on %s", len(sinks), addr)
@@ -99,23 +126,17 @@ func serve(configPath, addr string) error {
 		log.Printf("  sink %q → %s", s.Name, s.Path)
 	}
 
-	mux := http.NewServeMux()
-	registerHandlers(mux, sinks)
-
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: mux,
-	}
-
-	// Shut down the HTTP server when globalStop is closed.
+	// Shut down the HTTP server when stop is closed.
 	go func() {
-		<-globalStop
+		<-stop
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	ready()
+
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil

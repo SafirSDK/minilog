@@ -33,18 +33,33 @@ namespace minilog
 // onStop is called once when a shutdown request is received.
 void setupShutdown(boost::asio::io_context& ioc, std::function<void()> onStop);
 
+// Report that startup has completed successfully.
+//
+// Windows: transitions the service from SERVICE_START_PENDING to
+//          SERVICE_RUNNING. Until this is called the SCM considers the service
+//          to be still starting, so a startup that fails before reaching this
+//          point makes `sc start` fail instead of reporting success.
+//          No-op when the process was not started by the SCM.
+//
+// Linux:   no-op.
+void reportServiceStarted();
+
 // Attempt to run the process as a Windows NT service.
 //
 // Windows: calls StartServiceCtrlDispatcher; if this process was started by
 //          the SCM, serviceMain is invoked from the service thread and this
 //          function returns the serviceMain exit code when the service exits.
+//          A non-zero serviceMain exit code is reported to the SCM as a
+//          service-specific failure, which is what makes the recovery actions
+//          configured by installService() fire.
 //          Returns std::nullopt if the process was started interactively
 //          (ERROR_FAILED_SERVICE_CONTROLLER_CONNECT).
 //
 // Linux:   always returns std::nullopt immediately.
 std::optional<int> tryRunAsService(const std::function<int()>& serviceMain);
 
-// Install minilog as a Windows NT auto-start service.
+// Install minilog as a Windows NT auto-start service, with recovery actions
+// that restart it twice before giving up.
 // exePath    - full path to the minilog executable
 // configPath - full path to the config file (passed as a CLI arg to the service)
 //

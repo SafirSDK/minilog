@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Windows services now report failure to the SCM.** Both the server and the web viewer used to
+  report every stop as a clean one, so `sc start` succeeded even when the config was invalid or
+  the port could not be bound, and the service then stopped silently. Each service now stays in
+  `SERVICE_START_PENDING` until startup has actually succeeded, and reports a service-specific
+  error with a non-zero exit code when it fails.
+
+### New
+
+- **Windows service recovery actions.** `--install` now configures both services to be restarted
+  by the SCM 5 seconds after a failure, twice, before being left stopped, with the failure
+  counter resetting after 300 seconds without a failure. Previously a service that died stayed
+  dead until someone noticed.
+- **Event Log source for the web viewer.** `--install` registers a `minilog-web-viewer` Event Log
+  source and `--uninstall` removes it. A web viewer running as a service has no console, so its
+  startup failures previously left no trace at all; they are now written to the Windows Event
+  Log. Interactive runs still log to stderr.
+
 ## v1.3.0 — 2026-04-28
 
 ### New
