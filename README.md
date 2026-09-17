@@ -26,9 +26,34 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 
 - **UDP only** — no TCP, TLS, or RELP; message delivery is best-effort
 - **IPv4 only** — the server binds a UDP v4 socket; IPv6 is not supported
+- **No multicast or promiscuous capture** — minilog receives datagrams addressed to the host it runs on; it does not join multicast groups or sniff traffic addressed elsewhere (neither is part of the syslog RFCs)
 - **RFC 5424 structured data is not parsed** — it is just passed along to the output files
 - **Rotated files are not compressed** — generation files are plain text/JSONL; no gzip
 - **Web viewer has no authentication or TLS** — anyone who can reach the listen port can read all exposed logs; bind to localhost or place behind a reverse proxy on untrusted networks
+
+## Standards conformance
+
+minilog implements [RFC 5426](https://www.rfc-editor.org/rfc/rfc5426) (Transmission of Syslog
+Messages over UDP) in the **receiver** role:
+
+| Requirement | minilog |
+|-------------|---------|
+| §3.1 — one message per datagram, complete or truncated | One parse per datagram; payloads matching neither RFC format are retained verbatim as `proto=UNKNOWN` rather than discarded |
+| §3.2 — MUST accept 480 octets (IPv4); SHOULD accept 2048 | Accepts up to 65507 octets — the full UDP payload limit |
+| §3.3 — MUST accept on port 514, MAY be configurable | Default 514, configurable via `[server] udp_port` |
+| §3.4 — source IP SHOULD NOT identify the originator | `src` (sender IP) is recorded separately from `hostname` (the in-message identifier) |
+| §3.6 — MUST NOT disable UDP checksum checks | Kernel default, untouched |
+
+Message formats: [RFC 5424](https://www.rfc-editor.org/rfc/rfc5424) and legacy
+[RFC 3164](https://www.rfc-editor.org/rfc/rfc3164). RFC 5424 structured data is preserved verbatim
+as a prefix of the message rather than parsed into separate fields.
+
+When forwarding (`[forwarding]`), minilog acts as a syslog sender. Messages longer than
+`max_message_size` are truncated and marked with `... [TRUNCATED: N bytes]`; RFC 5426 §3.1 permits
+truncated messages, and §3.2 RECOMMENDS that senders keep datagrams below the path MTU.
+
+Multicast and broadcast group reception are not addressed by any of the syslog RFCs and are not
+supported. Transports other than UDP (TCP, TLS/RFC 5425, RELP) are out of scope.
 
 ## Requirements
 

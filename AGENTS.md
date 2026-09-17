@@ -116,6 +116,9 @@ Before tagging a release, verify all of the following:
    - libFuzzer
 
 4. **README** — verify any new features, config options, or CLI flags are documented.
+   Re-check the **Standards conformance** section if the receive path, parser, or forwarding
+   truncation changed — the RFC 5426 table makes claims that must stay true (buffer size,
+   default port, `src` vs `hostname` separation).
 
 5. **AGENTS.md** — update if architecture, conventions, or component layout changed.
 
