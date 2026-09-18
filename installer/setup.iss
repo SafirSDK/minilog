@@ -150,20 +150,86 @@ Filename: "{app}\minilog.exe"; Parameters: "--uninstall"; \
     RunOnceId: "UninstallService"
 
 [Code]
+const
+  EnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+
 // Check if a path needs to be added to the system PATH.
 function NeedsAddPath(Param: string): boolean;
 var
   OrigPath: string;
 begin
-  if not RegQueryStringValue(HKEY_LOCAL_MACHINE,
-    'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
-    'Path', OrigPath)
-  then begin
+  if not RegQueryStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', OrigPath) then
+  begin
     Result := True;
     exit;
   end;
   // Check if our path already exists (case-insensitive)
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
+end;
+
+// Remove Param from the system PATH, if it is there.
+//
+// Inno does not revert a {olddata}-style append on its own — that is a
+// modify-in-place of a value the installer does not own — so without this the
+// entry outlives the product.  It also accumulates: the NeedsAddPath guard
+// suppresses a duplicate only while the entry is still present with the same
+// {app} value, so install, uninstall, install elsewhere leaves two.
+//
+// The value is read here, at uninstall time, and edited; writing back a value
+// captured at install time would clobber whatever else changed PATH in the
+// meantime.  Segments are kept verbatim, empty ones included, so everything
+// but our own entry comes back out byte for byte, in order.
+procedure RemovePath(Param: string);
+var
+  OrigPath, NewPath, Remaining, Segment, Wanted: string;
+  P: Integer;
+  Found, More, Kept: Boolean;
+begin
+  if not RegQueryStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', OrigPath) then
+    exit;
+
+  Wanted := Uppercase(RemoveBackslash(Trim(Param)));
+  Remaining := OrigPath;
+  NewPath := '';
+  Found := False;
+  Kept := False;
+
+  repeat
+    P := Pos(';', Remaining);
+    More := P > 0;
+    if More then
+    begin
+      Segment := Copy(Remaining, 1, P - 1);
+      Remaining := Copy(Remaining, P + 1, Length(Remaining) - P);
+    end
+    else
+    begin
+      Segment := Remaining;
+      Remaining := '';
+    end;
+
+    // Tolerate a trailing backslash and surrounding spaces on either side of
+    // the comparison; they name the same directory.
+    if Uppercase(RemoveBackslash(Trim(Segment))) = Wanted then
+      Found := True
+    else
+    begin
+      if Kept then
+        NewPath := NewPath + ';';
+      NewPath := NewPath + Segment;
+      Kept := True;
+    end;
+  until not More;
+
+  // Not there: leave the value untouched rather than rewriting it.
+  if not Found then
+    exit;
+
+  // Never write an empty PATH, whatever is left.
+  if NewPath = '' then
+    exit;
+
+  RegWriteExpandStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', NewPath);
 end;
 
 // On upgrade installs, stop the running services before new binaries are copied
@@ -175,7 +241,7 @@ end;
 //
 //     --stop (both services)  ->  copy files  ->  --install (both)  ->  sc start
 //
-// with --install and `sc start` run from [Run] below.  The services are
+// with --install and `sc start` run from [Run].  The services are
 // deliberately not deregistered: --install updates an existing registration in
 // place, preserving the start type and the service account an administrator may
 // have set by hand.
@@ -191,4 +257,12 @@ begin
     Exec(ExpandConstant('{app}\minilog.exe'), '--stop', '',
          SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
+end;
+
+// Take the tools directory back out of the system PATH.  [Registry] put it
+// there as an append to an existing value, which Inno does not undo itself.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RemovePath(ExpandConstant('{app}\tools'));
 end;

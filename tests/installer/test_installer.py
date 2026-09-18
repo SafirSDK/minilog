@@ -14,7 +14,10 @@ Test groups (run in sequence):
   7. Re-register    — --install over an existing service updates it and leaves
                        the administrator's start type and account alone
   8. Upgrade install — service survives; user-modified config is not overwritten
-  9. Uninstall       — services and binaries removed; config file survives
+  9. Uninstall       — services and binaries removed; config file survives;
+                       the system PATH entry goes with them
+ 10. PATH lifecycle   — installing elsewhere and uninstalling again leaves no
+                       stale PATH entry, wherever ours sits in the list
 
 Must be run as Administrator (the installer registers a Windows service).
 
@@ -32,6 +35,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import winreg
 from pathlib import Path
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -56,7 +60,15 @@ WEB_VIEWER_PORT = 9514
 WEB_VIEWER_URL = f"http://localhost:{WEB_VIEWER_PORT}"
 CONFIG_BACKUP  = DATA_DIR / "minilog.conf.installer-test-backup"
 
+# Placed after minilog's own entry so the removal has to cope with an entry in
+# the middle of the list, and so any damage to a neighbour is visible.
+PATH_SENTINEL  = r"C:\minilog-installer-test-sentinel"
+
 EVENTLOG_KEY = r"HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application"
+ENVIRONMENT_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+# Second installation directory, for the install-elsewhere half of the PATH tests.
+ALT_APP_DIR = PROGRAM_FILES / "minilog-alt"
 
 # Win32 status the SCM records when a service reports its own failure; the real
 # code is then in SERVICE_EXIT_CODE.
@@ -90,22 +102,56 @@ def check(condition: bool, message: str) -> None:
         failed += 1
 
 
-def run_installer(path: Path) -> None:
+def run_installer(path: Path, app_dir: Path | None = None) -> None:
+    args = [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES"]
+    if app_dir is not None:
+        args.append(f"/DIR={app_dir}")
+    result = subprocess.run(args, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"Installer exited with code {result.returncode}")
+
+
+def run_uninstaller(path: Path = UNINST_PATH) -> None:
     result = subprocess.run(
         [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES"],
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Installer exited with code {result.returncode}")
-
-
-def run_uninstaller() -> None:
-    result = subprocess.run(
-        [str(UNINST_PATH), "/VERYSILENT", "/SUPPRESSMSGBOXES"],
-        check=False,
-    )
-    if result.returncode != 0:
         raise RuntimeError(f"Uninstaller exited with code {result.returncode}")
+
+
+# ─── System PATH ──────────────────────────────────────────────────────────────
+#
+# The installer appends {app}\tools to the system PATH as a modify-in-place of a
+# value it does not own, so removing it again is the uninstaller's own work.
+# These read and write the registry value directly: the tests care about the
+# stored value, not about what this process inherited at startup.
+
+
+def read_system_path() -> str:
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, ENVIRONMENT_KEY) as key:
+        value, _ = winreg.QueryValueEx(key, "Path")
+    return value
+
+
+def write_system_path(value: str) -> None:
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, ENVIRONMENT_KEY, 0,
+                        winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, value)
+
+
+def same_dir(segment: str, directory: Path) -> bool:
+    """Compare one PATH segment with a directory, as the uninstaller does."""
+    return segment.strip().rstrip("\\").lower() == str(directory).rstrip("\\").lower()
+
+
+def path_has(directory: Path) -> bool:
+    return any(same_dir(seg, directory) for seg in read_system_path().split(";"))
+
+
+def path_without(directory: Path) -> str:
+    """The current system PATH with `directory` removed, joined as the uninstaller joins it."""
+    return ";".join(seg for seg in read_system_path().split(";") if not same_dir(seg, directory))
 
 
 def sc(*args: str) -> subprocess.CompletedProcess:
@@ -323,6 +369,7 @@ def test_clean_install(installer: Path) -> None:
 
     check(EXE_PATH.exists(),    f"minilog.exe present at {APP_DIR}")
     check(TOOLS_DIR.exists(),   f"Tools directory created at {TOOLS_DIR}")
+    check(path_has(TOOLS_DIR),  f"{TOOLS_DIR} added to the system PATH")
     check(VIEWER_PATH.exists(), f"minilog-cli-viewer.py present at {TOOLS_DIR}")
     check(LOG_DIR.exists(),     f"Log directory created at {LOG_DIR}")
     check(CONFIG_PATH.exists(), f"Config file present at {DATA_DIR}")
@@ -751,7 +798,19 @@ def test_upgrade(installer: Path) -> None:
 def test_uninstall() -> None:
     print("\n=== Test 9: Uninstall ===")
 
+    # Append a sentinel so our entry is in the middle of the list rather than at
+    # the end, and so damage to a neighbour shows up as an exact-value mismatch.
+    write_system_path(read_system_path() + ";" + PATH_SENTINEL)
+    expected_path = path_without(TOOLS_DIR)
+
     run_uninstaller()
+
+    check(not path_has(TOOLS_DIR), f"{TOOLS_DIR} removed from the system PATH")
+    check(read_system_path() == expected_path,
+          "Every other PATH entry survives the uninstall, in order")
+    # Clean up the sentinel whatever the outcome above.
+    write_system_path(";".join(seg for seg in read_system_path().split(";")
+                               if seg != PATH_SENTINEL))
 
     check(not service_exists(),     "Service removed after uninstall")
     check(not service_exists(WEB_SERVICE), "Web viewer service removed after uninstall")
@@ -764,6 +823,46 @@ def test_uninstall() -> None:
     check(not VIEWER_PATH.exists(), "minilog-cli-viewer.py removed after uninstall")
     check(CONFIG_PATH.exists(),     "Config file survives uninstall")
     check(VIEWER_CONFIG.exists(),   "Viewer config file survives uninstall")
+
+
+
+
+# ─── Test 10: the PATH entry does not outlive the product ─────────────────────
+
+def test_path_entry_lifecycle(installer: Path) -> None:
+    print("\n=== Test 10: System PATH entry lifecycle ===")
+
+    alt_tools = ALT_APP_DIR / "tools"
+    baseline = read_system_path()
+
+    # Installing somewhere else must add an entry for the new location and must
+    # not resurrect the old one.
+    run_installer(installer, ALT_APP_DIR)
+    check(path_has(alt_tools), f"{alt_tools} added to the system PATH")
+    check(not path_has(TOOLS_DIR), "The previous location is not back in the PATH")
+
+    # Move our entry to the head of the list: removal has to handle it there as
+    # well as at the end, where the installer puts it.
+    rest = path_without(alt_tools)
+    write_system_path(str(alt_tools) + ";" + rest)
+
+    run_uninstaller(ALT_APP_DIR / "unins000.exe")
+    check(not path_has(alt_tools), "PATH entry removed when it is first in the list")
+    check(read_system_path() == rest, "The rest of the PATH survives, in order")
+
+    # An uninstall that finds no entry of ours must not touch the value at all.
+    run_installer(installer, ALT_APP_DIR)
+    untouched = path_without(alt_tools)
+    write_system_path(untouched)
+
+    run_uninstaller(ALT_APP_DIR / "unins000.exe")
+    check(read_system_path() == untouched,
+          "Uninstalling with the entry already absent leaves the PATH unchanged")
+
+    check(read_system_path() == baseline,
+          "install → uninstall → install elsewhere → uninstall leaves no stale entry")
+    check(not ALT_APP_DIR.exists() or not (ALT_APP_DIR / "minilog.exe").exists(),
+          f"Second installation removed from {ALT_APP_DIR}")
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -785,6 +884,7 @@ def main() -> None:
     test_reregister()
     test_upgrade(args.installer)
     test_uninstall()
+    test_path_entry_lifecycle(args.installer)
 
     color = "\033[92m" if failed == 0 else "\033[91m"
     reset = "\033[0m"

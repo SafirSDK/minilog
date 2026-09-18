@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **The installer now removes its system `PATH` entry on uninstall.** The installer appends
+  `{app}\tools` to the machine-wide `PATH`, and nothing ever took it out again: Inno does not
+  revert a `{olddata}`-style append on its own, so every uninstall left a `PATH` entry pointing at
+  a directory that no longer exists. It also accumulated — the duplicate guard only suppresses a
+  second entry while the first is still present with the same `{app}` value, so install, uninstall,
+  install elsewhere left two. The uninstaller now reads `PATH` at uninstall time, removes only its
+  own entry (tolerating case and a trailing backslash), and writes the result back only if it
+  changed, leaving every other entry byte for byte in order.
 - **`--uninstall` now waits for the service to stop before deleting it.** Both implementations
   requested the stop and deleted immediately — the C++ one with no wait at all, the Go one with a
   flat 500 ms sleep. `ControlService` is asynchronous, and deleting a service that is still running

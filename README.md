@@ -128,6 +128,7 @@ The suite contains:
 | Target | What it covers |
 |--------|---------------|
 | `test_config` | INI config parsing, defaults, validation |
+| `test_wait_until` | The stop-and-wait timeout logic behind `--stop`/`--uninstall` |
 | `test_parser` | RFC 3164, RFC 5424, and UNKNOWN datagram parsing |
 | `test_output` | File writing, rotation, facility filtering |
 | `test_forwarder` | UDP forwarding, truncation, facility filtering |
