@@ -17,6 +17,7 @@
 
 #include <boost/asio/io_context.hpp>
 
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -74,9 +75,31 @@ std::optional<int> tryRunAsService(const std::function<int()>& serviceMain);
 // Linux: no-op.
 void installService(const std::string& configPath);
 
-// Stop and delete the minilog Windows NT service.
+// Stop the minilog Windows NT service and wait until its process has exited.
+// timeout - how long to wait before giving up.
+//
+// Waiting on process exit rather than on the SCM state is the whole point: a
+// service reports SERVICE_STOPPED before its process returns from main, and a
+// running executable cannot be overwritten. This is the primitive an upgrade
+// needs between stopping the old build and copying the new one.
+//
+// A service that is not registered, or already stopped, is success: the state
+// the caller asked for already holds.
+//
+// Throws std::runtime_error if the service does not stop in time, or on any
+// other SCM failure.
+// Linux: no-op.
+void stopService(std::chrono::seconds timeout);
+
+// Stop the minilog Windows NT service, wait for its process to exit, and delete
+// it. timeout - how long to wait for the stop.
+//
+// The wait is not optional: DeleteService on a service that is still running
+// only *marks* it for deletion, and the next CreateService then fails with
+// ERROR_SERVICE_MARKED_FOR_DELETE.
+//
 // Throws std::runtime_error on failure.
 // Linux: no-op.
-void uninstallService();
+void uninstallService(std::chrono::seconds timeout);
 
 } // namespace minilog

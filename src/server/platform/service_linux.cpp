@@ -17,6 +17,7 @@
 
 #include <boost/asio/signal_set.hpp>
 
+#include <chrono>
 #include <csignal>
 #include <memory>
 #include <optional>
@@ -46,6 +47,8 @@ std::optional<int> tryRunAsService(const std::function<int()>& /*serviceMain*/)
 
 void installService(const std::string& /*configPath*/) {}
 
-void uninstallService() {}
+void stopService(std::chrono::seconds /*timeout*/) {}
+
+void uninstallService(std::chrono::seconds /*timeout*/) {}
 
 } // namespace minilog

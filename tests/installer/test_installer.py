@@ -9,8 +9,10 @@ Test groups (run in sequence):
   4. Recovery        — kill the service process; the SCM restarts it
   5. Failed start    — an unusable config makes `sc start` fail, reports a
                        non-zero exit code, and leaves an Event Log trail
-  6. Upgrade install — service survives; user-modified config is not overwritten
-  7. Uninstall       — services and binaries removed; config file survives
+  6. Stop            — --stop and --uninstall wait for the process, so the
+                       executables can be overwritten and re-registered
+  7. Upgrade install — service survives; user-modified config is not overwritten
+  8. Uninstall       — services and binaries removed; config file survives
 
 Must be run as Administrator (the installer registers a Windows service).
 
@@ -535,10 +537,99 @@ def test_failed_start() -> None:
           f"'{WEB_SERVICE}' starts again once its address is bindable")
 
 
-# ─── Test 6: Upgrade install (config not overwritten) ─────────────────────────
+# ─── Test 6: --stop and --uninstall wait for the process ──────────────────────
+
+def service_cmd(exe: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run one of the executables' service subcommands."""
+    return subprocess.run(
+        [str(exe), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def process_alive(pid: int) -> bool:
+    out = subprocess.run(
+        ["tasklist.exe", "/FI", f"PID eq {pid}", "/NH"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    return str(pid) in out
+
+
+def can_overwrite(path: Path) -> bool:
+    """Rewrite a file with its own bytes.
+
+    This is the point of --stop: the SCM reporting STOPPED says nothing about
+    whether the process has exited, and a running image cannot be opened for
+    writing — which is exactly what an upgrade does next.  The contents are
+    unchanged, so a success leaves the installation as it was.
+    """
+    try:
+        data = path.read_bytes()
+        with path.open("r+b") as f:
+            f.write(data)
+        return True
+    except OSError as e:
+        print(f"    ({path.name}: {e})")
+        return False
+
+
+def check_stop_releases_the_image(exe: Path, name: str) -> None:
+    if not wait_service_running(name):
+        check(False, f"'{name}' running before the stop test")
+        return
+
+    pid = service_pid(name)
+    result = service_cmd(exe, "--stop")
+    check(result.returncode == 0,
+          f"`{exe.name} --stop` succeeds (stderr: {result.stderr.strip()})")
+    check(service_state(name) == "STOPPED", f"'{name}' is STOPPED as soon as --stop returns")
+    check(pid != 0 and not process_alive(pid),
+          f"'{name}' process {pid} has exited as soon as --stop returns")
+    check(can_overwrite(exe), f"{exe.name} can be overwritten once --stop has returned")
+
+    check(service_cmd(exe, "--stop").returncode == 0,
+          f"`{exe.name} --stop` on an already stopped service succeeds")
+
+
+def test_stop_waits() -> None:
+    print("\n=== Test 6: --stop and --uninstall wait for the process ===")
+
+    check_stop_releases_the_image(EXE_PATH, SERVICE_NAME)
+    check_stop_releases_the_image(WEB_VIEWER_EXE, WEB_SERVICE)
+
+    check(net_start(WEB_SERVICE).returncode == 0, f"'{WEB_SERVICE}' starts again after --stop")
+
+    # --uninstall of a *running* service must delete it outright.  Deleting one
+    # that is still running only marks it for deletion, which shows up as a
+    # registration that lingers and a re-register that fails with 1072.
+    check(net_start(SERVICE_NAME).returncode == 0, f"'{SERVICE_NAME}' starts again after --stop")
+    pid = service_pid()
+    result = service_cmd(EXE_PATH, "--uninstall")
+    check(result.returncode == 0,
+          f"`minilog --uninstall` of a running service succeeds (stderr: {result.stderr.strip()})")
+    check(pid != 0 and not process_alive(pid),
+          f"Service process {pid} has exited as soon as --uninstall returns")
+    check(not service_exists(), "Service is gone as soon as --uninstall returns")
+
+    check(service_cmd(EXE_PATH, "--stop").returncode == 0,
+          "`minilog --stop` against an unregistered service succeeds")
+
+    # The proof that the deletion was real rather than pending: re-registering
+    # immediately would fail with ERROR_SERVICE_MARKED_FOR_DELETE otherwise.
+    result = install_server(str(CONFIG_PATH))
+    check(result.returncode == 0,
+          f"--install straight after --uninstall succeeds (stderr: {result.stderr.strip()})")
+    check(net_start(SERVICE_NAME).returncode == 0, "Service starts again after re-registration")
+
+
+# ─── Test 7: Upgrade install (config not overwritten) ─────────────────────────
 
 def test_upgrade(installer: Path) -> None:
-    print("\n=== Test 6: Upgrade install ===")
+    print("\n=== Test 7: Upgrade install ===")
 
     sentinel = f"; MODIFIED-BY-INSTALLER-TEST-{random.randint(100000, 999999)}"
     with CONFIG_PATH.open("a", encoding="utf-8") as f:
@@ -552,10 +643,10 @@ def test_upgrade(installer: Path) -> None:
     check(sentinel in content, "Config not overwritten on upgrade")
 
 
-# ─── Test 7: Uninstall ────────────────────────────────────────────────────────
+# ─── Test 8: Uninstall ────────────────────────────────────────────────────────
 
 def test_uninstall() -> None:
-    print("\n=== Test 7: Uninstall ===")
+    print("\n=== Test 8: Uninstall ===")
 
     run_uninstaller()
 
@@ -587,6 +678,7 @@ def main() -> None:
     test_udp_smoke()
     test_recovery_restart()
     test_failed_start()
+    test_stop_waits()
     test_upgrade(args.installer)
     test_uninstall()
 

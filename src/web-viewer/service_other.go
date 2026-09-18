@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // tryRunAsService is a no-op on non-Windows platforms.
@@ -24,8 +25,14 @@ func installService(_, _, _ string) error {
 	return nil
 }
 
+// stopService is a no-op on non-Windows platforms.
+func stopService(_ time.Duration) error {
+	log.Println("--stop is only supported on Windows")
+	return nil
+}
+
 // uninstallService is a no-op on non-Windows platforms.
-func uninstallService() error {
+func uninstallService(_ time.Duration) error {
 	log.Println("--uninstall is only supported on Windows")
 	return nil
 }

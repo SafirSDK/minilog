@@ -22,6 +22,8 @@ endfunction()
 add_boost_test(test_parser     server/test_parser.cpp)
 target_sources(test_parser     PRIVATE ../src/server/parser/syslog_parser.cpp)
 
+add_boost_test(test_wait_until server/test_wait_until.cpp)
+
 add_boost_test(test_config     server/test_config.cpp)
 target_sources(test_config     PRIVATE ../src/server/config/config.cpp)
 

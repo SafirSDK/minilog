@@ -22,6 +22,12 @@ var assets embed.FS
 // version is set at build time via -ldflags "-X main.version=x.y.z".
 var version = "dev"
 
+// defaultStopTimeoutSeconds is how long --stop and --uninstall wait for the
+// service process to go away.  Generous: the cost of waiting a little longer is
+// nothing next to the cost of concluding too early that the executable is free
+// to overwrite.
+const defaultStopTimeoutSeconds = 30
+
 // globalStop is closed to signal all goroutines to shut down.  It is the stop
 // channel main passes to serve(); tests pass their own.
 // NOTE: this channel is single-use — closing it twice will panic.  Currently
@@ -40,11 +46,23 @@ func main() {
 	configPath := flag.String("config", defaultConfig, "path to minilog.conf")
 	addr := flag.String("addr", ":9514", "HTTP listen address")
 	doInstall := flag.Bool("install", false, "install as a Windows service (Windows only)")
+	doStop := flag.Bool("stop", false,
+		"stop the Windows service and wait for its process to exit (Windows only)")
 	doUninstall := flag.Bool("uninstall", false, "remove the Windows service (Windows only)")
+	timeout := flag.Int("timeout", defaultStopTimeoutSeconds,
+		"seconds to wait for --stop and --uninstall")
 	flag.Parse()
 
-	if *doUninstall {
-		if err := uninstallService(); err != nil {
+	if *doStop || *doUninstall {
+		if *timeout <= 0 {
+			fmt.Fprintln(os.Stderr, "minilog-web-viewer: --timeout must be at least 1 second")
+			os.Exit(1)
+		}
+		stop := uninstallService
+		if !*doUninstall {
+			stop = stopService
+		}
+		if err := stop(time.Duration(*timeout) * time.Second); err != nil {
 			fmt.Fprintf(os.Stderr, "minilog-web-viewer: %v\n", err)
 			os.Exit(1)
 		}

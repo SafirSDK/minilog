@@ -26,6 +26,7 @@
 #include <boost/program_options.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -40,6 +41,11 @@ namespace po = boost::program_options;
 
 namespace
 {
+
+// How long --stop and --uninstall wait for the service process to go away.
+// Generous: the cost of waiting a little longer is nothing next to the cost of
+// concluding too early that the executable is free to overwrite.
+constexpr int DEFAULT_STOP_TIMEOUT_S = 30;
 
 int runServer(const std::string& configPath)
 {
@@ -162,7 +168,10 @@ int main(int argc, char* argv[])
 #ifdef _WIN32
     desc.add_options()
         ("install",     "install as a Windows service")
-        ("uninstall",   "remove the Windows service");
+        ("stop",        "stop the Windows service and wait for its process to exit")
+        ("uninstall",   "remove the Windows service")
+        ("timeout",     po::value<int>()->default_value(DEFAULT_STOP_TIMEOUT_S),
+                        "seconds to wait for --stop and --uninstall");
 #endif
     // clang-format on
 
@@ -187,11 +196,26 @@ int main(int argc, char* argv[])
         return EXIT_SUCCESS;
     }
 
-    if (vm.count("uninstall"))
+    if (vm.count("stop") || vm.count("uninstall"))
     {
+        // default_value only applies where the option exists, i.e. on Windows.
+        const int timeout = vm.count("timeout") ? vm["timeout"].as<int>() : DEFAULT_STOP_TIMEOUT_S;
+        if (timeout <= 0)
+        {
+            std::cerr << "minilog: --timeout must be at least 1 second\n";
+            return EXIT_FAILURE;
+        }
+
         try
         {
-            minilog::uninstallService();
+            if (vm.count("uninstall"))
+            {
+                minilog::uninstallService(std::chrono::seconds(timeout));
+            }
+            else
+            {
+                minilog::stopService(std::chrono::seconds(timeout));
+            }
         }
         catch (const std::exception& e)
         {

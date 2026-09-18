@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **`--uninstall` now waits for the service to stop before deleting it.** Both implementations
+  requested the stop and deleted immediately — the C++ one with no wait at all, the Go one with a
+  flat 500 ms sleep. `ControlService` is asynchronous, and deleting a service that is still running
+  only *marks* it for deletion: the registration lingers and the next `--install` fails with
+  `ERROR_SERVICE_MARKED_FOR_DELETE`. Both now wait for `SERVICE_STOPPED` and then for the process
+  itself to exit, and report a timeout instead of deleting anyway. This has not been seen in
+  practice because services stop quickly under light load, which is what made it worth fixing: it
+  would have shown up first on the busiest machine in an estate.
 - **`--install` no longer registers a service that cannot start.** The command line written into
   the service entry was built from `argv[0]` prepended with the working directory — which is not
   where the executable is when it was found through `PATH` — and from the config path exactly as
@@ -48,6 +56,12 @@
 
 ### New
 
+- **`--stop` on both executables.** `minilog --stop` and `minilog-web-viewer --stop` stop the
+  service and wait until its process has genuinely exited, with `--timeout SECONDS` (default 30)
+  bounding the wait. This is what an upgrade needs between stopping the old build and copying the
+  new one: `sc stop` and PowerShell's `WaitForStatus('Stopped')` wait on SCM state, and a service
+  reports itself stopped before its process has released the executable file. Stopping a service
+  that is already stopped, or not registered, succeeds. The README documents the upgrade sequence.
 - **Windows service recovery actions.** `--install` now configures both services to be restarted
   by the SCM 5 seconds after a failure, twice, before being left stopped, with the failure
   counter resetting after 300 seconds without a failure. Previously a service that died stayed

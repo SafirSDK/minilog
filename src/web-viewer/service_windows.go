@@ -6,10 +6,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
@@ -27,6 +29,11 @@ const (
 
 	// How long to wait for the HTTP server to finish after a stop request.
 	stopTimeout = 10 * time.Second
+
+	// How often the SCM is asked whether the service has stopped yet.  Short
+	// enough that stopping a healthy service feels immediate, long enough not
+	// to spin.
+	stopPollInterval = 200 * time.Millisecond
 )
 
 // Recovery actions configured at install time: restart twice, then leave the
@@ -184,8 +191,114 @@ func installService(exePath, configPath, addr string) error {
 	return nil
 }
 
+// stopAndWait asks the service to stop and does not return until its process
+// has exited.
+//
+// Two waits, because the SCM state and the process are not the same thing.  A
+// service reports svc.Stopped from its own stop handler, before it has unwound
+// and released its image file, and a running executable can be neither
+// overwritten nor deleted.  Callers about to copy a new build over the old one,
+// or to delete the service, care about the second wait, not the first.
+//
+// Fails if the process is still there when the timeout runs out — better a
+// caller that knows the stop failed than one that goes on to overwrite a file
+// still in use.
+func stopAndWait(s *mgr.Service, timeout time.Duration) error {
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("cannot query service %q: %w", serviceName, err)
+	}
+	if status.State == svc.Stopped {
+		return nil
+	}
+
+	// Opened before the stop is requested: once the process has exited its id
+	// means nothing, and may already have been reused by something else.  A
+	// handle that cannot be opened is not fatal — the SCM state is then all
+	// there is to go on.
+	var process windows.Handle
+	if status.ProcessId != 0 {
+		if h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, status.ProcessId); err == nil {
+			process = h
+			defer func() { _ = windows.CloseHandle(process) }()
+		}
+	}
+
+	if status.State != svc.StopPending {
+		if _, err := s.Control(svc.Stop); err != nil &&
+			!errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+			return fmt.Errorf("cannot stop service %q: %w", serviceName, err)
+		}
+	}
+
+	// Control is asynchronous: it returns with the service still in
+	// svc.StopPending.
+	deadline := time.Now().Add(timeout)
+	err = pollUntil(func() (bool, error) {
+		st, err := s.Query()
+		if err != nil {
+			return false, fmt.Errorf("cannot query service %q: %w", serviceName, err)
+		}
+		return st.State == svc.Stopped, nil
+	}, timeout, stopPollInterval)
+	if err != nil {
+		if errors.Is(err, errTimedOut) {
+			return fmt.Errorf("service %q did not stop within %s", serviceName, timeout)
+		}
+		return err
+	}
+
+	if process == 0 {
+		return nil
+	}
+
+	remaining := time.Until(deadline)
+	if remaining < 0 {
+		remaining = 0
+	}
+	event, err := windows.WaitForSingleObject(process, uint32(remaining.Milliseconds()))
+	if err != nil {
+		return fmt.Errorf("cannot wait for the %q process to exit: %w", serviceName, err)
+	}
+	if event != windows.WAIT_OBJECT_0 {
+		return fmt.Errorf("service %q reported itself stopped but its process was still "+
+			"running after %s", serviceName, timeout)
+	}
+	return nil
+}
+
+// stopService stops the Windows NT service and waits for its process to exit.
+// A service that is not registered, or already stopped, is success: the state
+// the caller asked for already holds.
+func stopService(timeout time.Duration) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("cannot connect to SCM: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			// Nothing registered is nothing to stop.  An upgrade script should
+			// not have to know whether this machine has minilog on it yet.
+			osLogInfo(fmt.Sprintf("Service %q is not registered; nothing to stop", serviceName))
+			return nil
+		}
+		return fmt.Errorf("cannot open service %q: %w", serviceName, err)
+	}
+	defer s.Close()
+
+	if err := stopAndWait(s, timeout); err != nil {
+		return err
+	}
+
+	osLogInfo(fmt.Sprintf("Service %q stopped", serviceName))
+	return nil
+}
+
 // uninstallService stops and removes the Windows NT service.
-func uninstallService() error {
+func uninstallService(timeout time.Duration) error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return fmt.Errorf("cannot connect to SCM: %w", err)
@@ -198,9 +311,13 @@ func uninstallService() error {
 	}
 	defer s.Close()
 
-	// Best-effort stop.
-	_, _ = s.Control(svc.Stop)
-	time.Sleep(500 * time.Millisecond)
+	// Deleting a service that is still running only marks it for deletion: the
+	// registration lingers, and the next CreateService fails with
+	// ERROR_SERVICE_MARKED_FOR_DELETE.  Waiting here is what makes an install
+	// that follows an uninstall reliable.
+	if err := stopAndWait(s, timeout); err != nil {
+		return err
+	}
 
 	if err := s.Delete(); err != nil {
 		return fmt.Errorf("cannot delete service: %w", err)

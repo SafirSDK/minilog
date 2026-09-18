@@ -15,19 +15,23 @@
 
 #include "os_log.hpp"
 #include "service.hpp"
+#include "wait_until.hpp"
 
 #ifdef _WIN32
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
 
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <windows.h>
 
 namespace minilog
@@ -52,6 +56,10 @@ static constexpr DWORD STARTUP_WAIT_HINT_MS = 10000;
 // fault is always retried instead of exhausting its restarts.
 static constexpr DWORD RESTART_DELAY_MS       = 5000;
 static constexpr DWORD FAILURE_RESET_PERIOD_S = 300;
+
+// How often the SCM is asked whether the service has stopped yet. Short enough
+// that stopping a healthy service feels immediate, long enough not to spin.
+static constexpr auto STOP_POLL_INTERVAL = std::chrono::milliseconds(200);
 
 // ─── Global state shared between SCM callbacks and tryRunAsService ────────────
 
@@ -235,6 +243,102 @@ std::string currentExecutablePath()
     }
 }
 
+// Handles are closed by these rather than by hand: stopping a service has
+// several failure exits, and each one would otherwise need its own pair of
+// CloseServiceHandle calls — which is how a leak gets in.
+struct ServiceHandleCloser
+{
+    void operator()(SC_HANDLE handle) const noexcept { CloseServiceHandle(handle); }
+};
+using ScopedServiceHandle = std::unique_ptr<std::remove_pointer_t<SC_HANDLE>, ServiceHandleCloser>;
+
+struct HandleCloser
+{
+    void operator()(HANDLE handle) const noexcept { CloseHandle(handle); }
+};
+using ScopedHandle = std::unique_ptr<std::remove_pointer_t<HANDLE>, HandleCloser>;
+
+SERVICE_STATUS_PROCESS queryServiceStatus(SC_HANDLE svc)
+{
+    SERVICE_STATUS_PROCESS status{};
+    DWORD needed = 0;
+    if (!QueryServiceStatusEx(svc,
+                              SC_STATUS_PROCESS_INFO,
+                              reinterpret_cast<LPBYTE>(&status),
+                              sizeof(status),
+                              &needed))
+    {
+        throw std::runtime_error("QueryServiceStatusEx failed: " + std::to_string(GetLastError()));
+    }
+    return status;
+}
+
+// Ask the service to stop, and do not return until its process has exited.
+//
+// Two waits, because the SCM state and the process are not the same thing. A
+// service reports SERVICE_STOPPED from its own stop handler, before it has
+// unwound and released its image file, and a running executable can be neither
+// overwritten nor deleted. Callers about to copy a new build over the old one,
+// or to delete the service, care about the second wait, not the first.
+//
+// Throws if the service is still there when the timeout runs out — better a
+// caller that knows the stop failed than one that goes on to overwrite a file
+// still in use.
+void stopAndWait(SC_HANDLE svc, std::chrono::seconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+
+    const SERVICE_STATUS_PROCESS initial = queryServiceStatus(svc);
+    if (initial.dwCurrentState == SERVICE_STOPPED)
+    {
+        return;
+    }
+
+    // Opened before the stop is requested: once the process has exited its id
+    // means nothing, and may already have been reused by something else.
+    const ScopedHandle process(
+        initial.dwProcessId != 0 ? OpenProcess(SYNCHRONIZE, FALSE, initial.dwProcessId) : nullptr);
+
+    if (initial.dwCurrentState != SERVICE_STOP_PENDING)
+    {
+        SERVICE_STATUS status{};
+        if (!ControlService(svc, SERVICE_CONTROL_STOP, &status) &&
+            GetLastError() != ERROR_SERVICE_NOT_ACTIVE)
+        {
+            throw std::runtime_error("failed to stop the minilog service: " +
+                                     std::to_string(GetLastError()));
+        }
+    }
+
+    // ControlService is asynchronous: it returns with the service still in
+    // SERVICE_STOP_PENDING.
+    if (!waitUntil([svc] { return queryServiceStatus(svc).dwCurrentState == SERVICE_STOPPED; },
+                   deadline - std::chrono::steady_clock::now(),
+                   STOP_POLL_INTERVAL))
+    {
+        throw std::runtime_error("the minilog service did not stop within " +
+                                 std::to_string(timeout.count()) + " s");
+    }
+
+    if (!process)
+    {
+        // Nothing to wait on: the service was between processes, or the handle
+        // could not be opened. The SCM saying stopped is all there is to go on.
+        return;
+    }
+
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    const DWORD remainingMs = remaining.count() > 0 ? static_cast<DWORD>(remaining.count()) : 0;
+    if (WaitForSingleObject(process.get(), remainingMs) != WAIT_OBJECT_0)
+    {
+        throw std::runtime_error(
+            "the minilog service reported itself stopped but its process was still "
+            "running after " +
+            std::to_string(timeout.count()) + " s");
+    }
+}
+
 } // namespace
 
 void installService(const std::string& configPath)
@@ -333,40 +437,62 @@ void installService(const std::string& configPath)
     CloseServiceHandle(scm);
 }
 
-void uninstallService()
+void stopService(std::chrono::seconds timeout)
 {
-    const SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
+    const ScopedServiceHandle scm(OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT));
     if (!scm)
     {
         throw std::runtime_error("OpenSCManager failed: " + std::to_string(GetLastError()));
     }
 
-    const SC_HANDLE svc =
-        OpenServiceA(scm, SERVICE_NAME, SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
+    const ScopedServiceHandle svc(
+        OpenServiceA(scm.get(), SERVICE_NAME, SERVICE_STOP | SERVICE_QUERY_STATUS));
     if (!svc)
     {
-        CloseServiceHandle(scm);
+        if (GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST)
+        {
+            // Nothing registered is nothing to stop. An upgrade script should
+            // not have to know whether this machine has minilog on it yet.
+            osLogInfo("minilog service is not registered; nothing to stop");
+            return;
+        }
         throw std::runtime_error("OpenService failed: " + std::to_string(GetLastError()));
     }
 
-    // Attempt to stop the service before deleting it (best effort).
-    SERVICE_STATUS status{};
-    ControlService(svc, SERVICE_CONTROL_STOP, &status);
+    stopAndWait(svc.get(), timeout);
+    osLogInfo("minilog service stopped");
+}
 
-    if (!DeleteService(svc))
+void uninstallService(std::chrono::seconds timeout)
+{
+    const ScopedServiceHandle scm(OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT));
+    if (!scm)
     {
-        const DWORD err = GetLastError();
-        CloseServiceHandle(svc);
-        CloseServiceHandle(scm);
-        throw std::runtime_error("DeleteService failed: " + std::to_string(err));
+        throw std::runtime_error("OpenSCManager failed: " + std::to_string(GetLastError()));
+    }
+
+    const ScopedServiceHandle svc(
+        OpenServiceA(scm.get(), SERVICE_NAME, SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS));
+    if (!svc)
+    {
+        throw std::runtime_error("OpenService failed: " + std::to_string(GetLastError()));
+    }
+
+    // Deleting a service that is still running only marks it for deletion: the
+    // registration lingers, and the next CreateService fails with
+    // ERROR_SERVICE_MARKED_FOR_DELETE. Waiting here is what makes an install
+    // that follows an uninstall reliable.
+    stopAndWait(svc.get(), timeout);
+
+    if (!DeleteService(svc.get()))
+    {
+        throw std::runtime_error("DeleteService failed: " + std::to_string(GetLastError()));
     }
 
     RegDeleteKeyA(HKEY_LOCAL_MACHINE,
                   "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\minilog");
 
     osLogInfo("minilog service uninstalled");
-    CloseServiceHandle(svc);
-    CloseServiceHandle(scm);
 }
 
 } // namespace minilog

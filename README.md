@@ -179,6 +179,7 @@ On Windows only:
 
 ```
 minilog --install <config-path>    # register and start as a Windows service
+minilog --stop                     # stop the service, wait for the process to exit
 minilog --uninstall                # stop and remove the Windows service
 ```
 
@@ -189,6 +190,25 @@ somewhere else entirely at boot. The registration records the executable's own l
 OS reports it, so it is correct whether minilog was invoked by full path or found through `PATH`.
 A config file that cannot be read is refused at install time, rather than registering a service
 that fails at every boot.
+
+`--stop` and `--uninstall` wait until the service *process* has exited, not merely until the SCM
+reports `SERVICE_STOPPED` — a service reports itself stopped before it has returned from `main`,
+and a running executable cannot be overwritten or deleted. `--timeout SECONDS` (default 30) bounds
+the wait; running out is an error rather than a silent proceed. Stopping a service that is already
+stopped, or not registered at all, succeeds.
+
+`--stop` is the primitive to use before copying new binaries over an installation. `sc stop` and
+PowerShell's `WaitForStatus('Stopped')` wait on SCM state only, which is not the same thing:
+
+```
+minilog --stop                     # both services, before anything is copied
+minilog-web-viewer --stop
+                                   # copy the new binaries over the old ones
+minilog --install <config-path>
+minilog-web-viewer --install --config <config-path>
+sc start minilog
+sc start minilog-web-viewer
+```
 
 `--install` also configures the service's recovery actions: the SCM restarts it 5 seconds after
 a failure, twice, and then leaves it stopped; the failure counter resets after 300 seconds with
@@ -422,7 +442,9 @@ minilog-web-viewer [options]
 | `--config PATH` | `<exe dir>/minilog.conf` | Path to `minilog.conf` |
 | `--addr ADDR` | `:9514` | HTTP listen address |
 | `--install` | — | Register as a Windows service (Windows only) |
+| `--stop` | — | Stop the Windows service and wait for its process to exit (Windows only) |
 | `--uninstall` | — | Remove the Windows service (Windows only) |
+| `--timeout SECONDS` | `30` | How long `--stop` and `--uninstall` wait for the process to exit |
 
 The server reads all `[output.*]` sections that have `jsonl_file` configured and exposes each as
 a named **sink**. Open `http://localhost:9514` in a browser to access the UI.
@@ -435,7 +457,8 @@ without additional protection.
 
 **Windows service:** `--install` registers the binary as an auto-start service named
 `minilog-web-viewer`. Pass `--config` and `--addr` at install time; those values are baked into
-the service entry. `--uninstall` stops and removes it.
+the service entry. `--uninstall` stops and removes it, and `--stop` stops it without removing it —
+both wait for the process to exit, as described for the server above.
 
 `--install` also registers a Windows Event Log source named `minilog-web-viewer` (removed again
 by `--uninstall`) and configures the same recovery actions as the server: two restarts 5 seconds
