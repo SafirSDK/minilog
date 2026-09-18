@@ -38,6 +38,7 @@ let chainEnd        = 0;   // tail_offset of the last response, for rotation det
 let atTail          = true;
 let pollTimer       = 0;
 let loadingUp       = false;
+let polling         = false;
 let clearOffset     = null;
 
 let searchMatches      = [];
@@ -243,6 +244,22 @@ function stopPoll() {
 }
 
 async function pollTail() {
+  // setInterval does not wait for the previous poll to finish. Two in flight at
+  // once read the same cursor, so both render the same batch as new rows, and
+  // their responses can arrive out of order and trip the rotation check against
+  // a chainEnd a later response already advanced. A full batch takes longer to
+  // fetch, parse and render than a handful of lines, so draining a burst — what
+  // the next_offset cursor exists for — is exactly when polls start to overlap.
+  if (polling) return;
+  polling = true;
+  try {
+    await pollTailOnce();
+  } finally {
+    polling = false;
+  }
+}
+
+async function pollTailOnce() {
   const p = filterParams();
   p.set('offset', String(tailOffset));
   p.set('count',  String(BATCH));

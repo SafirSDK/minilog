@@ -88,13 +88,19 @@ void UdpServer::stop()
     boost::asio::post(m_socket.get_executor(),
                       [this]()
                       {
-                          // Report whatever is left over rather than losing the
-                          // tail of a flood that stopped before the interval.
-                          reportDrops(true);
-
+                          // Close first. It is the load-bearing half of stopping,
+                          // and reportDrops builds strings, so it can throw under
+                          // exactly the memory pressure it exists to report on. A
+                          // throw before the close would leave the socket armed,
+                          // and runIoContext re-enters run() after a handler
+                          // exception, so shutdown would never finish.
                           boost::system::error_code ec;
                           m_socket.close(
                               ec); // NOLINT(bugprone-unused-return-value) — close(ec) returns void
+
+                          // Whatever is left over, rather than losing the tail of
+                          // a flood that stopped before the interval elapsed.
+                          reportDrops(true);
                       });
 }
 
