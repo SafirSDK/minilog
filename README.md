@@ -205,6 +205,12 @@ minilog reads a single INI file passed on the command line. There is no config r
 
 Errors (bad config, bind failure, write failure) are reported to the Windows Event Log on Windows, and to the system syslog on Linux — plus stderr in both cases.
 
+**Sink failures are isolated and final.** If a sink cannot write, rotate or reopen its files — a
+denied directory, a full disk, a network path that has gone away — that sink is taken out of
+service and every later message routed to it is dropped. The failure is reported once, the other
+sinks and the forwarder keep running, and the process stays up. A closed sink is not reopened
+automatically, so restart minilog once the underlying storage problem is fixed.
+
 See [`minilog.conf.example`](minilog.conf.example) for a fully commented example.
 
 ### `[server]`

@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **A filesystem error no longer aborts the whole server.** Six `std::filesystem` calls on the
+  write and rotation paths used the throwing overloads. An exception from any of them escaped the
+  sink's strand handler and then `io_context::run()` on a worker thread, where it became
+  `std::terminate` — an unreadable log directory took down every sink, including those whose own
+  storage was healthy. All filesystem calls on that path now use the `error_code` overloads, a
+  failure takes only the affected sink out of service, and handlers plus each `run()` thread have
+  a catch-all so that no exception can terminate the process. A sink closed this way stays closed;
+  restart minilog once the storage problem is fixed.
 - **Windows services now report failure to the SCM.** Both the server and the web viewer used to
   report every stop as a clean one with exit code 0, so a service that died on an invalid config
   or an unbindable port was indistinguishable from one stopped on purpose — and no recovery action

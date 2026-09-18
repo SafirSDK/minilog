@@ -13,6 +13,7 @@
  *
  ******************************************************************************/
 
+#include "run_loop.hpp"
 #include "udp_server.hpp"
 
 #include "config/config.hpp"
@@ -87,13 +88,16 @@ int runServer(const std::string& configPath)
     minilog::reportServiceStarted();
 
     // Spin up workers-1 additional threads; main thread also calls run().
+    // Every thread goes through runIoContext: an exception escaping a std::thread's
+    // entry function cannot be caught anywhere else, so each thread has to catch
+    // its own or the process dies with it.
     std::vector<std::thread> threads;
     threads.reserve(static_cast<std::size_t>(cfg.workers - 1));
     for (int i = 0; i < cfg.workers - 1; ++i)
     {
-        threads.emplace_back([&ioc]() { ioc.run(); });
+        threads.emplace_back([&ioc]() { minilog::runIoContext(ioc); });
     }
-    ioc.run();
+    minilog::runIoContext(ioc);
 
     for (auto& t : threads)
     {
@@ -167,9 +171,11 @@ int main(int argc, char* argv[])
 
     if (vm.count("install"))
     {
-        const std::string exePath = std::filesystem::absolute(argv[0]).string();
         try
         {
+            // absolute() throws; inside the try it is reported like any other
+            // install failure instead of escaping main.
+            const std::string exePath = std::filesystem::absolute(argv[0]).string();
             minilog::installService(exePath, configPath);
         }
         catch (const std::exception& e)

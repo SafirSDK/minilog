@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 namespace minilog
 {
@@ -51,6 +52,17 @@ private:
     void rotate();
     void openFiles();
     void closeFiles();
+
+    // Report a failure and take this sink out of service: every later write is
+    // dropped. Deliberately permanent — nothing reopens a closed sink, so a
+    // storage problem degrades one sink instead of stopping the process or
+    // producing one error per message for as long as the problem lasts.
+    void failSink(const std::string& reason);
+
+    // failSink for use from a handler's catch block. Never throws: a second
+    // failure while reporting the first (out of memory, say) must not escape
+    // into io_context::run(), which is where it would become std::terminate.
+    void failSinkFromHandler(const char* what) noexcept;
 
     OutputConfig m_cfg;
     boost::asio::strand<boost::asio::io_context::executor_type> m_strand;

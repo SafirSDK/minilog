@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <format>
+#include <optional>
 #include <string>
 #include <system_error>
 
@@ -198,7 +199,25 @@ LogFile::~LogFile()
 
 void LogFile::write(const SyslogMessage& msg)
 {
-    boost::asio::post(m_strand, [this, msg]() { doWrite(msg); });
+    boost::asio::post(m_strand,
+                      [this, msg]()
+                      {
+                          // Last line of defence. Anything escaping here unwinds out of
+                          // io_context::run() and terminates the process, taking every
+                          // other sink and the forwarder with it.
+                          try
+                          {
+                              doWrite(msg);
+                          }
+                          catch (const std::exception& e)
+                          {
+                              failSinkFromHandler(e.what());
+                          }
+                          catch (...)
+                          {
+                              failSinkFromHandler("non-standard exception");
+                          }
+                      });
 }
 
 void LogFile::close()
@@ -207,8 +226,37 @@ void LogFile::close()
                       [this]()
                       {
                           m_closed = true;
-                          closeFiles();
+                          try
+                          {
+                              closeFiles();
+                          }
+                          catch (...)
+                          {
+                              // Already closing; nothing useful left to do, and this
+                              // handler must not throw.
+                          }
                       });
+}
+
+void LogFile::failSink(const std::string& reason)
+{
+    osLogError("minilog: " + reason + "; closing sink");
+    m_closed = true;
+    closeFiles();
+}
+
+void LogFile::failSinkFromHandler(const char* what) noexcept
+{
+    try
+    {
+        failSink(std::string("unexpected exception in sink handler: ") + what);
+    }
+    catch (...)
+    {
+        // Reporting failed as well — still out of memory, most likely. Take the
+        // sink out of service silently rather than let anything escape.
+        m_closed = true;
+    }
 }
 
 void LogFile::doWrite(const SyslogMessage& msg)
@@ -243,9 +291,7 @@ void LogFile::doWrite(const SyslogMessage& msg)
         m_textStream.flush();
         if (!m_textStream)
         {
-            osLogError("minilog: write to '" + m_cfg.textFile + "' failed; closing sink");
-            m_closed = true;
-            closeFiles();
+            failSink("write to '" + m_cfg.textFile + "' failed");
             return;
         }
         m_textSize += line.size();
@@ -258,9 +304,7 @@ void LogFile::doWrite(const SyslogMessage& msg)
         m_jsonlStream.flush();
         if (!m_jsonlStream)
         {
-            osLogError("minilog: write to '" + m_cfg.jsonlFile + "' failed; closing sink");
-            m_closed = true;
-            closeFiles();
+            failSink("write to '" + m_cfg.jsonlFile + "' failed");
             return;
         }
         m_jsonlSize += record.size();
@@ -285,12 +329,26 @@ void LogFile::rotate()
 
     closeFiles();
 
+    // Every step below uses the error_code overloads: a throw from here would
+    // escape the strand handler and abort the process. Any failure closes the
+    // sink and abandons the rotation rather than pressing on with a half-shifted
+    // chain, so shiftFiles reports whether it is still safe to continue.
     auto shiftFiles = [&](const fs::path& base)
     {
-        if (base.empty())
+        // exists() with an error_code leaves ec clear for a file that simply is
+        // not there, so nullopt means a real failure — a denied or unreachable
+        // directory — rather than absence.
+        auto probe = [&](const fs::path& p) -> std::optional<bool>
         {
-            return;
-        }
+            std::error_code ec;
+            const bool found = fs::exists(p, ec);
+            if (ec)
+            {
+                failSink("rotation probe failed for '" + p.string() + "': " + ec.message());
+                return std::nullopt;
+            }
+            return found;
+        };
 
         // Find the highest rotated generation that exists.
         // Probe up to the limit (or a reasonable cap when unlimited) so that
@@ -299,7 +357,12 @@ void LogFile::rotate()
         int highest          = 0;
         for (int n = 1; n <= probeLimit; ++n)
         {
-            if (fs::exists(rotatedPath(base, n)))
+            const auto found = probe(rotatedPath(base, n));
+            if (!found)
+            {
+                return false;
+            }
+            if (*found)
             {
                 highest = n;
             }
@@ -310,16 +373,22 @@ void LogFile::rotate()
         {
             for (int n = highest; n >= m_cfg.maxFiles; --n)
             {
-                auto p = rotatedPath(base, n);
-                if (fs::exists(p))
+                const auto p     = rotatedPath(base, n);
+                const auto found = probe(p);
+                if (!found)
                 {
-                    std::error_code ec;
-                    fs::remove(p, ec);
-                    if (ec)
-                    {
-                        osLogError("minilog: rotation remove failed for '" + p.string() +
-                                   "': " + ec.message());
-                    }
+                    return false;
+                }
+                if (!*found)
+                {
+                    continue;
+                }
+                std::error_code ec;
+                fs::remove(p, ec);
+                if (ec)
+                {
+                    failSink("rotation remove failed for '" + p.string() + "': " + ec.message());
+                    return false;
                 }
             }
             highest = m_cfg.maxFiles - 1;
@@ -328,39 +397,51 @@ void LogFile::rotate()
         // Shift existing rotated files up by one.
         for (int n = highest; n >= 1; --n)
         {
-            auto from = rotatedPath(base, n);
-            if (fs::exists(from))
+            const auto from  = rotatedPath(base, n);
+            const auto found = probe(from);
+            if (!found)
             {
-                std::error_code ec;
-                fs::rename(from, rotatedPath(base, n + 1), ec);
-                if (ec)
-                {
-                    osLogError("minilog: rotation rename failed for '" + from.string() +
-                               "': " + ec.message());
-                }
+                return false;
+            }
+            if (!*found)
+            {
+                continue;
+            }
+            std::error_code ec;
+            fs::rename(from, rotatedPath(base, n + 1), ec);
+            if (ec)
+            {
+                failSink("rotation rename failed for '" + from.string() + "': " + ec.message());
+                return false;
             }
         }
 
         // Rename the current file to .1.
-        if (fs::exists(base))
+        const auto found = probe(base);
+        if (!found)
+        {
+            return false;
+        }
+        if (*found)
         {
             std::error_code ec;
             fs::rename(base, rotatedPath(base, 1), ec);
             if (ec)
             {
-                osLogError("minilog: rotation rename failed for '" + base.string() +
-                           "': " + ec.message());
+                failSink("rotation rename failed for '" + base.string() + "': " + ec.message());
+                return false;
             }
         }
+        return true;
     };
 
-    if (!m_cfg.textFile.empty())
+    if (!m_cfg.textFile.empty() && !shiftFiles(fs::path(m_cfg.textFile)))
     {
-        shiftFiles(fs::path(m_cfg.textFile));
+        return;
     }
-    if (!m_cfg.jsonlFile.empty())
+    if (!m_cfg.jsonlFile.empty() && !shiftFiles(fs::path(m_cfg.jsonlFile)))
     {
-        shiftFiles(fs::path(m_cfg.jsonlFile));
+        return;
     }
 
     openFiles();
@@ -370,16 +451,23 @@ void LogFile::openFiles()
 {
     namespace fs = std::filesystem;
 
+    std::error_code ec;
+
     if (!m_cfg.textFile.empty())
     {
         m_textStream.open(m_cfg.textFile, std::ios::app | std::ios::binary);
         if (!m_textStream.is_open())
         {
-            osLogError("minilog: failed to open '" + m_cfg.textFile + "'; closing sink");
-            m_closed = true;
+            failSink("failed to open '" + m_cfg.textFile + "'");
             return;
         }
-        m_textSize = static_cast<uint64_t>(fs::file_size(m_cfg.textFile));
+        const auto size = fs::file_size(m_cfg.textFile, ec);
+        if (ec)
+        {
+            failSink("cannot determine size of '" + m_cfg.textFile + "': " + ec.message());
+            return;
+        }
+        m_textSize = static_cast<uint64_t>(size);
     }
 
     if (!m_cfg.jsonlFile.empty())
@@ -387,12 +475,16 @@ void LogFile::openFiles()
         m_jsonlStream.open(m_cfg.jsonlFile, std::ios::app | std::ios::binary);
         if (!m_jsonlStream.is_open())
         {
-            osLogError("minilog: failed to open '" + m_cfg.jsonlFile + "'; closing sink");
-            m_closed = true;
-            closeFiles();
+            failSink("failed to open '" + m_cfg.jsonlFile + "'");
             return;
         }
-        m_jsonlSize = static_cast<uint64_t>(fs::file_size(m_cfg.jsonlFile));
+        const auto size = fs::file_size(m_cfg.jsonlFile, ec);
+        if (ec)
+        {
+            failSink("cannot determine size of '" + m_cfg.jsonlFile + "': " + ec.message());
+            return;
+        }
+        m_jsonlSize = static_cast<uint64_t>(size);
     }
 }
 

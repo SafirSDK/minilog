@@ -14,12 +14,14 @@
  ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_integration
+#include "run_loop.hpp"
 #include "udp_server.hpp"
 
 #include "output/output_manager.hpp"
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/json.hpp>
 #include <boost/test/unit_test.hpp>
 
@@ -27,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 
 using namespace minilog;
@@ -363,6 +366,45 @@ BOOST_AUTO_TEST_CASE(start_exception_message_contains_port_number)
     om1.close();
     ioc.restart();
     ioc.run_for(std::chrono::milliseconds(50));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Handler exception containment ───────────────────────────────────────────
+//
+// Handlers are expected to catch their own failures, but one that does not must
+// still never take the process down: an exception escaping io_context::run() on
+// a worker thread cannot be caught anywhere else.
+
+BOOST_AUTO_TEST_SUITE(handler_exceptions)
+
+BOOST_AUTO_TEST_CASE(throwing_handler_does_not_escape_run)
+{
+    boost::asio::io_context ioc;
+    bool ranAfterThrow = false;
+
+    boost::asio::post(ioc, []() { throw std::runtime_error("handler blew up"); });
+    boost::asio::post(ioc, [&ranAfterThrow]() { ranAfterThrow = true; });
+
+    // Without the catch-and-resume in runIoContext this propagates out and, on a
+    // std::thread, terminates the process.
+    BOOST_CHECK_NO_THROW(runIoContext(ioc));
+
+    // Work queued behind the throwing handler still runs: run() is re-entered
+    // rather than abandoned, so ingestion continues.
+    BOOST_CHECK(ranAfterThrow);
+}
+
+BOOST_AUTO_TEST_CASE(non_standard_exception_does_not_escape_run)
+{
+    boost::asio::io_context ioc;
+    bool ranAfterThrow = false;
+
+    boost::asio::post(ioc, []() { throw 42; });
+    boost::asio::post(ioc, [&ranAfterThrow]() { ranAfterThrow = true; });
+
+    BOOST_CHECK_NO_THROW(runIoContext(ioc));
+    BOOST_CHECK(ranAfterThrow);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

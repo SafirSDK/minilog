@@ -24,6 +24,13 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <system_error>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 using namespace minilog;
 namespace bj = boost::json;
@@ -31,6 +38,15 @@ namespace fs = std::filesystem;
 
 namespace
 {
+
+int currentProcessId()
+{
+#ifdef _WIN32
+    return static_cast<int>(::GetCurrentProcessId());
+#else
+    return static_cast<int>(::getpid());
+#endif
+}
 
 // Unique temp directory per test case.
 struct Fixture
@@ -41,11 +57,20 @@ struct Fixture
     Fixture()
     {
         static int counter = 0;
-        dir = fs::temp_directory_path() / ("minilog_test_" + std::to_string(++counter));
+        // The pid keeps concurrent runs apart, and stops a directory left behind
+        // by an aborted run from colliding with the next one.
+        dir = fs::temp_directory_path() / ("minilog_test_" + std::to_string(currentProcessId()) +
+                                           "_" + std::to_string(++counter));
         fs::create_directories(dir);
     }
 
-    ~Fixture() { fs::remove_all(dir); }
+    ~Fixture()
+    {
+        // A destructor must not throw, and cleanup can genuinely fail — a test
+        // that denies permissions on its own directory is the normal case here.
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+    }
 
     // Post a write and drain the ioc so the handler completes before returning.
     // restart() is required because poll() marks the ioc stopped when it empties.
@@ -781,3 +806,168 @@ BOOST_AUTO_TEST_CASE(valid_multibyte_and_invalid_interleaved)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Filesystem failure handling ─────────────────────────────────────────────
+//
+// A storage problem must degrade the one sink that hit it, never the process.
+// These need an unreadable directory, so they are POSIX-only and meaningless as
+// root, where the permission bits are not enforced.
+
+#ifndef _WIN32
+
+BOOST_FIXTURE_TEST_SUITE(filesystem_failures, Fixture)
+
+namespace
+{
+
+// True when the permission bits cannot be trusted to deny anything.
+bool runningAsRoot()
+{
+    return ::geteuid() == 0;
+}
+
+// Denies all access to a directory and restores it on scope exit — including
+// when a failed assertion unwinds, which would otherwise leave an unreadable
+// directory behind for the next run to trip over.
+class DeniedDirectory
+{
+public:
+    explicit DeniedDirectory(fs::path dir) : m_dir(std::move(dir))
+    {
+        fs::permissions(m_dir, fs::perms::none);
+    }
+
+    ~DeniedDirectory()
+    {
+        std::error_code ec;
+        fs::permissions(m_dir, fs::perms::owner_all, ec);
+    }
+
+    DeniedDirectory(const DeniedDirectory&)            = delete;
+    DeniedDirectory& operator=(const DeniedDirectory&) = delete;
+
+private:
+    fs::path m_dir;
+};
+
+// rfc3164Msg only varies `raw`, which the JSONL record does not carry. These
+// tests match on the record, so they need the `message` field to vary too.
+SyslogMessage messageWith(const std::string& text)
+{
+    SyslogMessage msg;
+    msg.raw          = "<34>Oct 11 22:14:15 mymachine su[123]: " + text;
+    msg.srcIp        = "192.168.1.50";
+    msg.protocol     = Protocol::RFC3164;
+    msg.facilityName = "daemon";
+    msg.severityName = "NOTICE";
+    msg.hostname     = "mymachine";
+    msg.appName      = "su";
+    msg.procId       = "123";
+    msg.timestamp    = "Oct 11 22:14:15";
+    msg.message      = text;
+    return msg;
+}
+
+OutputConfig sinkConfig(const fs::path& jsonlPath, uint64_t maxSize)
+{
+    OutputConfig cfg;
+    cfg.jsonlFile        = jsonlPath.string();
+    cfg.maxSize          = maxSize;
+    cfg.maxFiles         = 3;
+    cfg.includeMalformed = true;
+    return cfg;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(rotation_permission_denied_closes_sink_without_aborting)
+{
+    if (runningAsRoot())
+    {
+        BOOST_TEST_MESSAGE("skipped: permission bits do not deny root");
+        return;
+    }
+
+    // maxSize 1 makes the second write rotate.
+    const auto cfg = sinkConfig(dir / "syslog.jsonl", 1);
+    LogFile lf(ioc, cfg);
+
+    writeSync(lf, messageWith("first"));
+    BOOST_REQUIRE(fs::exists(cfg.jsonlFile));
+
+    // Deny everything in the directory, so the rotation probe fails. Before the
+    // fix this threw filesystem_error out of the strand handler and aborted.
+    {
+        const DeniedDirectory denied(dir);
+        writeSync(lf, messageWith("second"));
+    }
+
+    // Reaching here at all is the main assertion. The sink is now closed, so a
+    // later write is dropped even though the directory is readable again.
+    const auto contents = readAll(cfg.jsonlFile);
+    writeSync(lf, messageWith("third"));
+    BOOST_CHECK_EQUAL(readAll(cfg.jsonlFile), contents);
+    BOOST_CHECK(contents.find("third") == std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(open_permission_denied_closes_sink)
+{
+    if (runningAsRoot())
+    {
+        BOOST_TEST_MESSAGE("skipped: permission bits do not deny root");
+        return;
+    }
+
+    // The sink opens lazily on first write, so denying the directory up front
+    // makes the very first write fail.
+    const auto subdir = dir / "denied";
+    fs::create_directories(subdir);
+    const auto cfg = sinkConfig(subdir / "syslog.jsonl", 0);
+
+    LogFile lf(ioc, cfg);
+    {
+        const DeniedDirectory denied(subdir);
+        writeSync(lf, messageWith("never lands"));
+    }
+
+    BOOST_CHECK(!fs::exists(cfg.jsonlFile));
+}
+
+BOOST_AUTO_TEST_CASE(failed_sink_does_not_stop_a_healthy_one)
+{
+    if (runningAsRoot())
+    {
+        BOOST_TEST_MESSAGE("skipped: permission bits do not deny root");
+        return;
+    }
+
+    const auto goodDir = dir / "good";
+    const auto badDir  = dir / "bad";
+    fs::create_directories(goodDir);
+    fs::create_directories(badDir);
+
+    const auto goodCfg = sinkConfig(goodDir / "syslog.jsonl", 0); // never rotates
+    const auto badCfg  = sinkConfig(badDir / "syslog.jsonl", 1);  // rotates every write
+
+    LogFile good(ioc, goodCfg);
+    LogFile bad(ioc, badCfg);
+
+    writeSync(good, messageWith("before"));
+    writeSync(bad, messageWith("before"));
+
+    {
+        const DeniedDirectory denied(badDir);
+        writeSync(bad, messageWith("kills the bad sink"));
+    }
+
+    // The healthy sink shares the io_context with the failed one and must be
+    // entirely unaffected by it.
+    writeSync(good, messageWith("after"));
+    const auto contents = readAll(goodCfg.jsonlFile);
+    BOOST_CHECK(contents.find("before") != std::string::npos);
+    BOOST_CHECK(contents.find("after") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+#endif // !_WIN32

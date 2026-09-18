@@ -73,8 +73,9 @@ def write_config(
     workers: int = 1,
     max_size: str = "100MB",
     forward_to: int = 0,
+    log_dir: Path | None = None,
 ) -> Path:
-    log_file = d / "syslog.log"
+    log_file = (log_dir or d) / "syslog.log"
     conf = d / "minilog.conf"
     lines = [
         "[server]",
@@ -114,6 +115,15 @@ def terminate(proc: subprocess.Popen) -> None:
         proc.send_signal(signal.CTRL_BREAK_EVENT)
     else:
         proc.send_signal(signal.SIGTERM)
+
+
+def _is_root() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+# Denying access to a directory only proves anything where the permission bits
+# are enforced: POSIX, and not as root.
+CAN_DENY_ACCESS = sys.platform != "win32" and not _is_root()
 
 
 def count_lines(path: Path) -> int:
@@ -315,6 +325,58 @@ class TestMultiWorker(unittest.TestCase):
             # On loopback UDP is reliable; allow a small margin for loaded CI.
             total = n_threads * n_per_thread
             self.assertGreaterEqual(len(lines), total * 9 // 10)
+
+
+# ── Filesystem failure handling ───────────────────────────────────────────────
+
+
+@unittest.skipUnless(CAN_DENY_ACCESS, "needs enforced POSIX permission bits")
+class TestFilesystemFailure(unittest.TestCase):
+    def test_denied_log_directory_does_not_abort_the_server(self):
+        """A rotation that hits a permission error must close that sink and leave
+        the process running.
+
+        This used to take the whole server down: the throwing std::filesystem
+        overload escaped the strand handler, escaped io_context::run() on a bare
+        worker thread, and became std::terminate — SIGABRT, exit 134.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            log_dir = d / "logs"
+            log_dir.mkdir()
+            port = free_port()
+            conf = write_config(d, port, max_size="200B", log_dir=log_dir)
+
+            filler = "x" * 60
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
+            try:
+                self.assertTrue(wait_for_port(port), "server did not start in time")
+
+                # Push past max_size so that the next message triggers a rotation.
+                for i in range(10):
+                    send_udp(f"<34>Oct 11 22:14:15 host su[1]: before {i} {filler}", port)
+                time.sleep(0.3)
+
+                log_dir.chmod(0o000)
+                try:
+                    for i in range(10):
+                        send_udp(f"<34>Oct 11 22:14:15 host su[1]: after {i} {filler}", port)
+                    time.sleep(0.5)
+                    self.assertIsNone(
+                        proc.poll(),
+                        f"server died on a denied log directory (exit {proc.returncode})",
+                    )
+                finally:
+                    log_dir.chmod(0o755)
+
+                # Still healthy once access is restored — the sink is out of
+                # service, but the process is not.
+                self.assertIsNone(proc.poll())
+            finally:
+                terminate(proc)
+                proc.wait(timeout=10)
+
+            self.assertEqual(proc.returncode, 0, "server did not shut down cleanly")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
