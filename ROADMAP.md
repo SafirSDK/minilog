@@ -106,14 +106,36 @@ issue rather than from scratch.
   path-resolution logic at all. Rationale and the four known implementation
   costs (Windows test paths, demo config generation, UNC paths, no environment
   variable expansion) are recorded on the issue.
-- **#22 — parked.** minilog's current registration (LocalSystem, AUTO_START, no
-  dependencies) already matches the target deployment's conventions, so this is
-  not on the critical path.
+- **#22 — closed as won't-do** (settled in batch 2). minilog's current
+  registration (LocalSystem, AUTO_START, no dependencies) already matches the
+  target deployment's conventions, so none of the proposed flags would be
+  exercised. Keeping the service name a compile-time constant is also what makes
+  the idempotent `--uninstall` from #21 unambiguous — there is no
+  `--service-name` to typo. #21 preserves a hand-set account and start type
+  across an upgrade, so an environment that mandates them can use `sc config`
+  once instead.
 - **Rotation races in the web-viewer — declined.** Requires `max_files = 1`
   together with high traffic, and self-corrects on refresh. Display-level
   integrity only.
 - **`sanitizeUtf8` U+FFFD counting — declined.** One replacement character per
   byte rather than per maximal subpart. Output remains valid UTF-8; cosmetic.
+
+## CI flakes to watch — not to chase
+
+Noted as they turn up while running the builds for these issues. A flake seen
+once is noise; the same one twice is a defect, and the point of this list is to
+be able to tell the difference across context resets rather than re-diagnosing
+it each time.
+
+- **`test_binary.py::test_inflight_messages_complete_before_exit`, Windows.**
+  Failed once as `17 != 20` (run 35359400495, 2026-09-18, on the #35 commit,
+  which touches nothing but the installer and its test). Three of twenty
+  datagrams sent in a tight loop never reached the log before the shutdown
+  signal. A re-run passed. This is the same territory as **#10** — what happens
+  to datagrams that arrive faster than they are processed — so if it recurs,
+  record it here and treat it as evidence for that issue rather than as a test
+  to loosen. The test allows 0.3 s between the last send and the signal, which
+  is the first thing to look at if #10's answer turns out not to explain it.
 
 ## Minimum set if the rollout lands early
 
