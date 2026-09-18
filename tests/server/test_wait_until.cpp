@@ -33,6 +33,7 @@ BOOST_AUTO_TEST_SUITE(wait_until_tests)
 BOOST_AUTO_TEST_CASE(already_satisfied_returns_immediately)
 {
     int calls = 0;
+
     const auto start = std::chrono::steady_clock::now();
 
     BOOST_CHECK(waitUntil(
@@ -95,6 +96,7 @@ BOOST_AUTO_TEST_CASE(succeeds_once_the_condition_becomes_true)
 BOOST_AUTO_TEST_CASE(gives_up_after_the_timeout)
 {
     int calls = 0;
+
     const auto start = std::chrono::steady_clock::now();
 
     BOOST_CHECK(!waitUntil(
