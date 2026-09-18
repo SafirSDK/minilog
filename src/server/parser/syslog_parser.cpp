@@ -188,48 +188,37 @@ std::optional<std::string> parse3164Timestamp(std::string_view& sv)
     return ts;
 }
 
-// Parse RFC3164 tag (e.g. "app[pid]:") and advance sv to message body.
+// Parse an RFC3164 tag ("app:" or "app[pid]:") and advance sv past it.
+//
+// RFC3164 defines TAG as a single token, so a colon reached only after a space
+// belongs to the message text — an IP:port, a URL scheme, a clock time — and the
+// message carries no tag at all. sv is then left untouched, so the whole
+// remainder is the message and appName stays unset rather than being filled
+// with the first word of somebody's prose.
 std::pair<std::optional<std::string>, std::optional<std::string>> parse3164Tag(std::string_view& sv)
 {
     const auto colon = sv.find(':');
-    std::string_view tagPart;
-    if (colon == std::string_view::npos)
+    const auto space = sv.find(' ');
+    if (colon == std::string_view::npos || (space != std::string_view::npos && space < colon))
     {
-        // No colon: first word is tag, rest is message
-        const auto sp = sv.find(' ');
-        if (sp == std::string_view::npos)
-        {
-            tagPart = sv;
-            sv      = {};
-        }
-        else
-        {
-            tagPart = sv.substr(0, sp);
-            sv.remove_prefix(sp + 1);
-        }
+        return {std::nullopt, std::nullopt};
     }
-    else
+
+    const std::string_view tagPart = sv.substr(0, colon);
+    sv.remove_prefix(colon + 1);
+    if (!sv.empty() && sv[0] == ' ')
     {
-        tagPart = sv.substr(0, colon);
-        sv.remove_prefix(colon + 1);
-        if (!sv.empty() && sv[0] == ' ')
-        {
-            sv.remove_prefix(1);
-        }
+        sv.remove_prefix(1);
     }
 
     // "app[pid]" or just "app"
     const auto bracket = tagPart.find('[');
-    if (bracket != std::string_view::npos && !tagPart.empty() && tagPart.back() == ']')
+    if (bracket != std::string_view::npos && tagPart.back() == ']')
     {
         auto app = std::string(tagPart.substr(0, bracket));
         auto pid = std::string(tagPart.substr(bracket + 1, tagPart.size() - bracket - 2));
         return {app.empty() ? std::nullopt : std::make_optional(std::move(app)),
                 pid.empty() ? std::nullopt : std::make_optional(std::move(pid))};
-    }
-    while (!tagPart.empty() && tagPart.back() == ' ')
-    {
-        tagPart.remove_suffix(1);
     }
     return {tagPart.empty() ? std::nullopt : std::make_optional(std::string(tagPart)),
             std::nullopt};

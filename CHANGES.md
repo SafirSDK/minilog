@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **An RFC 3164 message without a tag no longer has its text moved into `app`.** The tag was taken
+  to end at the first colon anywhere in the message, so any colon in ordinary text ended it: an
+  `IP:port`, a URL scheme, a clock time. `<14>… myhost user logged in from 10.0.0.1:22 ok` was
+  stored with `app` = `user logged in from 10.0.0.1` and `message` = `22 ok`, in the JSONL and text
+  sinks both. The tag now has to end before the first space, which is what RFC 3164 means by a
+  single-token TAG, so real tags (`sshd:`, `sshd[123]:`, `%BGP-5-ADJCHANGE:`) are unaffected and a
+  colon in the body is left where it is.
 - **A log file named twice in the config is now rejected instead of corrupting both outputs.**
   `text_file` and `jsonl_file` could be given the same path, in one section or across two, and the
   result was accepted and then wrong three ways over: raw text lines and JSON records were
@@ -85,6 +92,16 @@
 
 ### Changed
 
+- **An RFC 3164 message without a tag now has `app` unset instead of its first word.** This goes
+  with the parsing fix above. When no `tag:` is found the first word used to be taken as the app
+  name and removed from the message, so `<14>… myhost Connection reset by peer` was stored as
+  `app` = `Connection`, `message` = `reset by peer` — with no colon anywhere in it. Now `app` is
+  `null` and the message is whole. Both changes alter how existing inputs parse: stored JSONL
+  written before and after this release will differ in `app` and `message` for any message that
+  was not properly tagged, and the web viewer's app filter and the CLI viewer's patterns will see
+  a smaller, bounded set of app values. One case is knowingly left alone — a message opening with
+  a bare clock time (`10:30:45 disk is full`) has a colon before any space and is still read as a
+  tag.
 - **Output files are opened at startup, not on the first message.** An unwritable or missing log
   directory is now a startup failure naming the path. Previously minilog started, reported itself
   running — to the SCM as well — and the sink then died on the first message, with no non-zero

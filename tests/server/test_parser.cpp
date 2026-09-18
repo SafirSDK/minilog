@@ -234,13 +234,63 @@ BOOST_AUTO_TEST_CASE(no_pid)
     BOOST_TEST(m.message == "message body");
 }
 
-BOOST_AUTO_TEST_CASE(no_colon_in_tag)
+BOOST_AUTO_TEST_CASE(no_colon_means_no_tag)
 {
-    // Tag without colon — first word is appName, remainder is message
+    // No colon at all, so there is no RFC3164 tag. The first word is message
+    // text, not an app name, and the message keeps it.
     const auto m = parse("<13>Feb 28 10:20:30 myhost myapp rest of message");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(!m.appName.has_value());
+    BOOST_TEST(m.message == "myapp rest of message");
+}
+
+BOOST_AUTO_TEST_CASE(colon_in_message_body_is_not_a_tag)
+{
+    // The colon in "10.0.0.1:22" used to terminate a four-word "tag", leaving
+    // app = "user logged in from 10.0.0.1" and message = "22 ok".
+    const auto m = parse("<14>Mar 15 12:00:00 h user logged in from 10.0.0.1:22 ok");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(!m.appName.has_value());
+    BOOST_TEST(m.message == "user logged in from 10.0.0.1:22 ok");
+}
+
+BOOST_AUTO_TEST_CASE(url_in_message_body_is_not_a_tag)
+{
+    const auto m = parse("<14>Mar 15 12:00:00 h see http://example.com/path for details");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(!m.appName.has_value());
+    BOOST_TEST(m.message == "see http://example.com/path for details");
+}
+
+BOOST_AUTO_TEST_CASE(tag_survives_a_colon_later_in_the_body)
+{
+    // A real tag still wins: the colon that terminates it comes before the
+    // first space, so the ones in the body are left alone.
+    const auto m = parse("<13>Feb 28 10:20:30 myhost myapp: connect to 10.0.0.1:22 failed");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
     BOOST_TEST(*m.appName == "myapp");
-    BOOST_TEST(m.message == "rest of message");
+    BOOST_TEST(m.message == "connect to 10.0.0.1:22 failed");
+}
+
+BOOST_AUTO_TEST_CASE(bracket_tag_survives_a_colon_later_in_the_body)
+{
+    const auto m = parse("<13>Feb 28 10:20:30 myhost sshd[123]: ratio 1:2 reached");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(*m.appName == "sshd");
+    BOOST_TEST(*m.procId == "123");
+    BOOST_TEST(m.message == "ratio 1:2 reached");
+}
+
+BOOST_AUTO_TEST_CASE(colon_in_the_first_word_is_still_read_as_a_tag)
+{
+    // The accepted limit of the rule: a message opening with a bare clock time
+    // has a colon before any space, so it is indistinguishable from a tag.
+    // Bounding the search at the first space is what the fix does; deciding
+    // that "10" does not look like a tag would need a charset rule.
+    const auto m = parse("<14>Mar 15 12:00:00 h 10:30:45 disk is full");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(*m.appName == "10");
+    BOOST_TEST(m.message == "30:45 disk is full");
 }
 
 BOOST_AUTO_TEST_CASE(empty_message_after_tag)
@@ -359,12 +409,23 @@ BOOST_AUTO_TEST_CASE(time_field_too_short_falls_through)
     BOOST_TEST((m.protocol == Protocol::Unknown));
 }
 
-BOOST_AUTO_TEST_CASE(tag_with_trailing_space_trimmed)
+BOOST_AUTO_TEST_CASE(space_before_the_colon_is_not_a_tag)
 {
-    // RFC3164 tag "myapp " (space before colon) — trailing spaces are trimmed.
+    // "myapp :" — a TAG is a single token, so the space rules this out. It used
+    // to be trimmed to "myapp" and the colon dropped from the message.
     const auto m = parse("<13>Jan 12 00:00:00 host myapp : message");
     BOOST_TEST((m.protocol == Protocol::RFC3164));
-    BOOST_TEST(*m.appName == "myapp");
+    BOOST_TEST(!m.appName.has_value());
+    BOOST_TEST(m.message == "myapp : message");
+}
+
+BOOST_AUTO_TEST_CASE(leading_colon_gives_no_app)
+{
+    // Colon at the very start: an empty tag, so no app name, and the colon is
+    // consumed as the tag terminator.
+    const auto m = parse("<13>Jan 12 00:00:00 host :message");
+    BOOST_TEST((m.protocol == Protocol::RFC3164));
+    BOOST_TEST(!m.appName.has_value());
     BOOST_TEST(m.message == "message");
 }
 

@@ -312,7 +312,7 @@ One UTF-8 JSON object per line:
 | `facility` | string\|null | Facility name (e.g. `"daemon"`, `"auth"`, `"local0"`) |
 | `severity` | string\|null | Severity name (e.g. `"INFO"`, `"ERROR"`, `"DEBUG"`) |
 | `hostname` | string\|null | Syslog hostname field |
-| `app` | string\|null | Application name |
+| `app` | string\|null | Application name. RFC 5424: the APP-NAME field. RFC 3164: the `tag:` at the start of the message — `null` when the message carries no tag |
 | `pid` | string\|null | Process ID |
 | `msgid` | string\|null | RFC 5424 MSGID field |
 | `msg_time` | string\|null | Timestamp from the syslog message itself, verbatim and unnormalised. RFC 3164 example: `"Mar 12 14:30:22"` (no year, no timezone). RFC 5424 example: `"2026-03-12T14:30:22.000Z"`. `null` if the message carried no timestamp. |
