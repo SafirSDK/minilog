@@ -834,8 +834,11 @@ def test_upgrade_without_web_viewer(installer: Path) -> None:
     check(wait_service_running(SERVICE_NAME),
           f"'{SERVICE_NAME}' still running after the reduced upgrade")
 
-    # Put the full installation back for the tests that follow.
-    run_installer(installer)
+    # Put the full installation back for the tests that follow. The components
+    # have to be named: a silent re-install with no /COMPONENTS repeats the
+    # previous selection, which is the very thing this test just changed — and
+    # is also why dropping a component on an upgrade is worth handling at all.
+    run_installer(installer, components="main,webviewer,webviewer\\shortcuts")
     check(service_exists(WEB_SERVICE), f"'{WEB_SERVICE}' registered again by a full install")
     check(wait_service_running(WEB_SERVICE), f"'{WEB_SERVICE}' running again")
 
