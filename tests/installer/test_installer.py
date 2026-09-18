@@ -48,7 +48,6 @@ DATA_DIR       = PROGRAM_DATA / "minilog"
 EXE_PATH       = APP_DIR / "minilog.exe"
 WEB_VIEWER_EXE = APP_DIR / "minilog-web-viewer.exe"
 VIEWER_PATH    = TOOLS_DIR / "minilog-cli-viewer.py"
-UNINST_PATH    = APP_DIR / "unins000.exe"
 CONFIG_PATH    = DATA_DIR / "minilog.conf"
 VIEWER_CONFIG  = DATA_DIR / "minilog-cli-viewer.conf"
 LOG_DIR        = DATA_DIR / "logs"
@@ -111,13 +110,33 @@ def run_installer(path: Path, app_dir: Path | None = None) -> None:
         raise RuntimeError(f"Installer exited with code {result.returncode}")
 
 
-def run_uninstaller(path: Path = UNINST_PATH) -> None:
+def uninstaller_path(app_dir: Path = APP_DIR) -> Path:
+    """The uninstaller Inno wrote into `app_dir`.
+
+    Not hardcoded to unins000.exe: the uninstaller deletes itself from a copy in
+    the temp directory after it exits, so an install that starts while that is
+    still in flight finds unins000.dat in place and becomes unins001.
+    """
+    found = sorted(app_dir.glob("unins*.exe"))
+    if not found:
+        raise RuntimeError(f"No uninstaller found in {app_dir}")
+    return found[-1]
+
+
+def run_uninstaller(app_dir: Path = APP_DIR) -> None:
     result = subprocess.run(
-        [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES"],
+        [str(uninstaller_path(app_dir)), "/VERYSILENT", "/SUPPRESSMSGBOXES"],
         check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"Uninstaller exited with code {result.returncode}")
+
+    # Wait for the self-deletion described above, so that a re-install into the
+    # same directory starts from a clean slate.
+    for _ in range(15):
+        if not list(app_dir.glob("unins*")):
+            return
+        time.sleep(1)
 
 
 # ─── System PATH ──────────────────────────────────────────────────────────────
@@ -846,7 +865,7 @@ def test_path_entry_lifecycle(installer: Path) -> None:
     rest = path_without(alt_tools)
     write_system_path(str(alt_tools) + ";" + rest)
 
-    run_uninstaller(ALT_APP_DIR / "unins000.exe")
+    run_uninstaller(ALT_APP_DIR)
     check(not path_has(alt_tools), "PATH entry removed when it is first in the list")
     check(read_system_path() == rest, "The rest of the PATH survives, in order")
 
@@ -855,7 +874,7 @@ def test_path_entry_lifecycle(installer: Path) -> None:
     untouched = path_without(alt_tools)
     write_system_path(untouched)
 
-    run_uninstaller(ALT_APP_DIR / "unins000.exe")
+    run_uninstaller(ALT_APP_DIR)
     check(read_system_path() == untouched,
           "Uninstalling with the entry already absent leaves the PATH unchanged")
 
