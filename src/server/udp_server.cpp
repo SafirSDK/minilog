@@ -20,7 +20,10 @@
 
 #include <boost/asio/post.hpp>
 
+#include <chrono>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace minilog
 {
@@ -30,7 +33,7 @@ UdpServer::UdpServer(boost::asio::io_context& ioc,
                      OutputManager& outputMgr,
                      Forwarder* forwarder)
     : m_cfg(cfg), m_ioc(ioc), m_socket(boost::asio::make_strand(ioc)), m_outputMgr(outputMgr),
-      m_forwarder(forwarder), m_recvBuffer(BUFFER_SIZE)
+      m_forwarder(forwarder), m_admission(cfg.maxQueueBytes), m_recvBuffer(BUFFER_SIZE)
 {
 }
 
@@ -85,6 +88,10 @@ void UdpServer::stop()
     boost::asio::post(m_socket.get_executor(),
                       [this]()
                       {
+                          // Report whatever is left over rather than losing the
+                          // tail of a flood that stopped before the interval.
+                          reportDrops(true);
+
                           boost::system::error_code ec;
                           m_socket.close(
                               ec); // NOLINT(bugprone-unused-return-value) — close(ec) returns void
@@ -120,6 +127,18 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
         return;
     }
 
+    // Admission control, before the first copy: nothing downstream of here
+    // applies back pressure, so this is where a sender faster than the disk is
+    // refused. The token rides along on the message and releases the charge
+    // once the last queued copy of it is gone.
+    auto admission = m_admission.admit(bytes);
+    if (!admission)
+    {
+        reportDrops(false);
+        receive();
+        return;
+    }
+
     // Copy received data immediately so buffer can be re-armed
     std::string data(m_recvBuffer.data(), bytes);
     std::string srcIp = m_senderEndpoint.address().to_string();
@@ -129,17 +148,51 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
 
     // Post the parse + dispatch work to the io_context so it can run on any
     // thread in the pool, not serialised on the receive strand.
-    boost::asio::post(m_ioc,
-                      [this, data = std::move(data), srcIp = std::move(srcIp)]()
-                      {
-                          SyslogMessage msg = parseSyslog(data);
-                          msg.srcIp         = srcIp;
-                          m_outputMgr.dispatch(msg);
-                          if (m_forwarder != nullptr)
-                          {
-                              m_forwarder->forward(msg);
-                          }
-                      });
+    boost::asio::post(
+        m_ioc,
+        [this, data = std::move(data), srcIp = std::move(srcIp), admission = std::move(admission)]()
+        {
+            SyslogMessage msg = parseSyslog(data);
+            msg.srcIp         = srcIp;
+            // Copied rather than moved: the capture is const in a non-mutable
+            // lambda, and it costs one refcount either way.
+            msg.admission = admission;
+            m_outputMgr.dispatch(msg);
+            if (m_forwarder != nullptr)
+            {
+                m_forwarder->forward(msg);
+            }
+        });
+}
+
+void UdpServer::reportDrops(bool force)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && m_lastDropReport.has_value() && now - *m_lastDropReport < DROP_REPORT_INTERVAL)
+    {
+        return;
+    }
+
+    const auto dropped = m_admission.takeDropped();
+    if (dropped == 0)
+    {
+        return;
+    }
+
+    std::string over;
+    if (m_lastDropReport.has_value())
+    {
+        const auto ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - *m_lastDropReport).count();
+        over = ms < 1000 ? " in the last " + std::to_string(ms) + " ms"
+                         : " in the last " + std::to_string(ms / 1000) + " s";
+    }
+    m_lastDropReport = now;
+
+    osLogError("minilog: dropped " + std::to_string(dropped) + " datagram(s)" + over +
+               " — the receive queue reached max_queue_bytes (" +
+               std::to_string(m_admission.budget()) +
+               "). Datagrams are arriving faster than they can be written.");
 }
 
 } // namespace minilog

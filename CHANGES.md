@@ -4,6 +4,22 @@
 
 ### Fixed
 
+- **A UDP flood no longer grows minilog until the OS kills it.** The receive path had no admission
+  control: each datagram was copied and posted to the io_context, the worker that picked it up
+  posted a copy to every matching sink, and nothing anywhere asked how much was already queued. The
+  sink is deliberately the narrow end of that pipe — it flushes after every line so `tail` sees
+  entries at once — so a sustained flood from one unauthenticated source took the process from
+  5 MB to 1.13 GB and still climbing, at the shipped `workers = 4`. The setting inverted the
+  behaviour: `workers = 1` stayed flat at 5.8 MB because the thread accepting datagrams was the
+  thread writing them, so `workers` was really "do you want a memory limit or not". minilog now
+  charges each datagram against `[server] max_queue_bytes` (default 16 MB) before the first copy
+  and drops it if the budget is full, holding the charge until the last queued copy of the message
+  is written — bounding only the io_context queue would have moved the growth to the sink strands.
+  The same flood now settles at 58 MB with one output section and does not climb. Dropped counts
+  are reported to syslog or the Windows Event Log, batched to at most one notice every ten seconds
+  so the notice cannot become the flood. Dropping is the right answer rather than a compromise —
+  UDP syslog has no delivery guarantee and the kernel is already dropping silently when its own
+  socket buffer fills — so there is deliberately no setting that removes the limit.
 - **An RFC 3164 message without a tag no longer has its text moved into `app`.** The tag was taken
   to end at the first colon anywhere in the message, so any colon in ordinary text ended it: an
   `IP:port`, a URL scheme, a clock time. `<14>… myhost user logged in from 10.0.0.1:22 ok` was
@@ -110,6 +126,9 @@
 
 ### New
 
+- **`[server] max_queue_bytes`** bounds the received-but-unwritten log held in memory; see the
+  entry under Fixed. Takes the same units as `max_size`, so `16MB` and `16777216` both work, and
+  defaults to 16 MB. `0` is rejected rather than meaning "unlimited".
 - **`--install` and `--uninstall` are now idempotent.** `--install` used to fail against a service
   that already existed (`ERROR_SERVICE_EXISTS`, or an explicit check in the web viewer) and
   `--uninstall` used to fail when there was none, which is why the installer ran `--uninstall` on

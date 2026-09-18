@@ -425,6 +425,65 @@ BOOST_AUTO_TEST_CASE(workers_negative_throws)
 
 BOOST_AUTO_TEST_SUITE_END()
 
+// ─── max_queue_bytes ──────────────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_SUITE(max_queue_bytes)
+
+BOOST_AUTO_TEST_CASE(defaults_to_16mb)
+{
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.maxQueueBytes == 16ULL * 1024 * 1024);
+}
+
+BOOST_AUTO_TEST_CASE(accepts_size_units)
+{
+    TempFile tmp("[server]\nmax_queue_bytes=32MB\n\n[output.m]\ntext_file=/tmp/f\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.maxQueueBytes == 32ULL * 1024 * 1024);
+}
+
+BOOST_AUTO_TEST_CASE(accepts_plain_byte_count)
+{
+    TempFile tmp("[server]\nmax_queue_bytes=1048576\n\n[output.m]\ntext_file=/tmp/f\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.maxQueueBytes == 1048576u);
+}
+
+BOOST_AUTO_TEST_CASE(zero_throws_naming_the_key)
+{
+    // There is deliberately no way to switch admission control off — an
+    // unbounded receive queue is the defect it exists to fix.
+    TempFile tmp("[server]\nmax_queue_bytes=0\n\n[output.m]\ntext_file=/tmp/f\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for max_queue_bytes = 0");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("max_queue_bytes") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(unknown_unit_throws_naming_the_key)
+{
+    TempFile tmp("[server]\nmax_queue_bytes=5PB\n\n[output.m]\ntext_file=/tmp/f\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for an unknown size unit");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("max_queue_bytes") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 // ─── Output file uniqueness ───────────────────────────────────────────────────
 
 BOOST_AUTO_TEST_SUITE(output_file_uniqueness)

@@ -20,6 +20,15 @@ udp_port = 514
 ; reasonable upper bound; the default of 4 is suitable for most deployments.
 workers = 4
 
+; How much received-but-not-yet-written log to hold in memory before further
+; datagrams are dropped. A sender faster than the disk would otherwise grow
+; minilog until the OS kills it, and UDP gives the sender no way to know either
+; way, so the excess is dropped deliberately and the count is reported to the
+; system log. Same units as max_size; a plain number is bytes. Resident memory
+; is a few times this figure, since a queued message is held once per output
+; section it routes to. There is no "unlimited" setting.
+max_queue_bytes = 16MB
+
 ; ─────────────────────────────────────────────────────────────────────────────
 ; Output sections  [output.<name>]
 ;

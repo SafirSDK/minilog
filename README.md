@@ -55,6 +55,22 @@ truncated messages, and §3.2 RECOMMENDS that senders keep datagrams below the p
 Multicast and broadcast group reception are not addressed by any of the syslog RFCs and are not
 supported. Transports other than UDP (TCP, TLS/RFC 5425, RELP) are out of scope.
 
+## Behaviour under flood
+
+Nothing between the socket and the disk applies back pressure, and the sink flushes after every
+line so that `tail` sees entries immediately. A sender faster than the disk would therefore grow
+minilog's memory until the OS killed it. Instead, minilog holds at most `[server]
+max_queue_bytes` (default 16 MB) of received-but-unwritten log and drops anything beyond that,
+reporting the count to syslog or the Windows Event Log at most once every ten seconds. Resident
+memory settles at a few times that figure, because a queued message is held once per `[output.*]`
+section it routes to.
+
+Dropping is the correct outcome rather than a compromise: UDP syslog has no delivery guarantee,
+the sender never learns either way, and the kernel is already dropping silently once its own
+socket buffer fills. The difference is that minilog now drops at a limit you chose, says how much
+it dropped, and stays running. Raise `max_queue_bytes` to buffer more; there is deliberately no
+setting that removes the limit.
+
 ## Requirements
 
 | Platform | Toolchain | Boost |
@@ -255,6 +271,7 @@ See [`minilog.conf.example`](minilog.conf.example) for a fully commented example
 | `host` | `0.0.0.0` | IP address to bind |
 | `udp_port` | `514` | UDP port (0–65535; 0 = OS-assigned) |
 | `workers` | `4` | Number of I/O worker threads |
+| `max_queue_bytes` | `16MB` | Received-but-unwritten log held in memory before further datagrams are dropped. Same units as `max_size`; a plain number is bytes. No "unlimited" setting — see [Behaviour under flood](#behaviour-under-flood) |
 
 ### `[output.<name>]`
 

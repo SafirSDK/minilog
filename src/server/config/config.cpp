@@ -307,6 +307,21 @@ Config loadConfig(const std::string& path)
         }
         cfg.workers = w;
     }
+    {
+        // Same syntax as max_size, so "64MB" and "67108864" both work.
+        const auto raw = tree.get<std::string>("server.max_queue_bytes", "");
+        if (!raw.empty())
+        {
+            try
+            {
+                cfg.maxQueueBytes = parseSize(raw);
+            }
+            catch (const std::runtime_error& e)
+            {
+                throw std::runtime_error(std::string("[server] max_queue_bytes: ") + e.what());
+            }
+        }
+    }
 
     // [output.X] — Boost PropertyTree's INI parser keeps the dot in section
     // names as a literal flat key ("output.main"), not a nested path.

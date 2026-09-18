@@ -23,7 +23,9 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -122,6 +124,21 @@ struct Fixture
         std::ifstream f(p, std::ios::binary);
         return static_cast<int>(
             std::count(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>(), '\n'));
+    }
+
+    // Wait up to `timeout` for the server to have refused at least `n` datagrams.
+    static bool waitForDrops(const UdpServer& server, std::uint64_t n, std::chrono::seconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (server.droppedDatagrams() >= n)
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return false;
     }
 
     // Wait up to `timeout` for the file at `p` to have at least `n` lines.
@@ -353,6 +370,191 @@ BOOST_AUTO_TEST_CASE(correct_file_count_after_flood)
         {
             BOOST_CHECK_MESSAGE(!line.empty(), "empty line in " << entry.path());
         }
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Admission control ───────────────────────────────────────────────────────
+// Unit level: the token, not the socket, is what bounds memory, so these are
+// the deterministic half of #10's regression cover.
+
+BOOST_AUTO_TEST_SUITE(admission_control)
+
+BOOST_AUTO_TEST_CASE(charge_is_held_until_the_last_copy_is_gone)
+{
+    // The whole design rests on this: bounding only the io_context queue would
+    // move the growth to the sink strands, so the charge has to survive every
+    // copy of the message that carries it.
+    AdmissionControl ac(1000);
+
+    auto first = ac.admit(400);
+    BOOST_REQUIRE(first);
+    BOOST_TEST(ac.inFlight() == 400u);
+
+    {
+        auto copyA = first;
+        auto copyB = first;
+        first.reset();
+        BOOST_TEST(ac.inFlight() == 400u); // still queued somewhere
+    }
+    BOOST_TEST(ac.inFlight() == 0u);
+}
+
+BOOST_AUTO_TEST_CASE(over_budget_is_refused_and_counted)
+{
+    AdmissionControl ac(1000);
+
+    auto held = ac.admit(900);
+    BOOST_REQUIRE(held);
+
+    BOOST_TEST(!ac.admit(200));
+    BOOST_TEST(!ac.admit(200));
+    BOOST_TEST(ac.droppedTotal() == 2u);
+    BOOST_TEST(ac.inFlight() == 900u); // a refusal charges nothing
+
+    // Exactly filling the budget is allowed.
+    auto exact = ac.admit(100);
+    BOOST_TEST(!!exact);
+    BOOST_TEST(ac.inFlight() == 1000u);
+}
+
+BOOST_AUTO_TEST_CASE(budget_frees_up_again_after_release)
+{
+    AdmissionControl ac(1000);
+
+    auto held = ac.admit(1000);
+    BOOST_REQUIRE(held);
+    BOOST_TEST(!ac.admit(1));
+
+    held.reset();
+    BOOST_TEST(ac.inFlight() == 0u);
+    BOOST_TEST(!!ac.admit(1000));
+}
+
+BOOST_AUTO_TEST_CASE(datagram_larger_than_the_whole_budget_is_refused)
+{
+    AdmissionControl ac(1000);
+    BOOST_TEST(!ac.admit(1001));
+    BOOST_TEST(ac.inFlight() == 0u);
+    BOOST_TEST(ac.droppedTotal() == 1u);
+}
+
+BOOST_AUTO_TEST_CASE(take_dropped_reports_each_drop_once)
+{
+    AdmissionControl ac(10);
+
+    BOOST_TEST(!ac.admit(100));
+    BOOST_TEST(!ac.admit(100));
+    BOOST_TEST(ac.takeDropped() == 2u);
+    BOOST_TEST(ac.takeDropped() == 0u); // the window resets, the total does not
+    BOOST_TEST(ac.droppedTotal() == 2u);
+}
+
+BOOST_AUTO_TEST_CASE(token_outlives_the_control_it_came_from)
+{
+    // Tokens ride on queued messages, so one can still be alive when the server
+    // that issued it is gone. Destroying it must not touch freed memory.
+    AdmissionControl::Token token;
+    {
+        AdmissionControl ac(1000);
+        token = ac.admit(100);
+        BOOST_REQUIRE(token);
+    }
+    BOOST_CHECK_NO_THROW(token.reset());
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Admission control under flood ───────────────────────────────────────────
+
+BOOST_FIXTURE_TEST_SUITE(admission_under_flood, Fixture)
+
+BOOST_AUTO_TEST_CASE(oversized_datagram_is_dropped_and_the_receiver_carries_on)
+{
+    // A budget below one datagram makes the outcome of each send certain, so
+    // this covers the end-to-end drop path without depending on timing.
+    auto cfg          = makeConfig(true, false);
+    cfg.maxQueueBytes = 1024;
+
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+    const uint16_t port = server.localPort();
+
+    auto ioThreads = startIoc();
+
+    sendUdp("<34>Oct 11 22:14:15 host app[1]: " + std::string(60000, 'A'), port);
+    BOOST_CHECK(waitForDrops(server, 1, std::chrono::seconds(5)));
+
+    // Dropping must not wedge the receiver: the next datagram fits and lands.
+    sendUdp("<34>Oct 11 22:14:15 host app[1]: small one", port);
+    BOOST_CHECK(waitForLines(dir / "syslog.log", 1, std::chrono::seconds(5)));
+
+    shutdown(server, ioThreads);
+
+    BOOST_CHECK_EQUAL(server.droppedDatagrams(), 1u);
+    BOOST_CHECK_EQUAL(countLines(dir / "syslog.log"), 1);
+    BOOST_CHECK_EQUAL(server.queuedBytes(), 0u);
+}
+
+BOOST_AUTO_TEST_CASE(queued_bytes_never_exceed_the_budget)
+{
+    // #10's acceptance criterion is a bounded RSS under flood. RSS is not
+    // portable to assert, but it is bounded *because* this is: what the server
+    // holds is a small multiple of the bytes it has admitted.
+    constexpr std::uint64_t budget = 64 * 1024;
+
+    auto cfg          = makeConfig(true, false);
+    cfg.maxQueueBytes = budget;
+
+    OutputManager om(ioc, cfg);
+    UdpServer server(ioc, cfg, om, nullptr);
+    server.start();
+    const uint16_t port = server.localPort();
+
+    auto ioThreads = startIoc(4);
+
+    // Sample from outside the io threads, so the ceiling is observed while the
+    // flood is in progress rather than only after it drains.
+    std::atomic<std::uint64_t> highWater{0};
+    std::atomic<bool> sampling{true};
+    std::thread sampler(
+        [&]()
+        {
+            while (sampling.load())
+            {
+                const auto queued = server.queuedBytes();
+                auto seen         = highWater.load();
+                while (queued > seen && !highWater.compare_exchange_weak(seen, queued))
+                {
+                }
+            }
+        });
+
+    const std::string payload = "<34>Oct 11 22:14:15 host app[1]: " + std::string(60000, 'A');
+    constexpr int N           = 5 * MINILOG_STRESS_MULTIPLIER;
+    for (int i = 0; i < N; ++i)
+    {
+        sendUdp(payload, port);
+    }
+
+    shutdown(server, ioThreads);
+    sampling.store(false);
+    sampler.join();
+
+    BOOST_CHECK_LE(highWater.load(), budget);
+    BOOST_CHECK_EQUAL(server.queuedBytes(), 0u);
+
+    // At most one 60 KB datagram fits in a 64 KB budget, so a burst that really
+    // reached the socket must have had some of it refused. Guarded on the burst
+    // arriving at all: the kernel drops datagrams of its own under load, and in
+    // the instrumented builds it drops most of them.
+    const auto seen =
+        static_cast<std::uint64_t>(countLines(dir / "syslog.log")) + server.droppedDatagrams();
+    if (seen >= 20)
+    {
+        BOOST_CHECK_GT(server.droppedDatagrams(), 0u);
     }
 }
 

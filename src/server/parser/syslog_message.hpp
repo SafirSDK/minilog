@@ -14,6 +14,7 @@
  ******************************************************************************/
 
 #pragma once
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -52,6 +53,12 @@ struct SyslogMessage
 
     // Message text
     std::string message;
+
+    // Charge against the receive-queue byte budget, held for as long as any
+    // copy of this message is still queued. Opaque here so the parser needs no
+    // dependency on AdmissionControl, which is what issues it; see
+    // admission.hpp.
+    std::shared_ptr<const void> admission;
 };
 
 } // namespace minilog

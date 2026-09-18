@@ -49,6 +49,11 @@ struct Config
     uint16_t udpPort = 514;
     int workers      = 4;
 
+    // Bytes of accepted-but-not-yet-written datagrams held in memory before
+    // further ones are dropped. See AdmissionControl in admission.hpp for why
+    // this is measured in datagram bytes rather than queued bytes.
+    uint64_t maxQueueBytes = 16ULL * 1024 * 1024;
+
     std::vector<OutputConfig> outputs;
     ForwardingConfig forwarding;
 };

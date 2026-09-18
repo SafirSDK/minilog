@@ -14,6 +14,8 @@
  ******************************************************************************/
 
 #pragma once
+#include "admission.hpp"
+
 #include "config/config.hpp"
 #include "forwarder/forwarder.hpp"
 #include "output/output_manager.hpp"
@@ -21,7 +23,9 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 
+#include <chrono>
 #include <memory>
+#include <optional>
 
 namespace minilog
 {
@@ -42,9 +46,21 @@ public:
     // Returns the actual bound port (useful when udpPort=0 was requested).
     [[nodiscard]] uint16_t localPort() const;
 
+    // Datagrams refused so far because the receive queue was at its budget.
+    [[nodiscard]] uint64_t droppedDatagrams() const { return m_admission.droppedTotal(); }
+
+    // Bytes of accepted-but-unwritten datagrams currently held.
+    [[nodiscard]] uint64_t queuedBytes() const { return m_admission.inFlight(); }
+
 private:
     void receive();
     void onReceive(const boost::system::error_code& ec, std::size_t bytes);
+
+    // Logs the drops accumulated since the last report, at most once per
+    // DROP_REPORT_INTERVAL unless forced. Silent data loss in a logging product
+    // is its own bug, but a line per dropped datagram would be the flood again
+    // in the Event Log. Called only from the socket strand.
+    void reportDrops(bool force);
 
     const Config& m_cfg;
     boost::asio::io_context& m_ioc;
@@ -52,8 +68,13 @@ private:
     boost::asio::ip::udp::endpoint m_senderEndpoint;
     OutputManager& m_outputMgr;
     Forwarder* m_forwarder;
+    AdmissionControl m_admission;
+
+    // Socket-strand only, so no synchronisation. Unset until the first report.
+    std::optional<std::chrono::steady_clock::time_point> m_lastDropReport;
 
     static constexpr std::size_t BUFFER_SIZE = 65507;
+    static constexpr std::chrono::seconds DROP_REPORT_INTERVAL{10};
     std::vector<char> m_recvBuffer;
 };
 
