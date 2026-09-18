@@ -64,6 +64,10 @@ EXPECTED_RESET_PERIOD   = 300
 # for longer than that has no restart left queued.
 SETTLED_QUIET_SECONDS = 8
 
+# TEST-NET-1 (RFC 5737) — never assigned to a host, so binding it always fails.
+# More deterministic than contending for a live port, which Windows may allow.
+UNBINDABLE_ADDR = f"192.0.2.1:{WEB_VIEWER_PORT}"
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 passed = 0
@@ -162,6 +166,36 @@ def stop_service(name: str = SERVICE_NAME) -> bool:
     """Stop the service and wait for it to reach STOPPED (already-stopped is fine)."""
     sc("stop", name)
     return wait_service_stopped(name)
+
+
+def net_start(name: str) -> subprocess.CompletedProcess:
+    """Start a service with net.exe, which waits for the outcome.
+
+    `sc start` returns as soon as StartService succeeds, and StartService
+    succeeds the moment the service reports SERVICE_START_PENDING — so its exit
+    code says nothing about whether startup then went on to succeed. net.exe
+    waits for the service to reach RUNNING or fail, so its exit code does.
+    """
+    return subprocess.run(
+        ["net.exe", "start", name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def reinstall_web_viewer(addr: str) -> None:
+    """Re-register the web viewer service against a different listen address."""
+    for args in (["--uninstall"], ["--install", "--config", str(CONFIG_PATH), "--addr", addr]):
+        subprocess.run(
+            [str(WEB_VIEWER_EXE), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        # Give the SCM a moment to finish the deletion; creating a service that
+        # is still marked for delete fails with ERROR_SERVICE_MARKED_FOR_DELETE.
+        time.sleep(1)
 
 
 def service_pid(name: str = SERVICE_NAME) -> int:
@@ -342,9 +376,13 @@ def test_recovery_restart() -> None:
 
 def check_failed_start(name: str) -> None:
     """Start `name`, expecting it to fail and to say so to the SCM."""
-    result = sc("start", name)
+    result = net_start(name)
     check(result.returncode != 0,
-          f"`sc start {name}` fails instead of reporting success")
+          f"`net start {name}` fails instead of reporting success")
+
+    # `sc query` reports the last status, so read it only once the service has
+    # reached STOPPED — a start still pending reports an exit code of 0.
+    check(wait_service_stopped(name), f"{name}: reaches STOPPED after a failed start")
 
     win32, specific = service_exit_codes(name)
     check(win32 == ERROR_SERVICE_SPECIFIC_ERROR,
@@ -382,17 +420,18 @@ def test_failed_start() -> None:
         CONFIG_BACKUP.replace(CONFIG_PATH)
 
     # An unbindable listen address must fail the same way as a bad config.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("0.0.0.0", WEB_VIEWER_PORT))
-        sock.listen(1)
+    reinstall_web_viewer(UNBINDABLE_ADDR)
+    try:
         check_failed_start(WEB_SERVICE)
 
         messages = event_log_messages(WEB_SERVICE)
-        check(any(str(WEB_VIEWER_PORT) in m for m in messages),
+        check(any(UNBINDABLE_ADDR in m for m in messages),
               f"'{WEB_SERVICE}' named the unbindable address in the Event Log")
 
         check(wait_service_settled(WEB_SERVICE),
-              f"'{WEB_SERVICE}' stays stopped while the port is held")
+              f"'{WEB_SERVICE}' stays stopped while its address is unbindable")
+    finally:
+        reinstall_web_viewer(f":{WEB_VIEWER_PORT}")
 
     # Leave both services as the upgrade test expects to find them.
     sc("start", SERVICE_NAME)
@@ -400,7 +439,7 @@ def test_failed_start() -> None:
     check(wait_service_running(SERVICE_NAME),
           f"'{SERVICE_NAME}' starts again once the config is back")
     check(wait_service_running(WEB_SERVICE),
-          f"'{WEB_SERVICE}' starts again once the port is free")
+          f"'{WEB_SERVICE}' starts again once its address is bindable")
 
 
 # ─── Test 5: Upgrade install (config not overwritten) ─────────────────────────

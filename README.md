@@ -191,9 +191,13 @@ after two attempts rather than looping, while one that crashes after running hea
 longer than the reset period is always retried.
 
 The service reports `SERVICE_RUNNING` only after the config has loaded, the sinks have opened and
-the UDP socket has bound, so `sc start minilog` fails when startup fails instead of reporting
-success and stopping a moment later. A failed run is reported to the SCM as a service-specific
-error with a non-zero exit code, visible in `sc query minilog`; the reason is in the Event Log.
+the UDP socket has bound. A run that fails is reported to the SCM as a service-specific error with
+a non-zero exit code, rather than as a clean stop.
+
+Note that `sc start minilog` returns as soon as the service reports `SERVICE_START_PENDING`, so
+its exit code does not say whether startup then succeeded. Use `net start minilog`, which waits
+for the outcome, or check `sc query minilog` afterwards — a failed start shows
+`WIN32_EXIT_CODE : 1066` with a non-zero `SERVICE_EXIT_CODE`. The reason is in the Event Log.
 
 ## Configuration
 
@@ -426,8 +430,8 @@ by `--uninstall`) and configures the same recovery actions as the server: two re
 apart, then stopped, with the failure counter resetting after 300 seconds. A service process has
 no console, so the Event Log is where startup failures — an unreadable `minilog.conf`, a listen
 address that cannot be bound — are recorded. The viewer reports `SERVICE_RUNNING` only once the
-listen address is bound, so `sc start minilog-web-viewer` fails when startup fails. Interactive
-runs continue to log to stderr.
+listen address is bound, and reports a failed run to the SCM as a service-specific error; the same
+`net start` / `sc query` caveat as the server applies. Interactive runs continue to log to stderr.
 
 **Browser UI features:**
 

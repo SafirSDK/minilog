@@ -5,10 +5,12 @@
 ### Fixed
 
 - **Windows services now report failure to the SCM.** Both the server and the web viewer used to
-  report every stop as a clean one, so `sc start` succeeded even when the config was invalid or
-  the port could not be bound, and the service then stopped silently. Each service now stays in
-  `SERVICE_START_PENDING` until startup has actually succeeded, and reports a service-specific
-  error with a non-zero exit code when it fails.
+  report every stop as a clean one with exit code 0, so a service that died on an invalid config
+  or an unbindable port was indistinguishable from one stopped on purpose — and no recovery action
+  could ever have fired. Each service now stays in `SERVICE_START_PENDING` until startup has
+  actually succeeded, and reports a service-specific error with a non-zero exit code when it
+  fails, visible in `sc query`. (`sc start` returns before startup resolves, so it still reports
+  success; `net start` waits for the outcome.)
 
 ### New
 
