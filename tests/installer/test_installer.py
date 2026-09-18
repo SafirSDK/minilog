@@ -879,7 +879,7 @@ def test_path_entry_lifecycle(installer: Path) -> None:
           "Uninstalling with the entry already absent leaves the PATH unchanged")
 
     check(read_system_path() == baseline,
-          "install → uninstall → install elsewhere → uninstall leaves no stale entry")
+          "install, uninstall, install elsewhere, uninstall leaves no stale entry")
     check(not ALT_APP_DIR.exists() or not (ALT_APP_DIR / "minilog.exe").exists(),
           f"Second installation removed from {ALT_APP_DIR}")
 
@@ -887,6 +887,13 @@ def test_path_entry_lifecycle(installer: Path) -> None:
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # The runner's console is cp1252, and a single non-ASCII character in a
+    # message would otherwise end the run with a UnicodeEncodeError partway
+    # through — losing every result after it for a reason that has nothing to do
+    # with the installer.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("installer", type=Path, help="Path to minilog-*-setup.exe")
     args = parser.parse_args()
