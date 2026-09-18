@@ -28,8 +28,10 @@
 #include <atomic>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -211,10 +213,25 @@ int main(int argc, char* argv[])
     {
         try
         {
+            // The SCM starts services with the working directory set to
+            // System32, so a relative config path would resolve there at boot.
+            // Absolutising against the current directory is right here and only
+            // here: --install is run interactively, where the CWD is the user's.
             // absolute() throws; inside the try it is reported like any other
             // install failure instead of escaping main.
-            const std::string exePath = std::filesystem::absolute(argv[0]).string();
-            minilog::installService(exePath, configPath);
+            const auto absConfig = std::filesystem::absolute(configPath).lexically_normal();
+
+            // A service registered against a config it cannot read fails at
+            // every boot and succeeds at install time — refusing to register is
+            // the more useful of the two.
+            const std::ifstream probe(absConfig);
+            if (!probe.good())
+            {
+                throw std::runtime_error("minilog: cannot read config file " + absConfig.string() +
+                                         " — service not installed");
+            }
+
+            minilog::installService(absConfig.string());
         }
         catch (const std::exception& e)
         {

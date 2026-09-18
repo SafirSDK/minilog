@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **`--install` no longer registers a service that cannot start.** The command line written into
+  the service entry was built from `argv[0]` prepended with the working directory — which is not
+  where the executable is when it was found through `PATH` — and from the config path exactly as
+  typed, so `minilog --install minilog.conf` stored a relative path that the SCM resolves against
+  `System32` at boot. Both were accepted by `CreateService`, so `--install` reported success and
+  the failure surfaced only at the next start. The image path now comes from the OS, the config
+  path is made absolute, and a config file that cannot be read is refused instead.
 - **An invalid `host` is now a config error, not a crash or a silent exit.** Neither `[server]
   host` nor `[forwarding] host` was validated, and both are passed to an address parser that does
   not resolve names. A hostname or typo in `[forwarding] host` aborted the process with `SIGABRT`;

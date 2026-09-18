@@ -3,12 +3,14 @@
 Test groups (run in sequence):
   1. Clean install   — files, directories, services registered + running,
                        recovery actions and Event Log sources configured
-  2. UDP smoke       — send a syslog datagram, verify it lands in the log
-  3. Recovery        — kill the service process; the SCM restarts it
-  4. Failed start    — an unusable config makes `sc start` fail, reports a
+  2. Registration    — --install records the real image path and an absolute
+                       config path, and refuses a config it cannot read
+  3. UDP smoke       — send a syslog datagram, verify it lands in the log
+  4. Recovery        — kill the service process; the SCM restarts it
+  5. Failed start    — an unusable config makes `sc start` fail, reports a
                        non-zero exit code, and leaves an Event Log trail
-  5. Upgrade install — service survives; user-modified config is not overwritten
-  6. Uninstall       — services and binaries removed; config file survives
+  6. Upgrade install — service survives; user-modified config is not overwritten
+  7. Uninstall       — services and binaries removed; config file survives
 
 Must be run as Administrator (the installer registers a Windows service).
 
@@ -123,6 +125,13 @@ def service_state(name: str = SERVICE_NAME) -> str:
     return m.group(1) if m else ""
 
 
+def service_binary_path(name: str = SERVICE_NAME) -> str:
+    """Return the command line the SCM will run for `name`, or '' if not found."""
+    result = sc("qc", name)
+    m = re.search(r"BINARY_PATH_NAME\s*:\s*(.*)", result.stdout)
+    return m.group(1).strip() if m else ""
+
+
 def service_start_type(name: str = SERVICE_NAME) -> str:
     """Return the start type string, e.g. 'AUTO_START', or '' if not found."""
     result = sc("qc", name)
@@ -157,6 +166,20 @@ def wait_service_settled(name: str = SERVICE_NAME, timeout: int = 45) -> bool:
     for _ in range(timeout):
         stable = stable + 1 if service_state(name) == "STOPPED" else 0
         if stable >= SETTLED_QUIET_SECONDS:
+            return True
+        time.sleep(1)
+    return False
+
+
+def wait_service_absent(name: str = SERVICE_NAME, timeout: int = 30) -> bool:
+    """Wait until `name` is gone from the SCM database.
+
+    DeleteService only *marks* a running service for deletion, and the
+    registration lingers until the last handle to it closes, so the removal is
+    not necessarily visible the instant --uninstall returns.
+    """
+    for _ in range(timeout):
+        if not service_exists(name):
             return True
         time.sleep(1)
     return False
@@ -323,10 +346,80 @@ def test_clean_install(installer: Path) -> None:
         check(ok, "Web viewer /sinks endpoint returns a JSON array")
 
 
-# ─── Test 2: UDP smoke test ───────────────────────────────────────────────────
+# ─── Test 2: --install records paths the SCM can actually use ─────────────────
+
+def install_server(*args: str, cwd: Path | None = None,
+                   exe: str | None = None) -> subprocess.CompletedProcess:
+    """Run `minilog --install`, optionally by bare name through PATH.
+
+    Passing exe="minilog" leaves argv[0] as the unqualified name, which is how
+    the executable is invoked once its directory is on PATH — the case that used
+    to register a BINARY_PATH_NAME pointing at a file that does not exist.
+    """
+    # CreateProcess resolves an unqualified name against the PATH of the calling
+    # process, not against any environment block handed to the child, so this
+    # has to go into our own environment.
+    if str(APP_DIR).lower() not in os.environ["PATH"].lower():
+        os.environ["PATH"] = f"{APP_DIR};{os.environ['PATH']}"
+    return subprocess.run(
+        [exe or str(EXE_PATH), "--install", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(cwd) if cwd else None,
+    )
+
+
+def remove_server_service() -> None:
+    """Deregister the syslog service and wait until the SCM agrees it is gone."""
+    stop_service(SERVICE_NAME)
+    subprocess.run([str(EXE_PATH), "--uninstall"], capture_output=True, text=True, check=False)
+    wait_service_absent(SERVICE_NAME)
+
+
+def test_install_paths() -> None:
+    print("\n=== Test 2: --install records usable paths ===")
+
+    expected = f'"{EXE_PATH}" "{CONFIG_PATH}"'
+    check(service_binary_path() == expected,
+          f"Installer registered {expected} (got {service_binary_path()})")
+
+    # Re-register the way an administrator would once {app} is on PATH: bare
+    # executable name, relative config path, working directory somewhere else.
+    remove_server_service()
+    result = install_server("minilog.conf", cwd=DATA_DIR, exe="minilog")
+    check(result.returncode == 0,
+          f"`minilog --install minilog.conf` via PATH succeeds (stderr: {result.stderr.strip()})")
+    check(service_binary_path() == expected,
+          "Service registered with the real image path and an absolute config path "
+          f"(got {service_binary_path()})")
+    check(service_start_type() == "AUTO_START", "Re-registered service is AUTO_START")
+
+    # The point of recording those paths correctly: the service can start from
+    # them, with the System32 working directory the SCM gives it.
+    check(net_start(SERVICE_NAME).returncode == 0,
+          "Service started from the registered paths")
+    check(wait_service_running(), "Service is Running again after re-registration")
+
+    # A config that cannot be read would produce a service that fails at every
+    # boot, so --install must refuse it and leave nothing behind.
+    remove_server_service()
+    result = install_server(str(DATA_DIR / "no-such-file.conf"))
+    check(result.returncode != 0, "--install rejects a config file it cannot read")
+    check("no-such-file.conf" in result.stderr,
+          f"--install names the unreadable config (stderr: {result.stderr.strip()})")
+    check(not service_exists(), "Nothing is registered after a rejected --install")
+
+    # Leave the service as the installer left it, for the tests that follow.
+    check(install_server(str(CONFIG_PATH)).returncode == 0, "Service re-registered")
+    sc("start", SERVICE_NAME)
+    check(wait_service_running(), "Service running again after the registration tests")
+
+
+# ─── Test 3: UDP smoke test ───────────────────────────────────────────────────
 
 def test_udp_smoke() -> None:
-    print("\n=== Test 2: UDP smoke test ===")
+    print("\n=== Test 3: UDP smoke test ===")
 
     marker = f"installer-test-{random.randint(100000, 999999)}"
     msg = f"<13>Mar 15 10:00:00 testhost minilog-ci: {marker}"
@@ -342,10 +435,10 @@ def test_udp_smoke() -> None:
         check(marker in content, "Sent message appears in syslog.log")
 
 
-# ─── Test 3: SCM recovery after a crash ───────────────────────────────────────
+# ─── Test 4: SCM recovery after a crash ───────────────────────────────────────
 
 def test_recovery_restart() -> None:
-    print("\n=== Test 3: SCM restarts the service after a crash ===")
+    print("\n=== Test 4: SCM restarts the service after a crash ===")
 
     if not wait_service_running():
         check(False, "Service running before the crash test")
@@ -372,7 +465,7 @@ def test_recovery_restart() -> None:
     check(restarted, "SCM restarted the service after the process was killed")
 
 
-# ─── Test 4: Startup failure is reported, not hidden ──────────────────────────
+# ─── Test 5: Startup failure is reported, not hidden ──────────────────────────
 
 def check_failed_start(name: str) -> None:
     """Start `name`, expecting it to fail and to say so to the SCM."""
@@ -392,7 +485,7 @@ def check_failed_start(name: str) -> None:
 
 
 def test_failed_start() -> None:
-    print("\n=== Test 4: Startup failure is reported, not hidden ===")
+    print("\n=== Test 5: Startup failure is reported, not hidden ===")
 
     check(stop_service(SERVICE_NAME), f"'{SERVICE_NAME}' stopped before the test")
     check(stop_service(WEB_SERVICE), f"'{WEB_SERVICE}' stopped before the test")
@@ -442,10 +535,10 @@ def test_failed_start() -> None:
           f"'{WEB_SERVICE}' starts again once its address is bindable")
 
 
-# ─── Test 5: Upgrade install (config not overwritten) ─────────────────────────
+# ─── Test 6: Upgrade install (config not overwritten) ─────────────────────────
 
 def test_upgrade(installer: Path) -> None:
-    print("\n=== Test 5: Upgrade install ===")
+    print("\n=== Test 6: Upgrade install ===")
 
     sentinel = f"; MODIFIED-BY-INSTALLER-TEST-{random.randint(100000, 999999)}"
     with CONFIG_PATH.open("a", encoding="utf-8") as f:
@@ -459,10 +552,10 @@ def test_upgrade(installer: Path) -> None:
     check(sentinel in content, "Config not overwritten on upgrade")
 
 
-# ─── Test 6: Uninstall ────────────────────────────────────────────────────────
+# ─── Test 7: Uninstall ────────────────────────────────────────────────────────
 
 def test_uninstall() -> None:
-    print("\n=== Test 6: Uninstall ===")
+    print("\n=== Test 7: Uninstall ===")
 
     run_uninstaller()
 
@@ -490,6 +583,7 @@ def main() -> None:
         sys.exit(f"Installer not found: {args.installer}")
 
     test_clean_install(args.installer)
+    test_install_paths()
     test_udp_smoke()
     test_recovery_restart()
     test_failed_start()

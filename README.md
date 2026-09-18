@@ -182,7 +182,13 @@ minilog --install <config-path>    # register and start as a Windows service
 minilog --uninstall                # stop and remove the Windows service
 ```
 
-The config path is stored in the service registry entry so the same path is used when the service starts automatically on boot.
+The config path is stored in the service registry entry so the same path is used when the service
+starts automatically on boot. It is made absolute first: the SCM starts services with the working
+directory set to `C:\Windows\System32`, so a relative path given to `--install` would resolve
+somewhere else entirely at boot. The registration records the executable's own location as the
+OS reports it, so it is correct whether minilog was invoked by full path or found through `PATH`.
+A config file that cannot be read is refused at install time, rather than registering a service
+that fails at every boot.
 
 `--install` also configures the service's recovery actions: the SCM restarts it 5 seconds after
 a failure, twice, and then leaves it stopped; the failure counter resets after 300 seconds with

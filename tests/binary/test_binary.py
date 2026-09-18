@@ -149,6 +149,26 @@ class TestCLI(unittest.TestCase):
         r = subprocess.run([BINARY, "a", "b", "c"], timeout=5)
         self.assertNotEqual(r.returncode, 0)
 
+    @unittest.skipUnless(sys.platform == "win32", "--install is a Windows-only option")
+    def test_install_with_unreadable_config_registers_nothing(self):
+        """Registering a service against a config it cannot read only moves the
+        failure to the next boot, where it is far harder to see.
+
+        The check runs before the SCM is opened, so this case needs no
+        privileges -- unlike the rest of --install, which is covered by
+        tests/installer/test_installer.py.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "no-such-file.conf"
+            r = subprocess.run(
+                [BINARY, "--install", str(missing)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("no-such-file.conf", r.stderr)
+
 
 # ── Basic smoke test ──────────────────────────────────────────────────────────
 

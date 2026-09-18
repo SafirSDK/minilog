@@ -44,7 +44,7 @@ std::optional<int> tryRunAsService(const std::function<int()>& /*serviceMain*/)
     return std::nullopt;
 }
 
-void installService(const std::string& /*exePath*/, const std::string& /*configPath*/) {}
+void installService(const std::string& /*configPath*/) {}
 
 void uninstallService() {}
 

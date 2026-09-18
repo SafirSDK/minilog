@@ -60,12 +60,19 @@ std::optional<int> tryRunAsService(const std::function<int()>& serviceMain);
 
 // Install minilog as a Windows NT auto-start service, with recovery actions
 // that restart it twice before giving up.
-// exePath    - full path to the minilog executable
-// configPath - full path to the config file (passed as a CLI arg to the service)
+// configPath - absolute path to the config file, passed as a CLI arg to the
+//              service. Absolute because the SCM starts services with the
+//              working directory set to System32, where a relative path would
+//              resolve to something else entirely.
+//
+// The path to the executable is not passed in: it is read from the OS with
+// GetModuleFileName, which is correct however the process was invoked. Deriving
+// it from argv[0] is not — argv[0] is whatever the caller typed, and is just
+// "minilog" when the executable is found through PATH.
 //
 // Throws std::runtime_error on failure.
 // Linux: no-op.
-void installService(const std::string& exePath, const std::string& configPath);
+void installService(const std::string& configPath);
 
 // Stop and delete the minilog Windows NT service.
 // Throws std::runtime_error on failure.

@@ -22,6 +22,7 @@
 
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
@@ -206,8 +207,40 @@ std::optional<int> tryRunAsService(const std::function<int()>& serviceMain)
     return g_serviceExitCode; // SCM invoked us as a service; serviceMain has already run.
 }
 
-void installService(const std::string& exePath, const std::string& configPath)
+namespace
 {
+
+// The path of the running image, as the OS knows it. GetModuleFileName is the
+// only correct answer: std::filesystem::absolute(argv[0]) merely prepends the
+// working directory to whatever the caller typed, so an invocation through PATH
+// yields "<CWD>\minilog" — a file that does not exist.
+std::string currentExecutablePath()
+{
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;)
+    {
+        const DWORD written =
+            GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (written == 0)
+        {
+            throw std::runtime_error("GetModuleFileName failed: " + std::to_string(GetLastError()));
+        }
+        // written == size means the name was truncated to fit; grow and retry.
+        if (written < buffer.size())
+        {
+            buffer.resize(written);
+            return std::filesystem::path(buffer).string();
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+}
+
+} // namespace
+
+void installService(const std::string& configPath)
+{
+    const std::string exePath = currentExecutablePath();
+
     const SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
     if (!scm)
     {
