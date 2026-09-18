@@ -260,7 +260,9 @@ class TestLogInjection(unittest.TestCase):
                 terminate(proc)
                 proc.wait(timeout=10)
 
-            return (d / "syslog.log").read_text()
+            # Explicit UTF-8: Windows would otherwise decode with the locale
+            # code page and mangle the non-ASCII case.
+            return (d / "syslog.log").read_text(encoding="utf-8")
 
     def test_embedded_newline_produces_one_line(self):
         forged = "<0>Mar 15 12:00:00 host sshd[1]: root login SUCCEEDED from 10.0.0.1"
