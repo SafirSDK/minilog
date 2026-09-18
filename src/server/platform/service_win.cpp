@@ -291,6 +291,36 @@ SERVICE_STATUS_PROCESS queryServiceStatus(SC_HANDLE svc)
     return status;
 }
 
+// Ask the SCM to stop the service.
+//
+// Returns false while the service is not yet in a state where it can accept the
+// control — a service that is still starting answers every stop with
+// ERROR_SERVICE_CANNOT_ACCEPT_CTRL until it reports RUNNING. That is a real
+// case here rather than a theoretical one: the recovery actions configured by
+// installService restart the service five seconds after a failure, so an
+// upgrade that runs --stop inside that window meets a starting service.
+//
+// Throws on anything else; a service that is already stopped is success.
+bool requestStop(SC_HANDLE svc)
+{
+    SERVICE_STATUS status{};
+    if (ControlService(svc, SERVICE_CONTROL_STOP, &status))
+    {
+        return true;
+    }
+
+    const DWORD err = GetLastError();
+    if (err == ERROR_SERVICE_NOT_ACTIVE)
+    {
+        return true;
+    }
+    if (err == ERROR_SERVICE_CANNOT_ACCEPT_CTRL)
+    {
+        return false;
+    }
+    throw std::runtime_error("failed to stop the minilog service: " + std::to_string(err));
+}
+
 // Ask the service to stop, and do not return until its process has exited.
 //
 // Two waits, because the SCM state and the process are not the same thing. A
@@ -316,15 +346,27 @@ void stopAndWait(SC_HANDLE svc, std::chrono::seconds timeout)
     // means nothing, and may already have been reused by something else.
     const ScopedHandle process(
         initial.dwProcessId != 0 ? OpenProcess(SYNCHRONIZE, FALSE, initial.dwProcessId) : nullptr);
+    const DWORD openError = (initial.dwProcessId != 0 && !process) ? GetLastError() : 0;
+    if (!process)
+    {
+        // Said out loud, because it downgrades what this function promises: the
+        // caller is about to overwrite or delete a file on the strength of the
+        // process being gone, and without a handle only the SCM's word is left.
+        osLogInfo("minilog: waiting on the service state alone, not on process exit (" +
+                  (openError != 0 ? "OpenProcess failed: " + std::to_string(openError)
+                                  : std::string("the SCM reported no process id")) +
+                  ")");
+    }
 
     if (initial.dwCurrentState != SERVICE_STOP_PENDING)
     {
-        SERVICE_STATUS status{};
-        if (!ControlService(svc, SERVICE_CONTROL_STOP, &status) &&
-            GetLastError() != ERROR_SERVICE_NOT_ACTIVE)
+        if (!waitUntil([svc] { return requestStop(svc); },
+                       deadline - std::chrono::steady_clock::now(),
+                       STOP_POLL_INTERVAL))
         {
-            throw std::runtime_error("failed to stop the minilog service: " +
-                                     std::to_string(GetLastError()));
+            throw std::runtime_error("the minilog service was still starting and would not "
+                                     "accept a stop within " +
+                                     std::to_string(timeout.count()) + " s");
         }
     }
 
@@ -340,8 +382,7 @@ void stopAndWait(SC_HANDLE svc, std::chrono::seconds timeout)
 
     if (!process)
     {
-        // Nothing to wait on: the service was between processes, or the handle
-        // could not be opened. The SCM saying stopped is all there is to go on.
+        // Nothing to wait on; the caveat was reported above.
         return;
     }
 

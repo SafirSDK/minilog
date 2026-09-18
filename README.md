@@ -179,7 +179,7 @@ minilog --help
 On Windows only:
 
 ```
-minilog --install <config-path>    # register and start as a Windows service
+minilog --install <config-path>    # register as a Windows service (does not start it)
 minilog --stop                     # stop the service, wait for the process to exit
 minilog --uninstall                # stop and remove the Windows service
 ```

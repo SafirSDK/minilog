@@ -14,9 +14,11 @@ Test groups (run in sequence):
   7. Re-register    — --install over an existing service updates it and leaves
                        the administrator's start type and account alone
   8. Upgrade install — service survives; user-modified config is not overwritten
-  9. Uninstall       — services and binaries removed; config file survives;
+  9. Reduced upgrade — dropping the web viewer component deregisters its
+                       service rather than orphaning it
+ 10. Uninstall       — services and binaries removed; config file survives;
                        the system PATH entry goes with them
- 10. PATH lifecycle   — installing elsewhere and uninstalling again leaves no
+ 11. PATH lifecycle   — installing elsewhere and uninstalling again leaves no
                        stale PATH entry, wherever ours sits in the list
 
 Must be run as Administrator (the installer registers a Windows service).
@@ -101,10 +103,13 @@ def check(condition: bool, message: str) -> None:
         failed += 1
 
 
-def run_installer(path: Path, app_dir: Path | None = None) -> None:
+def run_installer(path: Path, app_dir: Path | None = None,
+                  components: str | None = None) -> None:
     args = [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES"]
     if app_dir is not None:
         args.append(f"/DIR={app_dir}")
+    if components is not None:
+        args.append(f"/COMPONENTS={components}")
     result = subprocess.run(args, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"Installer exited with code {result.returncode}")
@@ -812,10 +817,33 @@ def test_upgrade(installer: Path) -> None:
     check(sentinel in content, "Config not overwritten on upgrade")
 
 
-# ─── Test 9: Uninstall ────────────────────────────────────────────────────────
+# ─── Test 9: an upgrade that drops the web viewer component ───────────────────
+
+def test_upgrade_without_web_viewer(installer: Path) -> None:
+    print("\n=== Test 9: Upgrade with the web viewer component dropped ===")
+
+    # The service registration has to go with the component. Inno does not
+    # delete the files of a component dropped on an upgrade, and [Run] does not
+    # re-register it, so a registration left behind would point at an executable
+    # nothing manages any more — and come back at the next reboot holding the
+    # viewer's port.
+    run_installer(installer, components="main")
+
+    check(not service_exists(WEB_SERVICE),
+          f"'{WEB_SERVICE}' deregistered when its component is dropped")
+    check(wait_service_running(SERVICE_NAME),
+          f"'{SERVICE_NAME}' still running after the reduced upgrade")
+
+    # Put the full installation back for the tests that follow.
+    run_installer(installer)
+    check(service_exists(WEB_SERVICE), f"'{WEB_SERVICE}' registered again by a full install")
+    check(wait_service_running(WEB_SERVICE), f"'{WEB_SERVICE}' running again")
+
+
+# ─── Test 10: Uninstall ───────────────────────────────────────────────────────
 
 def test_uninstall() -> None:
-    print("\n=== Test 9: Uninstall ===")
+    print("\n=== Test 10: Uninstall ===")
 
     # Append a sentinel so our entry is in the middle of the list rather than at
     # the end, and so damage to a neighbour shows up as an exact-value mismatch.
@@ -846,10 +874,10 @@ def test_uninstall() -> None:
 
 
 
-# ─── Test 10: the PATH entry does not outlive the product ─────────────────────
+# ─── Test 11: the PATH entry does not outlive the product ─────────────────────
 
 def test_path_entry_lifecycle(installer: Path) -> None:
-    print("\n=== Test 10: System PATH entry lifecycle ===")
+    print("\n=== Test 11: System PATH entry lifecycle ===")
 
     alt_tools = ALT_APP_DIR / "tools"
     baseline = read_system_path()
@@ -909,6 +937,7 @@ def main() -> None:
     test_stop_waits()
     test_reregister()
     test_upgrade(args.installer)
+    test_upgrade_without_web_viewer(args.installer)
     test_uninstall()
     test_path_entry_lifecycle(args.installer)
 

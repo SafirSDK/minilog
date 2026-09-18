@@ -183,7 +183,7 @@ procedure RemovePath(Param: string);
 var
   OrigPath, NewPath, Remaining, Segment, Wanted: string;
   P: Integer;
-  Found, More, Kept: Boolean;
+  Found, More, Kept, KeptUsable: Boolean;
 begin
   if not RegQueryStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', OrigPath) then
     exit;
@@ -193,6 +193,7 @@ begin
   NewPath := '';
   Found := False;
   Kept := False;
+  KeptUsable := False;
 
   repeat
     P := Pos(';', Remaining);
@@ -218,6 +219,8 @@ begin
         NewPath := NewPath + ';';
       NewPath := NewPath + Segment;
       Kept := True;
+      if Trim(Segment) <> '' then
+        KeptUsable := True;
     end;
   until not More;
 
@@ -225,11 +228,34 @@ begin
   if not Found then
     exit;
 
-  // Never write an empty PATH, whatever is left.
-  if NewPath = '' then
+  // Never write a PATH with nothing usable left in it — an entry left behind is
+  // a great deal less harmful than a machine whose PATH has been emptied.  Only
+  // reachable if minilog's own entry were the only real one there, which on a
+  // working Windows installation it cannot be.
+  if not KeptUsable then
     exit;
 
   RegWriteExpandStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', NewPath);
+end;
+
+// Stop a service, and fail the installation if it will not stop.
+//
+// Exec returning False means the executable is not there at all — the normal
+// fresh install, where there is nothing to stop.  A non-zero exit code is a
+// different matter: --stop waits for the process to exit and reports a timeout
+// rather than pretending, so a failure here means the image is still in use and
+// the file copy about to follow would fail on a locked file, halfway through.
+// Better to say which service, and why, before anything has been touched.
+procedure StopServiceOrFail(const ExeName, Description: string);
+var
+  ResultCode: Integer;
+begin
+  if Exec(ExpandConstant('{app}\' + ExeName), '--stop', '',
+          SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    if ResultCode <> 0 then
+      RaiseException(Description + ' could not be stopped (exit code ' +
+        IntToStr(ResultCode) + ').' + #13#10 +
+        'Stop it manually, then run this installer again.');
 end;
 
 // On upgrade installs, stop the running services before new binaries are copied
@@ -251,11 +277,19 @@ var
 begin
   if CurStep = ssInstall then
   begin
-    // Ignore errors — on a fresh install the exes don't exist yet.
-    Exec(ExpandConstant('{app}\minilog-web-viewer.exe'), '--stop', '',
-         SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(ExpandConstant('{app}\minilog.exe'), '--stop', '',
-         SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if WizardIsComponentSelected('webviewer') then
+      StopServiceOrFail('minilog-web-viewer.exe', 'The minilog Web Viewer service')
+    else
+      // Deselected on an upgrade: [Run] will not re-register it, and Inno does
+      // not delete the files of a component that has been dropped, so merely
+      // stopping it would leave an auto-start service pointing at an executable
+      // nothing manages any more — back at the next reboot, holding the
+      // viewer's port.  Deregister it instead.  Errors are ignored: on a fresh
+      // install there is nothing there to deregister.
+      Exec(ExpandConstant('{app}\minilog-web-viewer.exe'), '--uninstall', '',
+           SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+    StopServiceOrFail('minilog.exe', 'The minilog service');
   end;
 end;
 

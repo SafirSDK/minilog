@@ -256,6 +256,11 @@ func installService(exePath, configPath, addr string) error {
 // caller that knows the stop failed than one that goes on to overwrite a file
 // still in use.
 func stopAndWait(s *mgr.Service, timeout time.Duration) error {
+	// One deadline for the whole operation — asking the service to stop, waiting
+	// for the SCM and waiting for the process share the caller's budget rather
+	// than each getting the full timeout.
+	deadline := time.Now().Add(timeout)
+
 	status, err := s.Query()
 	if err != nil {
 		return fmt.Errorf("cannot query service %q: %w", serviceName, err)
@@ -267,32 +272,61 @@ func stopAndWait(s *mgr.Service, timeout time.Duration) error {
 	// Opened before the stop is requested: once the process has exited its id
 	// means nothing, and may already have been reused by something else.  A
 	// handle that cannot be opened is not fatal — the SCM state is then all
-	// there is to go on.
+	// there is to go on — but it downgrades what this function promises, so it
+	// is said out loud rather than passed over: the caller is about to
+	// overwrite or delete a file on the strength of the process being gone.
 	var process windows.Handle
+	openIssue := "the SCM reported no process id"
 	if status.ProcessId != 0 {
-		if h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, status.ProcessId); err == nil {
+		h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, status.ProcessId)
+		if err == nil {
 			process = h
 			defer func() { _ = windows.CloseHandle(process) }()
+		} else {
+			openIssue = fmt.Sprintf("OpenProcess failed: %v", err)
 		}
+	}
+	if process == 0 {
+		osLogInfo(fmt.Sprintf("waiting on the state of %q alone, not on process exit (%s)",
+			serviceName, openIssue))
 	}
 
 	if status.State != svc.StopPending {
-		if _, err := s.Control(svc.Stop); err != nil &&
-			!errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
-			return fmt.Errorf("cannot stop service %q: %w", serviceName, err)
+		// A service that is still starting answers every stop with
+		// ERROR_SERVICE_CANNOT_ACCEPT_CTRL until it reports Running, so the
+		// request is retried rather than given up on.  That is a real case here:
+		// the recovery actions configured by installService restart the service
+		// five seconds after a failure, so an upgrade that runs --stop inside
+		// that window meets a starting service.
+		err = pollUntil(func() (bool, error) {
+			_, err := s.Control(svc.Stop)
+			switch {
+			case err == nil, errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE):
+				return true, nil
+			case errors.Is(err, windows.ERROR_SERVICE_CANNOT_ACCEPT_CTRL):
+				return false, nil
+			default:
+				return false, fmt.Errorf("cannot stop service %q: %w", serviceName, err)
+			}
+		}, time.Until(deadline), stopPollInterval)
+		if err != nil {
+			if errors.Is(err, errTimedOut) {
+				return fmt.Errorf("service %q was still starting and would not accept a stop "+
+					"within %s", serviceName, timeout)
+			}
+			return err
 		}
 	}
 
 	// Control is asynchronous: it returns with the service still in
 	// svc.StopPending.
-	deadline := time.Now().Add(timeout)
 	err = pollUntil(func() (bool, error) {
 		st, err := s.Query()
 		if err != nil {
 			return false, fmt.Errorf("cannot query service %q: %w", serviceName, err)
 		}
 		return st.State == svc.Stopped, nil
-	}, timeout, stopPollInterval)
+	}, time.Until(deadline), stopPollInterval)
 	if err != nil {
 		if errors.Is(err, errTimedOut) {
 			return fmt.Errorf("service %q did not stop within %s", serviceName, timeout)
