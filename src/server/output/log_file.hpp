@@ -40,6 +40,14 @@ public:
     explicit LogFile(boost::asio::io_context& ioc, OutputConfig cfg);
     ~LogFile();
 
+    // Open the output files now, reporting failure instead of discovering it on
+    // the first message. Returns false if the sink could not be opened.
+    //
+    // Startup only: this touches strand-owned state directly, which is safe just
+    // while the calling thread is the only one running and nothing has been
+    // posted to the strand yet.
+    bool openAtStartup();
+
     // Dispatch a write to this sink's strand (non-blocking for caller).
     void write(const SyslogMessage& msg);
 

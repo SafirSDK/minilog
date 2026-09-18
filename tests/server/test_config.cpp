@@ -504,6 +504,21 @@ BOOST_AUTO_TEST_CASE(address_with_port_throws)
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
+BOOST_AUTO_TEST_CASE(bracketed_ipv6_with_port_throws)
+{
+    // The Windows parser accepts this form too and discards the port, and the
+    // is_v4() colon check cannot see it — an IPv6 literal parses as v6.
+    TempFile tmp("[server]\nhost=[::1]:514\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(bracketed_ipv6_without_port_throws)
+{
+    // Brackets are never valid input to make_address on any platform.
+    TempFile tmp("[server]\nhost=[::1]\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(forwarding_section)

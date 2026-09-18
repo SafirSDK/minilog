@@ -25,6 +25,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/program_options.hpp>
 
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -54,6 +55,15 @@ int runServer(const std::string& configPath)
     boost::asio::io_context ioc(cfg.workers);
 
     minilog::OutputManager outputMgr(ioc, cfg);
+
+    // Open the sinks before reporting the service running, so an unwritable log
+    // path fails the start instead of surfacing on the first message — by which
+    // point the SCM has long since been told the service is healthy.
+    if (!outputMgr.open())
+    {
+        // Each failure was already reported by name inside failSink().
+        return EXIT_FAILURE;
+    }
 
     // The only constructor on this path that can throw: it resolves the
     // forwarding endpoint. loadConfig already rejects an unparseable host, so
@@ -107,20 +117,32 @@ int runServer(const std::string& configPath)
     // Every thread goes through runIoContext: an exception escaping a std::thread's
     // entry function cannot be caught anywhere else, so each thread has to catch
     // its own or the process dies with it.
+    std::atomic<bool> handlerThrew{false};
+    const auto runWorker = [&ioc, &handlerThrew]()
+    {
+        if (!minilog::runIoContext(ioc))
+        {
+            handlerThrew = true;
+        }
+    };
+
     std::vector<std::thread> threads;
     threads.reserve(static_cast<std::size_t>(cfg.workers - 1));
     for (int i = 0; i < cfg.workers - 1; ++i)
     {
-        threads.emplace_back([&ioc]() { minilog::runIoContext(ioc); });
+        threads.emplace_back(runWorker);
     }
-    minilog::runIoContext(ioc);
+    runWorker();
 
     for (auto& t : threads)
     {
         t.join();
     }
 
-    return EXIT_SUCCESS;
+    // A caught handler exception is not a clean shutdown: reporting it as one
+    // would leave a service that has stopped ingesting looking like a service
+    // that was asked to stop.
+    return handlerThrew ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 } // namespace

@@ -36,22 +36,32 @@ namespace minilog
 // run() is re-entered afterwards. The handler that threw is gone, but the
 // remaining work is not, and abandoning it would stop ingestion entirely — the
 // outcome this exists to prevent.
-inline void runIoContext(boost::asio::io_context& ioc)
+//
+// Returns false if any exception was caught. Surviving is not the same as being
+// healthy: a throw from UdpServer::onReceive before it re-arms leaves no
+// outstanding async work, so the re-entered run() returns at once and the server
+// stops receiving. Reported as a failed run, that becomes a non-zero exit code
+// and the SCM's recovery actions restart the service; reported as a clean stop,
+// it would be a silent end to ingestion.
+inline bool runIoContext(boost::asio::io_context& ioc)
 {
+    bool caught = false;
     for (;;)
     {
         try
         {
             ioc.run();
-            return;
+            return !caught;
         }
         catch (const std::exception& e)
         {
+            caught = true;
             osLogError(std::string("minilog: unhandled exception in io_context handler: ") +
                        e.what());
         }
         catch (...)
         {
+            caught = true;
             osLogError("minilog: unhandled non-standard exception in io_context handler");
         }
     }

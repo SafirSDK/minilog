@@ -33,6 +33,11 @@ class OutputManager
 public:
     OutputManager(boost::asio::io_context& ioc, const Config& cfg);
 
+    // Open every sink's files, so an unusable path is a startup failure rather
+    // than a sink that dies on the first message. Returns false if any sink
+    // failed; every failure is reported, not just the first. Startup only.
+    bool open();
+
     // Dispatch message to all matching sinks (non-blocking for caller).
     void dispatch(const SyslogMessage& msg);
 

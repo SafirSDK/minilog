@@ -388,11 +388,28 @@ BOOST_AUTO_TEST_CASE(throwing_handler_does_not_escape_run)
 
     // Without the catch-and-resume in runIoContext this propagates out and, on a
     // std::thread, terminates the process.
-    BOOST_CHECK_NO_THROW(runIoContext(ioc));
+    bool clean = true;
+    BOOST_CHECK_NO_THROW(clean = runIoContext(ioc));
+
+    // Surviving is not the same as being healthy. A throw from the receive path
+    // before it re-arms leaves nothing queued, so the server stops ingesting
+    // while looking fine; runServer has to turn that into a non-zero exit code
+    // rather than a clean stop the SCM will not act on.
+    BOOST_CHECK(!clean);
 
     // Work queued behind the throwing handler still runs: run() is re-entered
     // rather than abandoned, so ingestion continues.
     BOOST_CHECK(ranAfterThrow);
+}
+
+BOOST_AUTO_TEST_CASE(clean_run_reports_success)
+{
+    boost::asio::io_context ioc;
+    bool ran = false;
+    boost::asio::post(ioc, [&ran]() { ran = true; });
+
+    BOOST_CHECK(runIoContext(ioc));
+    BOOST_CHECK(ran);
 }
 
 BOOST_AUTO_TEST_CASE(non_standard_exception_does_not_escape_run)
@@ -403,7 +420,9 @@ BOOST_AUTO_TEST_CASE(non_standard_exception_does_not_escape_run)
     boost::asio::post(ioc, []() { throw 42; });
     boost::asio::post(ioc, [&ranAfterThrow]() { ranAfterThrow = true; });
 
-    BOOST_CHECK_NO_THROW(runIoContext(ioc));
+    bool clean = true;
+    BOOST_CHECK_NO_THROW(clean = runIoContext(ioc));
+    BOOST_CHECK(!clean);
     BOOST_CHECK(ranAfterThrow);
 }
 

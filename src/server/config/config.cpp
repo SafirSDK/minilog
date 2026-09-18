@@ -52,21 +52,28 @@ const std::unordered_map<std::string, int> kFacilityNames = {
 // here turns it into an ordinary config error that runServer reports via
 // osLogError, which is what puts it in the Windows Event Log.
 //
-// Names are not resolved: make_address takes literals only. IPv4 and IPv6
-// literals are both accepted, matching what the server already does with them.
+// Names are not resolved: make_address takes literals only. Both IPv4 and IPv6
+// literals are accepted, since #24 settled that an IPv6 [server] host keeps
+// working rather than being rejected. Note that an IPv6 [forwarding] host parses
+// here but cannot actually be sent to — the Forwarder opens a v4 socket — which
+// is tracked separately in #18; validation is not the place to paper over it.
 void requireAddress(const std::string& label, const std::string& value)
 {
     boost::system::error_code ec;
     const auto address = boost::asio::ip::make_address(value, ec);
 
-    // Asio parses addresses through WSAStringToAddress on Windows, which accepts
-    // a trailing ":port" and quietly discards it — so "10.0.0.5:514" would bind
-    // or forward to whatever the port key says, ignoring what the user wrote.
-    // An IPv4 literal never contains a colon, and an IPv6 literal parses as v6,
-    // so this rejects it the same way on every platform.
+    // Asio parses through WSAStringToAddressW on Windows — for both families —
+    // which accepts a port suffix and quietly discards it. Both "10.0.0.5:514"
+    // and the bracketed "[::1]:514" would therefore bind or forward to whatever
+    // the port key says while ignoring what the user wrote, and only on Windows.
+    // Screen both forms out textually so the answer is the same everywhere:
+    // brackets are never valid input to make_address, and an IPv4 literal never
+    // contains a colon.
+    const bool bracketed =
+        value.find('[') != std::string::npos || value.find(']') != std::string::npos;
     const bool strayPort = !ec && address.is_v4() && value.find(':') != std::string::npos;
 
-    if (ec || strayPort)
+    if (ec || bracketed || strayPort)
     {
         throw std::runtime_error("Invalid " + label + ": '" + value +
                                  "' is not an IP address (names are not resolved)");

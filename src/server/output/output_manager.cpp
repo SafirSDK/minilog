@@ -29,6 +29,21 @@ OutputManager::OutputManager(boost::asio::io_context& ioc, const Config& cfg)
     }
 }
 
+bool OutputManager::open()
+{
+    bool allOpened = true;
+    for (auto& sink : m_sinks)
+    {
+        // Deliberately not short-circuiting: one run should report every bad
+        // path, not send the operator round the loop one sink at a time.
+        if (!sink.file->openAtStartup())
+        {
+            allOpened = false;
+        }
+    }
+    return allOpened;
+}
+
 void OutputManager::dispatch(const SyslogMessage& msg)
 {
     for (auto& sink : m_sinks)

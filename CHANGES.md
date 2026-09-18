@@ -20,7 +20,9 @@
   storage was healthy. All filesystem calls on that path now use the `error_code` overloads, a
   failure takes only the affected sink out of service, and handlers plus each `run()` thread have
   a catch-all so that no exception can terminate the process. A sink closed this way stays closed;
-  restart minilog once the storage problem is fixed.
+  restart minilog once the storage problem is fixed. A caught handler exception is reported as a
+  failed run rather than a clean stop — surviving is not the same as being healthy, and on Windows
+  it is what lets the service's recovery actions fire.
 - **Windows services now report failure to the SCM.** Both the server and the web viewer used to
   report every stop as a clean one with exit code 0, so a service that died on an invalid config
   or an unbindable port was indistinguishable from one stopped on purpose — and no recovery action
@@ -28,6 +30,14 @@
   actually succeeded, and reports a service-specific error with a non-zero exit code when it
   fails, visible in `sc query`. (`sc start` returns before startup resolves, so it still reports
   success; `net start` waits for the outcome.)
+
+### Changed
+
+- **Output files are opened at startup, not on the first message.** An unwritable or missing log
+  directory is now a startup failure naming the path. Previously minilog started, reported itself
+  running — to the SCM as well — and the sink then died on the first message, with no non-zero
+  exit code and no recovery action. The side effect is that log files now appear as soon as
+  minilog starts, rather than when the first message arrives.
 
 ### New
 

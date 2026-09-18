@@ -197,6 +197,12 @@ LogFile::~LogFile()
     // strand.
 }
 
+bool LogFile::openAtStartup()
+{
+    openFiles();
+    return !m_closed;
+}
+
 void LogFile::write(const SyslogMessage& msg)
 {
     boost::asio::post(m_strand,

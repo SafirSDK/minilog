@@ -408,6 +408,57 @@ class TestInvalidAddresses(unittest.TestCase):
             self.assertEqual(r.stderr.count("failed to bind"), 1)
 
 
+# ── Startup validation of sink paths ──────────────────────────────────────────
+
+
+class TestSinkPathsCheckedAtStartup(unittest.TestCase):
+    """Sinks are opened before the service reports itself running.
+
+    They used to open lazily on the first message, so an unwritable log path let
+    `net start` succeed and the SCM see a healthy service; the sink then died on
+    the first datagram with no non-zero exit code and no recovery action.
+    """
+
+    def test_unwritable_log_path_fails_the_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            conf = d / "minilog.conf"
+            missing = d / "no-such-dir" / "syslog.log"
+            conf.write_text(
+                "[server]\n"
+                "host = 127.0.0.1\n"
+                f"udp_port = {free_port()}\n"
+                "\n"
+                "[output.main]\n"
+                f"text_file = {missing}\n"
+            )
+
+            r = subprocess.run(
+                [BINARY, str(conf)], capture_output=True, text=True, timeout=10
+            )
+
+            self.assertNotEqual(r.returncode, 0, "server started with an unusable sink path")
+            self.assertIn("failed to open", r.stderr)
+            self.assertIn(str(missing), r.stderr)
+
+    def test_usable_log_path_still_starts(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            port = free_port()
+            conf = write_config(d, port)
+
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
+            try:
+                self.assertTrue(wait_for_port(port), "server did not start in time")
+                # Opened eagerly now, so the file exists before any message.
+                self.assertTrue((d / "syslog.log").exists())
+            finally:
+                terminate(proc)
+                proc.wait(timeout=10)
+
+            self.assertEqual(proc.returncode, 0)
+
+
 # ── Filesystem failure handling ───────────────────────────────────────────────
 
 
