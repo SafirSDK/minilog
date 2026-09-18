@@ -10,7 +10,9 @@
   the same in `[server] host` exited non-zero with nothing on stderr and nothing in the Event Log.
   `loadConfig` now rejects both, naming the key and the value, and startup failures from the
   server socket are reported by the caller so they can no longer be swallowed.
-  `minilog.conf.example` said "hostname or IP address" and now says IP address.
+  `minilog.conf.example` said "hostname or IP address" and now says IP address. An address with a
+  port appended (`10.0.0.5:514`) is rejected too — the Windows address parser accepted it and
+  silently discarded the port.
 - **A filesystem error no longer aborts the whole server.** Six `std::filesystem` calls on the
   write and rotation paths used the throwing overloads. An exception from any of them escaped the
   sink's strand handler and then `io_context::run()` on a worker thread, where it became

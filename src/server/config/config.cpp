@@ -57,8 +57,16 @@ const std::unordered_map<std::string, int> kFacilityNames = {
 void requireAddress(const std::string& label, const std::string& value)
 {
     boost::system::error_code ec;
-    boost::asio::ip::make_address(value, ec);
-    if (ec)
+    const auto address = boost::asio::ip::make_address(value, ec);
+
+    // Asio parses addresses through WSAStringToAddress on Windows, which accepts
+    // a trailing ":port" and quietly discards it — so "10.0.0.5:514" would bind
+    // or forward to whatever the port key says, ignoring what the user wrote.
+    // An IPv4 literal never contains a colon, and an IPv6 literal parses as v6,
+    // so this rejects it the same way on every platform.
+    const bool strayPort = !ec && address.is_v4() && value.find(':') != std::string::npos;
+
+    if (ec || strayPort)
     {
         throw std::runtime_error("Invalid " + label + ": '" + value +
                                  "' is not an IP address (names are not resolved)");

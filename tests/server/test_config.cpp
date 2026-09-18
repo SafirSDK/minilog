@@ -491,6 +491,17 @@ BOOST_AUTO_TEST_CASE(ipv6_host_accepted)
     // so validation checks parseability only, never the address family.
     TempFile tmp("[server]\nhost=::1\n\n[output.m]\ntext_file=/tmp/f\n");
     BOOST_CHECK_EQUAL(loadConfig(tmp.path).host, "::1");
+
+    // Colons are only rejected for addresses that parse as IPv4, so an
+    // IPv4-mapped IPv6 literal must still be accepted.
+    TempFile mapped("[server]\nhost=::ffff:10.0.0.5\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_NO_THROW(loadConfig(mapped.path));
+}
+
+BOOST_AUTO_TEST_CASE(address_with_port_throws)
+{
+    TempFile tmp("[server]\nhost=127.0.0.1:514\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -553,10 +564,19 @@ BOOST_AUTO_TEST_CASE(forwarding_hostname_throws_naming_key_and_value)
     }
 }
 
+BOOST_AUTO_TEST_CASE(forwarding_address_with_port_throws)
+{
+    // Accepted by the Windows address parser, which discards the port — so this
+    // has to be rejected explicitly rather than left to make_address.
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=10.0.0.5:514\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
 BOOST_AUTO_TEST_CASE(forwarding_malformed_address_throws)
 {
     TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
-                 "[forwarding]\nenabled=true\nhost=10.0.0.5:514\n");
+                 "[forwarding]\nenabled=true\nhost=10.0.0.999\n");
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
