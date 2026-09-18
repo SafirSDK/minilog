@@ -1,6 +1,6 @@
 # Roadmap — v1.4.0
 
-Working order for the 26 issues (#10–#35) to be closed before the v1.4.0
+Working order for the 27 issues (#10–#36) to be closed before the v1.4.0
 release. Current version is 1.3.0.
 
 **This file is temporary.** Delete it as part of preparing the v1.4.0 release —
@@ -84,6 +84,18 @@ wanted.
 `--check` is a preflight that validates everything the earlier batches
 establish, and it depends on #26. Writing it before that validation exists means
 writing it twice. Re-evaluate its scope when reached.
+
+## Batch 7 — #36, after everything else
+
+A sink closed by a filesystem error stays closed until minilog is restarted. #13
+chose that deliberately and it is the right default, but "restart to recover"
+was accepted as a cost rather than decided on its merits.
+
+Deliberately last. It is a design decision rather than a defect, and the choice
+depends on batches that come first: #10 settles behaviour under load, and
+#31/#32 settle how much config surface is acceptable — which decides whether a
+retry interval can be configurable. Starting from the options recorded on the
+issue rather than from scratch.
 
 ---
 
