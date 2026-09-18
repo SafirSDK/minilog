@@ -425,6 +425,92 @@ BOOST_AUTO_TEST_CASE(workers_negative_throws)
 
 BOOST_AUTO_TEST_SUITE_END()
 
+// ─── Output file uniqueness ───────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_SUITE(output_file_uniqueness)
+
+BOOST_AUTO_TEST_CASE(same_path_for_text_and_jsonl_throws_naming_section)
+{
+    TempFile tmp("[output.main]\n"
+                 "text_file=/tmp/syslog.jsonl\n"
+                 "jsonl_file=/tmp/syslog.jsonl\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error when both files name one path");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[output.main]") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("text_file") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("jsonl_file") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("/tmp/syslog.jsonl") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(same_path_in_two_sections_throws_naming_both)
+{
+    TempFile tmp("[output.first]\n"
+                 "text_file=/tmp/shared.log\n"
+                 "\n"
+                 "[output.second]\n"
+                 "jsonl_file=/tmp/shared.log\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error when two sections name one path");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[output.first]") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("[output.second]") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("/tmp/shared.log") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(same_text_file_in_two_sections_throws)
+{
+    TempFile tmp("[output.a]\ntext_file=/tmp/a.log\n\n[output.b]\ntext_file=/tmp/a.log\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(same_jsonl_file_in_two_sections_throws)
+{
+    TempFile tmp("[output.a]\njsonl_file=/tmp/a.jsonl\n\n[output.b]\njsonl_file=/tmp/a.jsonl\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(distinct_paths_in_one_section_ok)
+{
+    TempFile tmp("[output.main]\ntext_file=/tmp/syslog.log\njsonl_file=/tmp/syslog.jsonl\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.outputs.size() == 1u);
+    BOOST_TEST(cfg.outputs[0].textFile == "/tmp/syslog.log");
+    BOOST_TEST(cfg.outputs[0].jsonlFile == "/tmp/syslog.jsonl");
+}
+
+BOOST_AUTO_TEST_CASE(distinct_paths_across_sections_ok)
+{
+    TempFile tmp("[output.a]\ntext_file=/tmp/a.log\njsonl_file=/tmp/a.jsonl\n"
+                 "\n"
+                 "[output.b]\ntext_file=/tmp/b.log\njsonl_file=/tmp/b.jsonl\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.outputs.size() == 2u);
+}
+
+BOOST_AUTO_TEST_CASE(sections_configuring_only_one_kind_do_not_collide)
+{
+    // Both sections leave one of the two keys empty. The empty string is not a
+    // path and must not count as a collision.
+    TempFile tmp("[output.a]\ntext_file=/tmp/a.log\n\n[output.b]\njsonl_file=/tmp/b.jsonl\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.outputs.size() == 2u);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 // ─── File I/O edge cases ──────────────────────────────────────────────────────
 
 BOOST_AUTO_TEST_SUITE(file_io)

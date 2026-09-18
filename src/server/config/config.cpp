@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <system_error>
@@ -202,6 +203,13 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
         throw std::runtime_error("[output." + name +
                                  "] must specify text_file, jsonl_file, or both");
     }
+    if (outCfg.textFile == outCfg.jsonlFile)
+    {
+        throw std::runtime_error("[output." + name +
+                                 "] text_file and jsonl_file must name different files, "
+                                 "but both are '" +
+                                 outCfg.textFile + "'");
+    }
 
     const auto sizeStr = sec.get<std::string>("max_size", "");
     if (!sizeStr.empty())
@@ -226,6 +234,39 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
     outCfg.includeMalformed = sec.get<bool>("include_malformed", outCfg.includeMalformed);
 
     return outCfg;
+}
+
+// Every log file must belong to exactly one sink. Two writers on one path
+// interleave their records, so whatever reads the file sees only the half it
+// can parse; they shift the rotation generations once each per rotation, so
+// half of max_files is consumed; and they size the file against a counter
+// apiece, so it reaches roughly twice max_size before either one trips.
+//
+// Paths are compared as written. `.\a.log` and `a.log` slip through, which is
+// accepted: the mistake worth catching is the same path typed twice.
+void requireDistinctFiles(const std::vector<OutputConfig>& outputs)
+{
+    std::map<std::string, std::string> owners; // path -> "[output.x] field"
+
+    const auto claim = [&owners](const std::string& file, const std::string& owner)
+    {
+        if (file.empty())
+        {
+            return;
+        }
+        const auto [it, inserted] = owners.emplace(file, owner);
+        if (!inserted)
+        {
+            throw std::runtime_error(owner + " = '" + file + "' is already used by " + it->second +
+                                     "; each log file must belong to exactly one output section");
+        }
+    };
+
+    for (const auto& out : outputs)
+    {
+        claim(out.textFile, "[output." + out.name + "] text_file");
+        claim(out.jsonlFile, "[output." + out.name + "] jsonl_file");
+    }
 }
 
 } // namespace
@@ -292,6 +333,8 @@ Config loadConfig(const std::string& path)
     {
         throw std::runtime_error("Config must define at least one [output.*] section");
     }
+
+    requireDistinctFiles(cfg.outputs);
 
     // [forwarding]
     if (auto fwdNode = tree.get_child_optional("forwarding"))

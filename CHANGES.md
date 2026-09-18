@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **A log file named twice in the config is now rejected instead of corrupting both outputs.**
+  `text_file` and `jsonl_file` could be given the same path, in one section or across two, and the
+  result was accepted and then wrong three ways over: raw text lines and JSON records were
+  interleaved in the one file, so every JSONL reader silently skipped half of it; rotation shifted
+  the generations once per writer, consuming two of `max_files` per rotation and leaving gaps in
+  the numbering; and each writer sized the file against its own counter, so it grew to about twice
+  `max_size` before either tripped. Two sections on one path additionally rotated and wrote it from
+  two threads at once. Config load now refuses it, naming the section and the path — or both
+  sections. Paths are compared as written, which is what catches the same path typed twice.
 - **The web viewer's live tail no longer skips messages during a burst.** Each poll advanced its
   cursor to the end of the chain rather than past the lines it had just been given, and a response
   carries at most 200 lines. More than 200 matching lines arriving between two polls — they are

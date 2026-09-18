@@ -258,7 +258,9 @@ See [`minilog.conf.example`](minilog.conf.example) for a fully commented example
 
 ### `[output.<name>]`
 
-Any number of named output sections. At least one of `text_file` or `jsonl_file` must be set.
+Any number of named output sections. At least one of `text_file` or `jsonl_file` must be set,
+and every configured file must belong to exactly one section — naming the same path twice,
+whether as both keys of one section or across two sections, is a config error.
 
 | Key | Default | Description |
 |-----|---------|-------------|
