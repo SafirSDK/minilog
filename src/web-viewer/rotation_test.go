@@ -249,6 +249,7 @@ func TestNoLineLoss(t *testing.T) {
 		type linesResp struct {
 			Lines      []string `json:"lines"`
 			Offsets    []int64  `json:"offsets"`
+			NextOffset int64    `json:"next_offset"`
 			TailOffset int64    `json:"tail_offset"`
 		}
 		doGet := func(url string) (*linesResp, error) {
@@ -268,7 +269,11 @@ func TestNoLineLoss(t *testing.T) {
 		// since offsets are remapped after rotation).
 		seenN := make(map[int]bool)
 
-		var tailOffset int64
+		// tailOffset is the read cursor; chainEnd is the end of the chain as of
+		// the last response. The browser keeps both for the same reason: the
+		// cursor lags behind the end while a burst drains, so only chainEnd can
+		// tell a rotation from ordinary catching up.
+		var tailOffset, chainEnd int64
 		deadline := time.Now().Add(60 * time.Second)
 		writerFinished := false
 		drainPasses := 0
@@ -280,10 +285,10 @@ func TestNoLineLoss(t *testing.T) {
 				continue
 			}
 
-			if r.TailOffset < tailOffset {
+			if r.TailOffset < chainEnd {
 				// Rotation shrank the chain: mirror loadTail().
 				// Read the last batch to pick up lines written just before rotation.
-				tailOffset = r.TailOffset
+				tailOffset, chainEnd = r.TailOffset, r.TailOffset
 				rt, err := doGet("/lines?sink=main&tail=true&count=200")
 				if err == nil {
 					for _, line := range rt.Lines {
@@ -294,12 +299,13 @@ func TestNoLineLoss(t *testing.T) {
 							seenN[rec.N] = true
 						}
 					}
-					tailOffset = rt.TailOffset
+					tailOffset, chainEnd = rt.TailOffset, rt.TailOffset
 				}
 				continue
 			}
 
-			tailOffset = r.TailOffset
+			chainEnd = r.TailOffset
+			tailOffset = r.NextOffset
 			for _, line := range r.Lines {
 				var rec struct {
 					N int `json:"n"`
@@ -365,4 +371,185 @@ func TestNoLineLoss(t *testing.T) {
 			t.Logf("OK: all %d final-chain lines received by poller", len(inFinalChain))
 		}
 	})
+}
+
+// ── Live tail: bursts larger than one batch ──────────────────────────────────
+
+// tailPoller mirrors the cursor handling of the browser's pollTail(): it reads
+// forward from a cursor advanced by next_offset, and treats a tail_offset that
+// regressed against the previous response as a rotation.
+type tailPoller struct {
+	t      *testing.T
+	ts     *httptest.Server
+	params string // extra query params, e.g. "&inc=keep"
+	batch  int    // app.js BATCH
+
+	cursor   int64 // tailOffset in app.js
+	chainEnd int64 // chainEnd in app.js
+	rotated  bool  // set when a poll would have called loadTail()
+}
+
+// poll performs one poll and returns the lines it delivered.
+func (p *tailPoller) poll() []string {
+	p.t.Helper()
+	url := fmt.Sprintf("/lines?sink=main&dir=forward&offset=%d&count=%d%s",
+		p.cursor, p.batch, p.params)
+	var r linesResponse
+	decodeJSON(p.t, get(p.t, p.ts, url), &r)
+
+	if r.TailOffset < p.chainEnd {
+		p.rotated = true
+		return nil
+	}
+	p.chainEnd = r.TailOffset
+	p.cursor = r.NextOffset
+	return r.Lines
+}
+
+// drain polls until a poll delivers nothing, returning the "n" field of every
+// line delivered, in the order they arrived.
+func (p *tailPoller) drain(maxPolls int) []int {
+	p.t.Helper()
+	var got []int
+	for i := 0; i < maxPolls; i++ {
+		delivered := p.poll()
+		if len(delivered) == 0 {
+			break
+		}
+		if len(delivered) > p.batch {
+			p.t.Fatalf("poll returned %d lines, past the %d cap", len(delivered), p.batch)
+		}
+		for _, l := range delivered {
+			var rec struct {
+				N int `json:"n"`
+			}
+			if err := json.Unmarshal([]byte(l), &rec); err != nil {
+				p.t.Fatalf("unmarshal %q: %v", l, err)
+			}
+			got = append(got, rec.N)
+		}
+	}
+	return got
+}
+
+// wantSequence fails unless got is exactly want — which catches a gap, a
+// duplicate and a reordering in one assertion.
+func wantSequence(t *testing.T, got, want []int) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("delivered %d lines, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("position %d: delivered n=%d, want n=%d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestPollTail_BurstLargerThanBatch_DrainsInOrder(t *testing.T) {
+	// More lines arrive between two polls than one response can carry. The
+	// cursor used to jump to the end of the chain, so everything past the first
+	// batch was never fetched and never displayed.
+	const (
+		burst = 1000
+		batch = 200 // app.js BATCH
+	)
+
+	var lines []string
+	var want []int
+	for i := 1; i <= burst; i++ {
+		lines = append(lines, fmt.Sprintf(`{"n":%d}`, i))
+		want = append(want, i)
+	}
+
+	ts := newTestServer(t, []Sink{makeSink(t, t.TempDir(), "main", lines)})
+	defer ts.Close()
+
+	p := &tailPoller{t: t, ts: ts, batch: batch}
+	wantSequence(t, p.drain(burst), want)
+}
+
+func TestPollTail_BurstLargerThanBatch_CountsMatchingLines(t *testing.T) {
+	// The cap counts lines that pass the filter, so a burst in which only every
+	// other line matches still needs several polls to drain.
+	const batch = 200
+
+	var lines []string
+	var want []int
+	for i := 1; i <= 1200; i++ {
+		if i%2 == 0 {
+			lines = append(lines, fmt.Sprintf(`{"n":%d,"message":"keep"}`, i))
+			want = append(want, i)
+		} else {
+			lines = append(lines, fmt.Sprintf(`{"n":%d,"message":"drop"}`, i))
+		}
+	}
+
+	ts := newTestServer(t, []Sink{makeSink(t, t.TempDir(), "main", lines)})
+	defer ts.Close()
+
+	p := &tailPoller{t: t, ts: ts, batch: batch, params: "&inc=keep"}
+	wantSequence(t, p.drain(len(want)), want)
+}
+
+func TestPollTail_RotationDetected_WhileCursorLagsBehind(t *testing.T) {
+	// While a burst drains the cursor sits well behind the end of the chain, so
+	// a rotation can leave the chain shorter than it was without leaving it
+	// shorter than the cursor. Comparing tail_offset against the previous
+	// response's tail_offset catches that; comparing it against the cursor,
+	// which is what the cursor being the previous tail_offset used to amount
+	// to, would not.
+	const batch = 200
+
+	dir := t.TempDir()
+	activePath := filepath.Join(dir, "syslog.jsonl")
+	sink := Sink{Name: "main", Path: activePath, MaxFiles: 1}
+
+	writeN := func(from, to int) {
+		t.Helper()
+		fh, err := os.OpenFile(activePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatalf("open active: %v", err)
+		}
+		defer fh.Close()
+		for i := from; i <= to; i++ {
+			if _, err := fmt.Fprintf(fh, "{\"n\":%d}\n", i); err != nil {
+				t.Fatalf("write line %d: %v", i, err)
+			}
+		}
+	}
+
+	writeN(1, 1000)
+
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	p := &tailPoller{t: t, ts: ts, batch: batch}
+	if got := len(p.poll()); got != batch {
+		t.Fatalf("first poll: want %d lines, got %d", batch, got)
+	}
+	cursor, chainEndBefore := p.cursor, p.chainEnd
+
+	// Two rotations with fresh traffic in between, so the generation holding
+	// the burst falls off the single-file retention window.
+	rotate(t, activePath, sink.MaxFiles)
+	writeN(1001, 1400)
+	rotate(t, activePath, sink.MaxFiles)
+
+	fc, err := NewFileChain(sink)
+	if err != nil {
+		t.Fatalf("NewFileChain: %v", err)
+	}
+	if fc.TailOffset() >= chainEndBefore {
+		t.Fatalf("setup: chain did not shrink (%d >= %d)", fc.TailOffset(), chainEndBefore)
+	}
+	if fc.TailOffset() <= cursor {
+		t.Fatalf("setup: chain shrank past the cursor (%d <= %d), so the test would "+
+			"pass even without the separate chain-end cursor", fc.TailOffset(), cursor)
+	}
+
+	p.poll()
+	if !p.rotated {
+		t.Error("tail_offset regressed but the poll did not reload")
+	}
 }

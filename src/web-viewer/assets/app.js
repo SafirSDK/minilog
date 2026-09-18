@@ -33,7 +33,8 @@ const COLUMNS = [
 
 let activeSink      = '';
 let topOffset       = 0;
-let tailOffset      = 0;
+let tailOffset      = 0;   // logical offset the live tail has read up to
+let chainEnd        = 0;   // tail_offset of the last response, for rotation detection
 let atTail          = true;
 let pollTimer       = 0;
 let loadingUp       = false;
@@ -220,6 +221,7 @@ async function loadTail() {
 
   setStatus('connected');
   tailOffset = data.tail_offset ?? 0;
+  chainEnd   = tailOffset;
   topOffset  = data.first_offset ?? 0;
 
   renderRows(data.lines ?? [], data.offsets ?? [], false);
@@ -256,13 +258,20 @@ async function pollTail() {
   }
   setStatus('connected');
 
-  // Detect rotation: tail_offset regressed
-  if ((data.tail_offset ?? 0) < tailOffset) {
+  // Detect rotation: the end of the chain regressed since the last response.
+  // Compared against chainEnd rather than tailOffset, which lags behind the end
+  // of the chain whenever a burst is still draining.
+  if ((data.tail_offset ?? 0) < chainEnd) {
     await loadTail();
     return;
   }
+  chainEnd = data.tail_offset ?? chainEnd;
 
-  tailOffset = data.tail_offset ?? tailOffset;
+  // Advance past the lines actually returned, not to the end of the chain: a
+  // response holds at most BATCH lines, and jumping to tail_offset would skip
+  // every line beyond that cap. A burst therefore drains over several polls,
+  // one batch at a time, instead of the middle of it never being displayed.
+  tailOffset = data.next_offset ?? tailOffset;
 
   const lines   = data.lines   ?? [];
   const offsets = data.offsets ?? [];
@@ -504,6 +513,7 @@ async function jumpToMatch(idx) {
   } catch { return; }
 
   tailOffset = data.tail_offset ?? tailOffset;
+  chainEnd   = tailOffset;
   topOffset  = data.first_offset ?? match.offset;
 
   renderRows(data.lines ?? [], data.offsets ?? [], false);

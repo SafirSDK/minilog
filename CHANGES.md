@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **The web viewer's live tail no longer skips messages during a burst.** Each poll advanced its
+  cursor to the end of the chain rather than past the lines it had just been given, and a response
+  carries at most 200 lines. More than 200 matching lines arriving between two polls — they are
+  500 ms apart — and everything past the first 200 was stepped over: still on disk, still findable
+  by search, but never displayed until the view was reloaded. The cursor now advances by the
+  `next_offset` the server has always returned for the purpose, so a burst drains one batch per
+  poll. The visible consequence is that the live view falls behind the file and catches up rather
+  than jumping to the end, which puts a ceiling of roughly 400 lines per second on what the live
+  view can show; search, scrolling and the log itself are unaffected. Rotation is now detected
+  against the previous response's end of chain, because the cursor no longer tracks it.
 - **The web viewer's tail view no longer loses log entries longer than 64 KB.** `ReadBackward`
   reads the rotation chain backwards in 64 KB chunks and treated the first byte of every chunk as
   the start of a line, so a record spanning a chunk boundary reached the browser as one fragment

@@ -891,3 +891,59 @@ func TestHandler_Search_NoSince_FullSearch(t *testing.T) {
 		t.Errorf("results: want 5, got %d", len(result.Results))
 	}
 }
+
+// ── /lines — next_offset when nothing is returned ────────────────────────────
+
+func TestHandler_Lines_Forward_SinceAtTail_NextOffsetKeepsCursor(t *testing.T) {
+	// The live tail advances its cursor to next_offset, so a response carrying
+	// no lines still has to name the cursor it was asked about. Zero would send
+	// the tail back to the beginning of the chain.
+	dir := t.TempDir()
+	sink := makeSink(t, dir, "main", []string{
+		makeLine("one", "info", "daemon"),
+		makeLine("two", "info", "daemon"),
+	})
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	var tail linesResponse
+	decodeJSON(t, get(t, ts, "/lines?sink=main&tail=true&count=10"), &tail)
+
+	// What the browser sends after Clear: read forward from the cursor, with
+	// everything up to it hidden.
+	url := fmt.Sprintf("/lines?sink=main&dir=forward&offset=%d&since=%d&count=10",
+		tail.TailOffset, tail.TailOffset)
+	var r linesResponse
+	decodeJSON(t, get(t, ts, url), &r)
+
+	if len(r.Lines) != 0 {
+		t.Fatalf("want 0 lines past the clear boundary, got %d", len(r.Lines))
+	}
+	if r.NextOffset != tail.TailOffset {
+		t.Errorf("next_offset: want %d, got %d", tail.TailOffset, r.NextOffset)
+	}
+}
+
+func TestHandler_Lines_Tail_SinceAtTail_NextOffsetIsTailOffset(t *testing.T) {
+	dir := t.TempDir()
+	sink := makeSink(t, dir, "main", []string{
+		makeLine("one", "info", "daemon"),
+		makeLine("two", "info", "daemon"),
+	})
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	var tail linesResponse
+	decodeJSON(t, get(t, ts, "/lines?sink=main&tail=true&count=10"), &tail)
+
+	url := fmt.Sprintf("/lines?sink=main&tail=true&since=%d&count=10", tail.TailOffset)
+	var r linesResponse
+	decodeJSON(t, get(t, ts, url), &r)
+
+	if len(r.Lines) != 0 {
+		t.Fatalf("want 0 lines, got %d", len(r.Lines))
+	}
+	if r.NextOffset != tail.TailOffset {
+		t.Errorf("next_offset: want %d, got %d", tail.TailOffset, r.NextOffset)
+	}
+}

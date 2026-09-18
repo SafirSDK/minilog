@@ -94,6 +94,16 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 			Offsets:    []int64{},
 		}
 
+		// next_offset is the cursor the live tail advances to, so it has to be
+		// meaningful even when no line is returned: a branch that reads nothing
+		// must leave the caller's cursor where it was rather than at zero,
+		// which would restart the tail from the beginning of the chain.
+		if tail {
+			resp.NextOffset = fc.TailOffset()
+		} else {
+			resp.NextOffset = offset
+		}
+
 		var rawLines [][]byte
 		var offsets []int64
 
