@@ -345,7 +345,8 @@ void installService(const std::string& configPath)
 {
     const std::string exePath = currentExecutablePath();
 
-    const SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
+    const ScopedServiceHandle scm(
+        OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE));
     if (!scm)
     {
         throw std::runtime_error("OpenSCManager failed: " + std::to_string(GetLastError()));
@@ -353,27 +354,62 @@ void installService(const std::string& configPath)
 
     const std::string binPath = "\"" + exePath + "\" \"" + configPath + "\"";
 
-    const SC_HANDLE svc = CreateServiceA(scm,
-                                         SERVICE_NAME,
-                                         SERVICE_DISPLAY,
-                                         SERVICE_ALL_ACCESS,
-                                         SERVICE_WIN32_OWN_PROCESS,
-                                         SERVICE_AUTO_START,
-                                         SERVICE_ERROR_NORMAL,
-                                         binPath.c_str(),
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr);
-    if (!svc)
+    ScopedServiceHandle svc(CreateServiceA(scm.get(),
+                                           SERVICE_NAME,
+                                           SERVICE_DISPLAY,
+                                           SERVICE_ALL_ACCESS,
+                                           SERVICE_WIN32_OWN_PROCESS,
+                                           SERVICE_AUTO_START,
+                                           SERVICE_ERROR_NORMAL,
+                                           binPath.c_str(),
+                                           nullptr,
+                                           nullptr,
+                                           nullptr,
+                                           nullptr,
+                                           nullptr);
+    const bool created = static_cast<bool>(svc);
+    if (!created)
     {
-        CloseServiceHandle(scm);
-        throw std::runtime_error("CreateService failed: " + std::to_string(GetLastError()));
+        if (GetLastError() != ERROR_SERVICE_EXISTS)
+        {
+            throw std::runtime_error("CreateService failed: " + std::to_string(GetLastError()));
+        }
+
+        // Already registered: update the registration rather than fail, so that
+        // "make this service point at this executable and this config" is a
+        // single command an upgrade can run. SERVICE_START is needed alongside
+        // SERVICE_CHANGE_CONFIG because the recovery actions below restart the
+        // service.
+        svc.reset(OpenServiceA(scm.get(), SERVICE_NAME, SERVICE_CHANGE_CONFIG | SERVICE_START));
+        if (!svc)
+        {
+            throw std::runtime_error("OpenService failed: " + std::to_string(GetLastError()));
+        }
+
+        // The binary path is always updated — the executable may have moved and
+        // the config path may have changed, which is the whole point of running
+        // --install again. The start type and the account are deliberately left
+        // alone: an administrator who set the service to manual start or bound
+        // it to a specific account must not have that undone by an upgrade.
+        if (!ChangeServiceConfigA(svc.get(),
+                                  SERVICE_NO_CHANGE,
+                                  SERVICE_NO_CHANGE,
+                                  SERVICE_NO_CHANGE,
+                                  binPath.c_str(),
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  SERVICE_DISPLAY))
+        {
+            throw std::runtime_error("ChangeServiceConfig failed: " +
+                                     std::to_string(GetLastError()));
+        }
     }
 
     SERVICE_DESCRIPTIONA desc{const_cast<char*>(SERVICE_DESC)};
-    ChangeServiceConfig2A(svc, SERVICE_CONFIG_DESCRIPTION, &desc);
+    ChangeServiceConfig2A(svc.get(), SERVICE_CONFIG_DESCRIPTION, &desc);
 
     // The SCM repeats the last action for every further failure, so the trailing
     // SC_ACTION_NONE is what stops the restarts after the second attempt.
@@ -382,11 +418,15 @@ void installService(const std::string& configPath)
         {SC_ACTION_RESTART, RESTART_DELAY_MS},
         {SC_ACTION_NONE, 0},
     };
+    // Re-applied on update as well as on create: an installation upgraded from a
+    // minilog that predates them would otherwise never gain them. Unlike the
+    // account and the start type, these are minilog's own behaviour rather than
+    // a deployment decision.
     SERVICE_FAILURE_ACTIONSA failureActions{};
     failureActions.dwResetPeriod = FAILURE_RESET_PERIOD_S;
     failureActions.cActions      = static_cast<DWORD>(std::size(actions));
     failureActions.lpsaActions   = actions;
-    if (!ChangeServiceConfig2A(svc, SERVICE_CONFIG_FAILURE_ACTIONS, &failureActions))
+    if (!ChangeServiceConfig2A(svc.get(), SERVICE_CONFIG_FAILURE_ACTIONS, &failureActions))
     {
         osLogError("minilog: failed to configure service recovery actions: " +
                    std::to_string(GetLastError()));
@@ -396,13 +436,15 @@ void installService(const std::string& configPath)
     // dies outright. minilog reports its own failures as SERVICE_STOPPED with a
     // non-zero exit code, which counts as a failure only when the flag is set.
     SERVICE_FAILURE_ACTIONS_FLAG failureFlag{TRUE};
-    if (!ChangeServiceConfig2A(svc, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &failureFlag))
+    if (!ChangeServiceConfig2A(svc.get(), SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &failureFlag))
     {
         osLogError("minilog: failed to enable recovery actions on non-crash failures: " +
                    std::to_string(GetLastError()));
     }
 
-    // Register the event source so Event Viewer can display messages from the exe.
+    // Rewritten on every install: the value records the path of the executable,
+    // so after an upgrade that moved the binary a stale one leaves Event Viewer
+    // showing "description not found" instead of the message.
     static constexpr char EVENT_LOG_KEY[] =
         "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\minilog";
     HKEY hKey = nullptr;
@@ -432,9 +474,15 @@ void installService(const std::string& configPath)
         RegCloseKey(hKey);
     }
 
-    osLogInfo(std::string("minilog service installed (") + binPath + ")");
-    CloseServiceHandle(svc);
-    CloseServiceHandle(scm);
+    if (created)
+    {
+        osLogInfo("minilog service installed (" + binPath + ")");
+    }
+    else
+    {
+        osLogInfo("minilog service updated (" + binPath +
+                  ") — restart the service to run the new registration");
+    }
 }
 
 void stopService(std::chrono::seconds timeout)
@@ -473,26 +521,33 @@ void uninstallService(std::chrono::seconds timeout)
 
     const ScopedServiceHandle svc(
         OpenServiceA(scm.get(), SERVICE_NAME, SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS));
-    if (!svc)
+    if (svc)
+    {
+        // Deleting a service that is still running only marks it for deletion:
+        // the registration lingers, and the next CreateService fails with
+        // ERROR_SERVICE_MARKED_FOR_DELETE. Waiting here is what makes an install
+        // that follows an uninstall reliable.
+        stopAndWait(svc.get(), timeout);
+
+        if (!DeleteService(svc.get()))
+        {
+            throw std::runtime_error("DeleteService failed: " + std::to_string(GetLastError()));
+        }
+    }
+    else if (GetLastError() != ERROR_SERVICE_DOES_NOT_EXIST)
     {
         throw std::runtime_error("OpenService failed: " + std::to_string(GetLastError()));
     }
 
-    // Deleting a service that is still running only marks it for deletion: the
-    // registration lingers, and the next CreateService fails with
-    // ERROR_SERVICE_MARKED_FOR_DELETE. Waiting here is what makes an install
-    // that follows an uninstall reliable.
-    stopAndWait(svc.get(), timeout);
+    // Logged before the event source is removed, so this entry still reaches the
+    // Event Log with a message file to render it.
+    osLogInfo(svc ? "minilog service uninstalled"
+                  : "minilog service is not registered; nothing to remove");
 
-    if (!DeleteService(svc.get()))
-    {
-        throw std::runtime_error("DeleteService failed: " + std::to_string(GetLastError()));
-    }
-
+    // Part of the registration, so it goes whether or not the service itself was
+    // still there — an interrupted uninstall must not leave it behind.
     RegDeleteKeyA(HKEY_LOCAL_MACHINE,
                   "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\minilog");
-
-    osLogInfo("minilog service uninstalled");
 }
 
 } // namespace minilog

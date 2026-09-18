@@ -56,6 +56,17 @@
 
 ### New
 
+- **`--install` and `--uninstall` are now idempotent.** `--install` used to fail against a service
+  that already existed (`ERROR_SERVICE_EXISTS`, or an explicit check in the web viewer) and
+  `--uninstall` used to fail when there was none, which is why the installer ran `--uninstall` on
+  both executables with its errors deliberately swallowed. `--install` now updates an existing
+  registration — binary path, arguments, display name, description, recovery actions and Event Log
+  source — while leaving the start type and the service account alone, so an administrator who
+  bound the service to a specific account or set it to manual start keeps that across an upgrade.
+  It reports "installed" or "updated" and exits 0 either way; it never starts or stops anything.
+  `--uninstall` against an absent service exits 0. The installer now stops the services with
+  `--stop` before copying files instead of deregistering them, so a hand-tuned registration
+  survives an upgrade.
 - **`--stop` on both executables.** `minilog --stop` and `minilog-web-viewer --stop` stop the
   service and wait until its process has genuinely exited, with `--timeout SECONDS` (default 30)
   bounding the wait. This is what an upgrade needs between stopping the old build and copying the

@@ -11,8 +11,10 @@ Test groups (run in sequence):
                        non-zero exit code, and leaves an Event Log trail
   6. Stop            — --stop and --uninstall wait for the process, so the
                        executables can be overwritten and re-registered
-  7. Upgrade install — service survives; user-modified config is not overwritten
-  8. Uninstall       — services and binaries removed; config file survives
+  7. Re-register    — --install over an existing service updates it and leaves
+                       the administrator's start type and account alone
+  8. Upgrade install — service survives; user-modified config is not overwritten
+  9. Uninstall       — services and binaries removed; config file survives
 
 Must be run as Administrator (the installer registers a Windows service).
 
@@ -239,6 +241,24 @@ def service_exit_codes(name: str = SERVICE_NAME) -> tuple[int, int]:
     specific = re.search(r"SERVICE_EXIT_CODE\s*:\s*(\d+)", out)
     return (int(win32.group(1)) if win32 else -1,
             int(specific.group(1)) if specific else -1)
+
+
+def event_source_message_file(source: str) -> str:
+    """Return the EventMessageFile recorded for `source`, or '' if unset."""
+    result = subprocess.run(
+        ["reg.exe", "query", f"{EVENTLOG_KEY}\\{source}", "/v", "EventMessageFile"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    m = re.search(r"EventMessageFile\s+REG_\w+\s+(.+)", result.stdout)
+    return m.group(1).strip() if m else ""
+
+
+def service_account(name: str = SERVICE_NAME) -> str:
+    """Return the account the service runs as, e.g. 'LocalSystem'."""
+    m = re.search(r"SERVICE_START_NAME\s*:\s*(.+)", sc("qc", name).stdout)
+    return m.group(1).strip() if m else ""
 
 
 def event_source_registered(source: str) -> bool:
@@ -626,10 +646,93 @@ def test_stop_waits() -> None:
     check(net_start(SERVICE_NAME).returncode == 0, "Service starts again after re-registration")
 
 
-# ─── Test 7: Upgrade install (config not overwritten) ─────────────────────────
+# ─── Test 7: --install over an existing registration updates it ───────────────
+
+def test_reregister() -> None:
+    print("\n=== Test 7: --install updates an existing registration ===")
+
+    # Idempotence first: nothing about the second run may fail.
+    check(service_exists(), "Service registered before the re-registration test")
+    first = install_server(str(CONFIG_PATH))
+    second = install_server(str(CONFIG_PATH))
+    check(first.returncode == 0 and second.returncode == 0,
+          "--install run twice in succession succeeds both times")
+    check("updated" in (second.stdout + second.stderr).lower(),
+          f"--install reports an update rather than an install "
+          f"(stderr: {second.stderr.strip()})")
+
+    # What an administrator may have changed by hand must survive an upgrade.
+    # LocalService is a built-in account with no password, so this is a change
+    # the SCM accepts without credentials.
+    sc("config", SERVICE_NAME, "start=", "demand")
+    sc("config", SERVICE_NAME, "obj=", "NT AUTHORITY\\LocalService")
+    check(service_start_type() == "DEMAND_START", "Start type set to manual for the test")
+    check(service_account() == "NT AUTHORITY\\LocalService",
+          "Account set to LocalService for the test")
+
+    result = install_server(str(CONFIG_PATH))
+    check(result.returncode == 0,
+          f"--install over a hand-configured service succeeds (stderr: {result.stderr.strip()})")
+    check(service_start_type() == "DEMAND_START", "Manual start type survives --install")
+    check(service_account() == "NT AUTHORITY\\LocalService", "Service account survives --install")
+    check(service_binary_path() == f'"{EXE_PATH}" "{CONFIG_PATH}"',
+          f"Binary path is still updated (got {service_binary_path()})")
+    check_recovery_actions(SERVICE_NAME)
+
+    # An upgrade that moves the executable must leave neither the registration
+    # nor the Event Log message file pointing at the old location.
+    moved_dir = Path(os.environ["TEMP"]) / "minilog-moved"
+    moved_dir.mkdir(parents=True, exist_ok=True)
+    moved_exe = moved_dir / "minilog.exe"
+    moved_exe.write_bytes(EXE_PATH.read_bytes())
+    try:
+        result = install_server(str(CONFIG_PATH), exe=str(moved_exe))
+        check(result.returncode == 0,
+              f"--install from a moved executable succeeds (stderr: {result.stderr.strip()})")
+        check(service_binary_path() == f'"{moved_exe}" "{CONFIG_PATH}"',
+              f"Registration points at the moved executable (got {service_binary_path()})")
+        check(event_source_message_file(SERVICE_NAME) == str(moved_exe),
+              "Event Log source points at the moved executable "
+              f"(got {event_source_message_file(SERVICE_NAME)})")
+    finally:
+        # Put the installed executable back in charge before restoring the
+        # service to the state the later tests expect.
+        install_server(str(CONFIG_PATH))
+        moved_exe.unlink(missing_ok=True)
+
+    check(event_source_message_file(SERVICE_NAME) == str(EXE_PATH),
+          "Event Log source points at the installed executable again")
+
+    sc("config", SERVICE_NAME, "start=", "auto")
+    sc("config", SERVICE_NAME, "obj=", "LocalSystem")
+    check(service_start_type() == "AUTO_START", "Start type restored to AUTO_START")
+
+    # --uninstall against a service that is not there is the state it asks for.
+    check(service_cmd(WEB_VIEWER_EXE, "--stop").returncode == 0,
+          f"'{WEB_SERVICE}' stopped before deregistering it")
+    check(service_cmd(WEB_VIEWER_EXE, "--uninstall").returncode == 0,
+          f"`minilog-web-viewer --uninstall` removes '{WEB_SERVICE}'")
+    check(service_cmd(WEB_VIEWER_EXE, "--uninstall").returncode == 0,
+          "`minilog-web-viewer --uninstall` against an absent service succeeds")
+    check(service_cmd(EXE_PATH, "--uninstall").returncode == 0, f"'{SERVICE_NAME}' deregistered")
+    check(service_cmd(EXE_PATH, "--uninstall").returncode == 0,
+          "`minilog --uninstall` against an absent service succeeds")
+
+    # Leave both services as the upgrade test expects to find them.
+    check(install_server(str(CONFIG_PATH)).returncode == 0, f"'{SERVICE_NAME}' re-registered")
+    check(service_cmd(WEB_VIEWER_EXE, "--install", "--config", str(CONFIG_PATH),
+                      "--addr", f":{WEB_VIEWER_PORT}").returncode == 0,
+          f"'{WEB_SERVICE}' re-registered")
+    sc("start", SERVICE_NAME)
+    sc("start", WEB_SERVICE)
+    check(wait_service_running(SERVICE_NAME), f"'{SERVICE_NAME}' running again")
+    check(wait_service_running(WEB_SERVICE), f"'{WEB_SERVICE}' running again")
+
+
+# ─── Test 8: Upgrade install (config not overwritten) ─────────────────────────
 
 def test_upgrade(installer: Path) -> None:
-    print("\n=== Test 7: Upgrade install ===")
+    print("\n=== Test 8: Upgrade install ===")
 
     sentinel = f"; MODIFIED-BY-INSTALLER-TEST-{random.randint(100000, 999999)}"
     with CONFIG_PATH.open("a", encoding="utf-8") as f:
@@ -643,10 +746,10 @@ def test_upgrade(installer: Path) -> None:
     check(sentinel in content, "Config not overwritten on upgrade")
 
 
-# ─── Test 8: Uninstall ────────────────────────────────────────────────────────
+# ─── Test 9: Uninstall ────────────────────────────────────────────────────────
 
 def test_uninstall() -> None:
-    print("\n=== Test 8: Uninstall ===")
+    print("\n=== Test 9: Uninstall ===")
 
     run_uninstaller()
 
@@ -679,6 +782,7 @@ def main() -> None:
     test_recovery_restart()
     test_failed_start()
     test_stop_waits()
+    test_reregister()
     test_upgrade(args.installer)
     test_uninstall()
 

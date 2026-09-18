@@ -191,6 +191,14 @@ OS reports it, so it is correct whether minilog was invoked by full path or foun
 A config file that cannot be read is refused at install time, rather than registering a service
 that fails at every boot.
 
+`--install` against a service that is already registered updates it rather than failing: the
+executable path and the config path are rewritten, and the Event Log source is repointed at the
+current executable, but the start type and the service account are left as they are — an
+administrator who set the service to manual start, or bound it to a specific account with
+`sc config`, keeps that across an upgrade. Nothing is started or stopped; restart the service to
+run the new registration. `--uninstall` against a service that is not registered succeeds, since
+that is the state it is asking for.
+
 `--stop` and `--uninstall` wait until the service *process* has exited, not merely until the SCM
 reports `SERVICE_STOPPED` — a service reports itself stopped before it has returned from `main`,
 and a running executable cannot be overwritten or deleted. `--timeout SECONDS` (default 30) bounds
@@ -458,7 +466,9 @@ without additional protection.
 **Windows service:** `--install` registers the binary as an auto-start service named
 `minilog-web-viewer`. Pass `--config` and `--addr` at install time; those values are baked into
 the service entry. `--uninstall` stops and removes it, and `--stop` stops it without removing it —
-both wait for the process to exit, as described for the server above.
+both wait for the process to exit, as described for the server above. `--install` over an existing
+registration updates it, preserving the start type and account, and `--uninstall` succeeds when
+there is nothing registered — the same as the server.
 
 `--install` also registers a Windows Event Log source named `minilog-web-viewer` (removed again
 by `--uninstall`) and configures the same recovery actions as the server: two restarts 5 seconds

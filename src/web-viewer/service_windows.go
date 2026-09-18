@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -140,7 +141,44 @@ func tryRunAsService(run func(ready func()) error) (bool, error) {
 	return true, nil
 }
 
-// installService registers the binary as a Windows NT auto-start service.
+// serviceCommandLine builds the command line a service registration stores,
+// quoted the way mgr.CreateService quotes it — ChangeServiceConfig takes the
+// whole line, arguments included, where CreateService takes them separately.
+func serviceCommandLine(exePath string, args ...string) string {
+	line := syscall.EscapeArg(exePath)
+	for _, a := range args {
+		line += " " + syscall.EscapeArg(a)
+	}
+	return line
+}
+
+// updateService points an existing registration at this executable and this
+// config.
+//
+// The start type and the account are read back and written unchanged: an
+// administrator who set the service to manual start or bound it to a specific
+// account must not have that undone by an upgrade.  Everything the viewer
+// itself owns — the command line, the display name, the description — is
+// refreshed.
+func updateService(s *mgr.Service, exePath, configPath, addr string) error {
+	cfg, err := s.Config()
+	if err != nil {
+		return fmt.Errorf("cannot read the configuration of service %q: %w", serviceName, err)
+	}
+
+	cfg.BinaryPathName = serviceCommandLine(exePath, "--config", configPath, "--addr", addr)
+	cfg.DisplayName = serviceDisplay
+	cfg.Description = serviceDesc
+
+	if err := s.UpdateConfig(cfg); err != nil {
+		return fmt.Errorf("cannot update service %q: %w", serviceName, err)
+	}
+	return nil
+}
+
+// installService registers the binary as a Windows NT auto-start service, or
+// updates the registration if the service already exists.  Running it against
+// an installation that is already registered is the upgrade case, not an error.
 func installService(exePath, configPath, addr string) error {
 	m, err := mgr.Connect()
 	if err != nil {
@@ -148,26 +186,35 @@ func installService(exePath, configPath, addr string) error {
 	}
 	defer m.Disconnect()
 
-	// Check if the service already exists.
+	created := false
 	s, err := m.OpenService(serviceName)
 	if err == nil {
-		s.Close()
-		return fmt.Errorf("service %q already exists", serviceName)
+		defer s.Close()
+		if err := updateService(s, exePath, configPath, addr); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return fmt.Errorf("cannot open service %q: %w", serviceName, err)
+	} else {
+		created = true
+		s, err = m.CreateService(serviceName, exePath, mgr.Config{
+			DisplayName: serviceDisplay,
+			Description: serviceDesc,
+			StartType:   mgr.StartAutomatic,
+		}, "--config", configPath, "--addr", addr)
+		if err != nil {
+			return fmt.Errorf("cannot create service: %w", err)
+		}
+		defer s.Close()
 	}
-
-	s, err = m.CreateService(serviceName, exePath, mgr.Config{
-		DisplayName: serviceDisplay,
-		Description: serviceDesc,
-		StartType:   mgr.StartAutomatic,
-	}, "--config", configPath, "--addr", addr)
-	if err != nil {
-		return fmt.Errorf("cannot create service: %w", err)
-	}
-	defer s.Close()
 
 	// Recovery actions and the Event Log source are what make a failure of this
 	// service visible and self-healing; neither is worth failing the install
 	// over, so they are reported and stepped over rather than returned.
+	//
+	// Both are re-applied on update as well as on create: an installation
+	// upgraded from a viewer that predates them would otherwise never gain
+	// them.
 	if err := s.SetRecoveryActions([]mgr.RecoveryAction{
 		{Type: mgr.ServiceRestart, Delay: restartDelay},
 		{Type: mgr.ServiceRestart, Delay: restartDelay},
@@ -187,7 +234,12 @@ func installService(exePath, configPath, addr string) error {
 		osLogError(fmt.Sprintf("cannot register event log source %q: %v", eventLogSource, err))
 	}
 
-	osLogInfo(fmt.Sprintf("Service %q installed successfully", serviceName))
+	if created {
+		osLogInfo(fmt.Sprintf("Service %q installed successfully", serviceName))
+	} else {
+		osLogInfo(fmt.Sprintf("Service %q updated — restart it to run the new registration",
+			serviceName))
+	}
 	return nil
 }
 
@@ -307,24 +359,33 @@ func uninstallService(timeout time.Duration) error {
 
 	s, err := m.OpenService(serviceName)
 	if err != nil {
-		return fmt.Errorf("service %q not found: %w", serviceName, err)
-	}
-	defer s.Close()
+		if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			return fmt.Errorf("cannot open service %q: %w", serviceName, err)
+		}
+		// Nothing registered is the state --uninstall is asking for.  This is
+		// what lets an install script deregister unconditionally instead of
+		// running --uninstall and swallowing its errors.  The Event Log source
+		// is still removed below: an interrupted uninstall must not leave it
+		// behind.
+		osLogInfo(fmt.Sprintf("Service %q is not registered; nothing to remove", serviceName))
+	} else {
+		defer s.Close()
 
-	// Deleting a service that is still running only marks it for deletion: the
-	// registration lingers, and the next CreateService fails with
-	// ERROR_SERVICE_MARKED_FOR_DELETE.  Waiting here is what makes an install
-	// that follows an uninstall reliable.
-	if err := stopAndWait(s, timeout); err != nil {
-		return err
-	}
+		// Deleting a service that is still running only marks it for deletion:
+		// the registration lingers, and the next CreateService fails with
+		// ERROR_SERVICE_MARKED_FOR_DELETE.  Waiting here is what makes an
+		// install that follows an uninstall reliable.
+		if err := stopAndWait(s, timeout); err != nil {
+			return err
+		}
 
-	if err := s.Delete(); err != nil {
-		return fmt.Errorf("cannot delete service: %w", err)
-	}
+		if err := s.Delete(); err != nil {
+			return fmt.Errorf("cannot delete service: %w", err)
+		}
 
-	// Log before removing the source, so this entry still reaches the Event Log.
-	osLogInfo(fmt.Sprintf("Service %q uninstalled", serviceName))
+		// Log before removing the source, so this entry still reaches the Event Log.
+		osLogInfo(fmt.Sprintf("Service %q uninstalled", serviceName))
+	}
 	if err := removeOsLog(); err != nil {
 		osLogError(fmt.Sprintf("cannot remove event log source %q: %v", eventLogSource, err))
 	}

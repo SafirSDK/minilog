@@ -113,7 +113,8 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
     Check: NeedsAddPath('{app}\tools')
 
 [Run]
-; Register the Windows service, pointing it at the installed config.
+; Register the Windows service, pointing it at the installed config.  On an
+; upgrade the service is already registered and this updates it in place.
 Filename: "{app}\minilog.exe"; \
     Parameters: "--install ""{commonappdata}\minilog\minilog.conf"""; \
     Flags: runhidden waituntilterminated; \
@@ -165,8 +166,19 @@ begin
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
 end;
 
-// On upgrade installs, stop and remove existing services before new binaries
-// are copied, so the files are not locked.
+// On upgrade installs, stop the running services before new binaries are copied
+// over them.  --stop waits for the service process to exit, not merely for the
+// SCM to report SERVICE_STOPPED, which is what makes the copy that follows safe:
+// a running image cannot be overwritten.
+//
+// The upgrade sequence as a whole is
+//
+//     --stop (both services)  ->  copy files  ->  --install (both)  ->  sc start
+//
+// with --install and `sc start` run from [Run] below.  The services are
+// deliberately not deregistered: --install updates an existing registration in
+// place, preserving the start type and the service account an administrator may
+// have set by hand.
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
@@ -174,9 +186,9 @@ begin
   if CurStep = ssInstall then
   begin
     // Ignore errors — on a fresh install the exes don't exist yet.
-    Exec(ExpandConstant('{app}\minilog-web-viewer.exe'), '--uninstall', '',
+    Exec(ExpandConstant('{app}\minilog-web-viewer.exe'), '--stop', '',
          SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(ExpandConstant('{app}\minilog.exe'), '--uninstall', '',
+    Exec(ExpandConstant('{app}\minilog.exe'), '--stop', '',
          SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;
