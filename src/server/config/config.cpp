@@ -16,6 +16,7 @@
 #include "config.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
@@ -23,6 +24,7 @@
 #include <cctype>
 #include <set>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
 
 namespace minilog
@@ -41,6 +43,27 @@ const std::unordered_map<std::string, int> kFacilityNames = {
     {"logalert", 14}, {"clock2", 15}, {"local0", 16},  {"local1", 17},   {"local2", 18},
     {"local3", 19},   {"local4", 20}, {"local5", 21},  {"local6", 22},   {"local7", 23},
 };
+
+// Reject an address that boost::asio cannot parse, naming the key and the value.
+//
+// Both hosts reach make_address() later — in UdpServer::start() and the Forwarder
+// constructor — where the throwing overload would escape as a bare "Invalid
+// argument" and, for the forwarding host, abort the process outright. Catching it
+// here turns it into an ordinary config error that runServer reports via
+// osLogError, which is what puts it in the Windows Event Log.
+//
+// Names are not resolved: make_address takes literals only. IPv4 and IPv6
+// literals are both accepted, matching what the server already does with them.
+void requireAddress(const std::string& label, const std::string& value)
+{
+    boost::system::error_code ec;
+    boost::asio::ip::make_address(value, ec);
+    if (ec)
+    {
+        throw std::runtime_error("Invalid " + label + ": '" + value +
+                                 "' is not an IP address (names are not resolved)");
+    }
+}
 
 // Get an integer field from the property tree, throwing std::runtime_error for
 // non-integer values (e.g. "abc"). Returns defaultVal when the key is absent.
@@ -210,6 +233,7 @@ Config loadConfig(const std::string& path)
 
     // [server]
     cfg.host = tree.get<std::string>("server.host", cfg.host);
+    requireAddress("[server] host", cfg.host);
 
     {
         const int port = requireInt(tree, "server.udp_port", static_cast<int>(cfg.udpPort));
@@ -272,9 +296,15 @@ Config loadConfig(const std::string& path)
         cfg.forwarding.port = static_cast<uint16_t>(port);
     }
 
-    if (cfg.forwarding.enabled && cfg.forwarding.host.empty())
+    if (cfg.forwarding.enabled)
     {
-        throw std::runtime_error("[forwarding] enabled = true requires a host address");
+        if (cfg.forwarding.host.empty())
+        {
+            throw std::runtime_error("[forwarding] enabled = true requires a host address");
+        }
+        // Only when enabled: a stale host under enabled = false harms nothing and
+        // rejecting it would break configs that work today.
+        requireAddress("[forwarding] host", cfg.forwarding.host);
     }
 
     return cfg;

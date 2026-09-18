@@ -75,7 +75,8 @@ include_malformed = true
 ; Set to true to forward received messages to another syslog endpoint.
 enabled = false
 
-; Destination hostname or IP address.
+; Destination IP address. Names are not resolved — an unparseable value is a
+; config error at startup.
 host = 10.0.0.5
 
 ; Destination UDP port.

@@ -242,7 +242,7 @@ Rotated filenames insert a generation number before the extension:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `false` | Enable UDP forwarding |
-| `host` | — | Destination hostname or IP |
+| `host` | — | Destination IP address (names are not resolved) |
 | `port` | `514` | Destination UDP port |
 | `facility` | `*` | Facilities to forward |
 | `max_message_size` | `2048` | Truncate messages longer than this (bytes); appends `... [TRUNCATED: N bytes]` |

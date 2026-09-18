@@ -327,6 +327,87 @@ class TestMultiWorker(unittest.TestCase):
             self.assertGreaterEqual(len(lines), total * 9 // 10)
 
 
+# ── Address validation ────────────────────────────────────────────────────────
+
+
+class TestInvalidAddresses(unittest.TestCase):
+    """Neither host field is resolvable, and both used to fail unreadably.
+
+    An unparseable [forwarding] host aborted the process (SIGABRT, no message
+    naming the key), and an unparseable [server] host exited non-zero with
+    nothing on stderr at all. Both must now be ordinary config errors. Asserting
+    on stderr covers it on every platform: an abort never gets that far.
+    """
+
+    def _run_with_config(self, d: Path, body: str) -> subprocess.CompletedProcess:
+        conf = d / "minilog.conf"
+        conf.write_text(body)
+        return subprocess.run(
+            [BINARY, str(conf)], capture_output=True, text=True, timeout=10
+        )
+
+    def test_hostname_as_forwarding_host_is_a_config_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            r = self._run_with_config(
+                d,
+                "[server]\n"
+                "host = 127.0.0.1\n"
+                f"udp_port = {free_port()}\n"
+                "\n"
+                "[output.main]\n"
+                f"text_file = {d / 'syslog.log'}\n"
+                "\n"
+                "[forwarding]\n"
+                "enabled = true\n"
+                "host = syslog.example.com\n"
+                "port = 514\n",
+            )
+
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("[forwarding] host", r.stderr)
+            self.assertIn("syslog.example.com", r.stderr)
+
+    def test_hostname_as_server_host_is_a_config_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            r = self._run_with_config(
+                d,
+                "[server]\n"
+                "host = localhost\n"
+                f"udp_port = {free_port()}\n"
+                "\n"
+                "[output.main]\n"
+                f"text_file = {d / 'syslog.log'}\n",
+            )
+
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("[server] host", r.stderr)
+            self.assertIn("localhost", r.stderr)
+
+    def test_bind_failure_is_still_reported(self):
+        """The bind error moved from start() to its caller; it must still appear."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as blocker:
+                blocker.bind(("127.0.0.1", 0))
+                busy_port = blocker.getsockname()[1]
+                r = self._run_with_config(
+                    d,
+                    "[server]\n"
+                    "host = 127.0.0.1\n"
+                    f"udp_port = {busy_port}\n"
+                    "\n"
+                    "[output.main]\n"
+                    f"text_file = {d / 'syslog.log'}\n",
+                )
+
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn(str(busy_port), r.stderr)
+            # Reported by runServer now, so exactly once.
+            self.assertEqual(r.stderr.count("failed to bind"), 1)
+
+
 # ── Filesystem failure handling ───────────────────────────────────────────────
 
 

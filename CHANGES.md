@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **An invalid `host` is now a config error, not a crash or a silent exit.** Neither `[server]
+  host` nor `[forwarding] host` was validated, and both are passed to an address parser that does
+  not resolve names. A hostname or typo in `[forwarding] host` aborted the process with `SIGABRT`;
+  the same in `[server] host` exited non-zero with nothing on stderr and nothing in the Event Log.
+  `loadConfig` now rejects both, naming the key and the value, and startup failures from the
+  server socket are reported by the caller so they can no longer be swallowed.
+  `minilog.conf.example` said "hostname or IP address" and now says IP address.
 - **A filesystem error no longer aborts the whole server.** Six `std::filesystem` calls on the
   write and rotation paths used the throwing overloads. An exception from any of them escaped the
   sink's strand handler and then `io_context::run()` on a worker thread, where it became

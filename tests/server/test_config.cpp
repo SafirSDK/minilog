@@ -452,6 +452,49 @@ BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Forwarding section ───────────────────────────────────────────────────────
 
+BOOST_AUTO_TEST_SUITE(server_host)
+
+BOOST_AUTO_TEST_CASE(hostname_throws_naming_key_and_value)
+{
+    TempFile tmp("[server]\nhost=localhost\n\n[output.m]\ntext_file=/tmp/f\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for a non-address server host");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[server] host") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("localhost") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(malformed_address_throws)
+{
+    TempFile tmp("[server]\nhost=192.168.1.999\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(ipv4_and_wildcard_accepted)
+{
+    TempFile tmp("[server]\nhost=127.0.0.1\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_EQUAL(loadConfig(tmp.path).host, "127.0.0.1");
+
+    TempFile wild("[server]\nhost=0.0.0.0\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_EQUAL(loadConfig(wild.path).host, "0.0.0.0");
+}
+
+BOOST_AUTO_TEST_CASE(ipv6_host_accepted)
+{
+    // #24 settled that IPv6 literals keep working rather than being rejected,
+    // so validation checks parseability only, never the address family.
+    TempFile tmp("[server]\nhost=::1\n\n[output.m]\ntext_file=/tmp/f\n");
+    BOOST_CHECK_EQUAL(loadConfig(tmp.path).host, "::1");
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(forwarding_section)
 
 BOOST_AUTO_TEST_CASE(forwarding_port_zero_throws)
@@ -484,6 +527,53 @@ BOOST_AUTO_TEST_CASE(forwarding_facility_filter)
     BOOST_REQUIRE(facs.size() == 2);
     BOOST_TEST(facs[0] == 16);
     BOOST_TEST(facs[1] == 17);
+}
+
+// Both host fields reach boost::asio::make_address later — in the Forwarder
+// constructor and UdpServer::start(). Unvalidated, an unparseable value aborted
+// the process (forwarding) or exited silently (server); loadConfig has to be the
+// thing that rejects it, so the message names the key and the value.
+
+BOOST_AUTO_TEST_CASE(forwarding_hostname_throws_naming_key_and_value)
+{
+    // The documented example used to invite exactly this: make_address does not
+    // resolve names, so a hostname was a core dump.
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=syslog.example.com\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for a non-address forwarding host");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[forwarding] host") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("syslog.example.com") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_malformed_address_throws)
+{
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=10.0.0.5:514\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_host_not_validated_when_disabled)
+{
+    // Nothing constructs a Forwarder in this case, and rejecting it would break
+    // configs that work today.
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
+                 "[forwarding]\nenabled=false\nhost=syslog.example.com\n");
+    BOOST_CHECK_NO_THROW(loadConfig(tmp.path));
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_ipv6_host_accepted)
+{
+    TempFile tmp("[output.m]\ntext_file=/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=::1\n");
+    BOOST_CHECK_NO_THROW(loadConfig(tmp.path));
 }
 
 BOOST_AUTO_TEST_CASE(forwarding_enabled_no_host_throws)

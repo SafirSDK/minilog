@@ -55,10 +55,23 @@ int runServer(const std::string& configPath)
 
     minilog::OutputManager outputMgr(ioc, cfg);
 
+    // The only constructor on this path that can throw: it resolves the
+    // forwarding endpoint. loadConfig already rejects an unparseable host, so
+    // reaching the catch means something else went wrong — which must still be a
+    // reported startup failure rather than an abort.
     std::unique_ptr<minilog::Forwarder> forwarder;
-    if (cfg.forwarding.enabled)
+    try
     {
-        forwarder = std::make_unique<minilog::Forwarder>(ioc, cfg.forwarding);
+        if (cfg.forwarding.enabled)
+        {
+            forwarder = std::make_unique<minilog::Forwarder>(ioc, cfg.forwarding);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        minilog::osLogError(std::string("minilog: failed to set up forwarding: ") + e.what());
+        outputMgr.close();
+        return EXIT_FAILURE;
     }
 
     minilog::UdpServer server(ioc, cfg, outputMgr, forwarder.get());
@@ -75,9 +88,12 @@ int runServer(const std::string& configPath)
     {
         server.start();
     }
-    catch (const std::exception& /*e*/)
+    catch (const std::exception& e)
     {
-        // osLogError already called inside start(); just exit.
+        // Log here rather than inside start(): a throw from before start()'s own
+        // error handling used to exit silently, with nothing on stderr and
+        // nothing in the Event Log.
+        minilog::osLogError(e.what());
         outputMgr.close();
         return EXIT_FAILURE;
     }

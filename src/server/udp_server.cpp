@@ -36,8 +36,18 @@ UdpServer::UdpServer(boost::asio::io_context& ioc,
 
 void UdpServer::start()
 {
-    using udp          = boost::asio::ip::udp;
-    const auto address = boost::asio::ip::make_address(m_cfg.host);
+    using udp = boost::asio::ip::udp;
+
+    // loadConfig validates this, so a failure here means UdpServer was built from
+    // a config that did not come through it. Report it rather than throwing a
+    // bare system_error from outside the handler below.
+    boost::system::error_code addrEc;
+    const auto address = boost::asio::ip::make_address(m_cfg.host, addrEc);
+    if (addrEc)
+    {
+        throw std::runtime_error("minilog: invalid [server] host '" + m_cfg.host +
+                                 "': " + addrEc.message());
+    }
     const udp::endpoint ep(address, m_cfg.udpPort);
 
     try
@@ -62,10 +72,9 @@ void UdpServer::start()
     }
     catch (const boost::system::system_error& e)
     {
-        const std::string msg =
-            "minilog: failed to bind UDP port " + std::to_string(m_cfg.udpPort) + ": " + e.what();
-        osLogError(msg);
-        throw std::runtime_error(msg);
+        // Reported by the caller, so a bind failure is not logged twice.
+        throw std::runtime_error("minilog: failed to bind UDP port " +
+                                 std::to_string(m_cfg.udpPort) + ": " + e.what());
     }
 
     receive();
