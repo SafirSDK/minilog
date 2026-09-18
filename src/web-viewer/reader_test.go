@@ -1372,6 +1372,262 @@ func TestReadBackward_LargeFile_MultipleChunks(t *testing.T) {
 	}
 }
 
+// ── ReadBackward — lines longer than one chunk ───────────────────────────────
+
+// padLine returns a JSONL line of exactly n bytes (excluding the newline),
+// carrying id so the line can be identified in failure messages.
+func padLine(t *testing.T, n int, id string) string {
+	t.Helper()
+	base := makeLine(id, "info", "daemon")
+	if len(base) > n {
+		t.Fatalf("padLine: %q already needs %d bytes, want %d", id, len(base), n)
+	}
+	return makeLine(id+strings.Repeat("-", n-len(base)), "info", "daemon")
+}
+
+// checkBackwardRoundTrip reads the whole chain backwards and asserts that it
+// yields want byte for byte, at the offsets implied by concatenating want, and
+// that ReadForward from each returned offset re-reads the same line.
+func checkBackwardRoundTrip(t *testing.T, fc *FileChain, want []string) {
+	t.Helper()
+
+	got, offsets, firstOffset, _, err := fc.ReadBackward(fc.TailOffset(), len(want)+10, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("want %d lines, got %d (lengths %v)", len(want), len(got), lineLengths(got))
+	}
+
+	var expected int64
+	for i, w := range want {
+		if string(got[i]) != w {
+			t.Fatalf("line %d differs: want %d bytes, got %d bytes", i, len(w), len(got[i]))
+		}
+		if offsets[i] != expected {
+			t.Fatalf("offset[%d]: want %d, got %d", i, expected, offsets[i])
+		}
+		expected += int64(len(w)) + 1
+
+		fwd, _, _, _, ferr := fc.ReadForward(offsets[i], 1, noFilter())
+		if ferr != nil {
+			t.Fatalf("ReadForward(%d) error: %v", offsets[i], ferr)
+		}
+		if len(fwd) != 1 || string(fwd[0]) != w {
+			t.Fatalf("ReadForward from offset[%d]=%d did not re-read line %d", i, offsets[i], i)
+		}
+	}
+	if firstOffset != offsets[0] {
+		t.Errorf("firstOffset: want %d, got %d", offsets[0], firstOffset)
+	}
+}
+
+// lineLengths summarises a result set without dumping megabytes into the log.
+func lineLengths(lines [][]byte) []int {
+	out := make([]int, len(lines))
+	for i, l := range lines {
+		out[i] = len(l)
+	}
+	return out
+}
+
+func TestReadBackward_LineLongerThanChunk_ReturnedIntact(t *testing.T) {
+	// A single line several backwardChunkSize (64 KB) chunks long used to come
+	// back as one fragment per chunk, none of them valid JSON, so the browser
+	// dropped the entry entirely.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+
+	line := makeLine(strings.Repeat("x", 200*1024), "info", "daemon")
+	writeLines(t, p, []string{line})
+
+	fc := chainFromFiles(t, []string{p})
+	checkBackwardRoundTrip(t, fc, []string{line})
+}
+
+func TestReadBackward_LongLineAmongShortLines_NoBytesLost(t *testing.T) {
+	// The long line's chunk boundaries fall inside neighbouring short lines
+	// too, which is where the old boundary adjustment ate one content byte.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+
+	lines := []string{
+		makeLine("before-1", "info", "daemon"),
+		makeLine("before-2", "warning", "auth"),
+		makeLine(strings.Repeat("y", 150*1024), "info", "daemon"),
+		makeLine("after-1", "err", "daemon"),
+		makeLine(strings.Repeat("z", 70*1024), "notice", "daemon"),
+		makeLine("after-2", "info", "daemon"),
+	}
+	writeLines(t, p, lines)
+
+	fc := chainFromFiles(t, []string{p})
+	checkBackwardRoundTrip(t, fc, lines)
+}
+
+func TestReadBackward_ShortLines_MisalignedChunkBoundary(t *testing.T) {
+	// 63-byte records do not divide the 64 KB chunk size, so every chunk
+	// boundary lands mid-line. Each one used to split a record in two and
+	// silently drop one byte of it.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+
+	const lineBytes = 62 // + '\n' = 63
+	var lines []string
+	for i := 0; i < 1700; i++ { // ~107 KB, spanning two chunks
+		lines = append(lines, padLine(t, lineBytes, fmt.Sprintf("m%04d", i)))
+	}
+	writeLines(t, p, lines)
+
+	fc := chainFromFiles(t, []string{p})
+	checkBackwardRoundTrip(t, fc, lines)
+}
+
+func TestReadBackward_MultiFileChain_MultiChunkLines(t *testing.T) {
+	// Each generation holds a line spanning several chunks; the carried
+	// fragment must not leak from one file into the next.
+	dir := t.TempDir()
+	p0 := filepath.Join(dir, "old.jsonl")
+	p1 := filepath.Join(dir, "mid.jsonl")
+	p2 := filepath.Join(dir, "new.jsonl")
+
+	oldLines := []string{
+		makeLine("old-short", "info", "daemon"),
+		makeLine(strings.Repeat("a", 130*1024), "info", "daemon"),
+	}
+	midLines := []string{
+		makeLine(strings.Repeat("b", 70*1024), "warning", "daemon"),
+	}
+	newLines := []string{
+		makeLine(strings.Repeat("c", 200*1024), "err", "daemon"),
+		makeLine("new-short", "info", "daemon"),
+	}
+	writeLines(t, p0, oldLines)
+	writeLines(t, p1, midLines)
+	writeLines(t, p2, newLines)
+
+	fc := chainFromFiles(t, []string{p0, p1, p2})
+
+	var want []string
+	want = append(want, oldLines...)
+	want = append(want, midLines...)
+	want = append(want, newLines...)
+	checkBackwardRoundTrip(t, fc, want)
+}
+
+func TestReadBackward_LineSpanningFileBoundary_StaysSplit(t *testing.T) {
+	// A file whose last line has no terminating newline is not joined with the
+	// next generation — each file is its own line space, as ReadForward sees it.
+	dir := t.TempDir()
+	p0 := filepath.Join(dir, "old.jsonl")
+	p1 := filepath.Join(dir, "new.jsonl")
+
+	head := makeLine("unterminated", "info", "daemon")
+	if err := os.WriteFile(p0, []byte(head), 0o600); err != nil { // no trailing \n
+		t.Fatalf("WriteFile: %v", err)
+	}
+	tail := makeLine("next-generation", "info", "daemon")
+	writeLines(t, p1, []string{tail})
+
+	fc := chainFromFiles(t, []string{p0, p1})
+	got, offsets, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 lines, got %d: %v", len(got), lineTexts(got))
+	}
+	if string(got[0]) != head || string(got[1]) != tail {
+		t.Errorf("want [%q %q], got %v", head, tail, lineTexts(got))
+	}
+	if offsets[0] != 0 || offsets[1] != int64(len(head)) {
+		t.Errorf("offsets: want [0 %d], got %v", len(head), offsets)
+	}
+}
+
+func TestReadBackward_LineOverMaxLineBytes_DroppedNotBlocking(t *testing.T) {
+	// An over-long line is skipped rather than buffered, and must not hide the
+	// older lines behind it.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+
+	older := makeLine("older", "info", "daemon")
+	newer := makeLine("newer", "info", "daemon")
+	huge := makeLine(strings.Repeat("h", maxLineBytes+1), "info", "daemon")
+	writeLines(t, p, []string{older, huge, newer})
+
+	fc := chainFromFiles(t, []string{p})
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 lines (over-long one dropped), got %d (lengths %v)", len(got), lineLengths(got))
+	}
+	if string(got[0]) != older || string(got[1]) != newer {
+		t.Errorf("want [%q %q], got %v", older, newer, lineTexts(got))
+	}
+}
+
+func TestReadBackward_LongLine_CountLimitStopsEarly(t *testing.T) {
+	// Asking for fewer lines than the file holds must still return whole lines
+	// when the newest ones are multi-chunk.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+
+	lines := []string{
+		makeLine("oldest", "info", "daemon"),
+		makeLine(strings.Repeat("q", 80*1024), "info", "daemon"),
+		makeLine(strings.Repeat("r", 80*1024), "info", "daemon"),
+	}
+	writeLines(t, p, lines)
+
+	fc := chainFromFiles(t, []string{p})
+	got, offsets, _, _, err := fc.ReadBackward(fc.TailOffset(), 2, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 lines, got %d (lengths %v)", len(got), lineLengths(got))
+	}
+	if string(got[0]) != lines[1] || string(got[1]) != lines[2] {
+		t.Fatalf("wrong lines returned: lengths %v", lineLengths(got))
+	}
+	wantOff := int64(len(lines[0]) + 1)
+	if offsets[0] != wantOff {
+		t.Errorf("offset[0]: want %d, got %d", wantOff, offsets[0])
+	}
+}
+
+func TestReadBackward_LongLine_SinceClampStillApplies(t *testing.T) {
+	// `since` must clamp the same way when the boundary line spans chunks.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+
+	lines := []string{
+		makeLine(strings.Repeat("s", 90*1024), "info", "daemon"),
+		makeLine(strings.Repeat("t", 90*1024), "info", "daemon"),
+	}
+	writeLines(t, p, lines)
+
+	fc := chainFromFiles(t, []string{p})
+	since := int64(len(lines[0]) + 1)
+
+	got, offsets, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, noFilter(), since)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 line at/after since, got %d (lengths %v)", len(got), lineLengths(got))
+	}
+	if string(got[0]) != lines[1] {
+		t.Errorf("wrong line returned: %d bytes", len(got[0]))
+	}
+	if offsets[0] != since {
+		t.Errorf("offset[0]: want %d, got %d", since, offsets[0])
+	}
+}
+
 // ── NewFileChain — via naming convention (additional) ────────────────────────
 
 func TestNewFileChain_IncludesRotatedFiles_ReadOrder(t *testing.T) {

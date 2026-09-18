@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **The web viewer's tail view no longer loses log entries longer than 64 KB.** `ReadBackward`
+  reads the rotation chain backwards in 64 KB chunks and treated the first byte of every chunk as
+  the start of a line, so a record spanning a chunk boundary reached the browser as one fragment
+  per chunk — none of them valid JSON, all of them silently discarded by the renderer. One byte of
+  real content was deleted at each boundary as well. A single datagram is enough to produce such a
+  record: the maximum is 65507 bytes, and JSON escaping expands a control character sixfold. The
+  backward reader now carries the leading fragment of a line into the next chunk and emits the line
+  only once the newline preceding it has been found, so long entries appear in the tail view and in
+  upward scrolling just as search and forward paging already showed them. A line over 1 MB — the
+  ceiling the forward reader has always had — is skipped rather than buffered.
 - **The installer now removes its system `PATH` entry on uninstall.** The installer appends
   `{app}\tools` to the machine-wide `PATH`, and nothing ever took it out again: Inno does not
   revert a `{olddata}`-style append on its own, so every uninstall left a `PATH` entry pointing at

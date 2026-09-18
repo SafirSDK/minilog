@@ -178,6 +178,12 @@ func (fc *FileChain) fileAt(logicalOffset int64) (fileIdx int, physOffset int64)
 
 // ── ReadForward ───────────────────────────────────────────────────────────────
 
+// maxLineBytes bounds a single log line in every read path: the scanners in
+// ReadForward and Search reject longer tokens, and ReadBackward drops them.
+// Generous for JSONL — a maximum-size datagram with every byte escaped as
+// \u00NN still fits.
+const maxLineBytes = 1024 * 1024
+
 // ReadForward reads up to count lines forward from logicalOffset, applying
 // filter f. It crosses file boundaries transparently.
 //
@@ -217,8 +223,8 @@ func (fc *FileChain) ReadForward(logicalOffset int64, count int, f *Filter) (
 		// being written concurrently.
 		reader := io.LimitReader(fh, cf.size-physOffset)
 		scanner := bufio.NewScanner(reader)
-		// Support lines up to 1 MB (generous for JSONL).
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		// Long lines are handled explicitly; see maxLineBytes.
+		scanner.Buffer(make([]byte, 64*1024), maxLineBytes)
 
 		currentLogical := cf.start + physOffset
 
@@ -256,6 +262,28 @@ func (fc *FileChain) ReadForward(logicalOffset int64, count int, f *Filter) (
 
 const backwardChunkSize = 64 * 1024 // 64 KB per backward read
 
+// readChunk returns the bytes of path in [start, end). The whole range must be
+// readable: a short read means the file was truncated or rotated since the
+// chain was snapshotted, and every offset derived from that snapshot is then
+// meaningless, so the caller must give up on the file rather than splice
+// together bytes from two generations.
+func readChunk(path string, start, end int64) ([]byte, error) {
+	fh, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer fh.Close()
+
+	if _, err := fh.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, end-start)
+	if _, err := io.ReadFull(fh, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
 // ReadBackward reads up to count lines ending just before logicalOffset,
 // applying filter f. Returns lines in forward (oldest-first) order so the
 // caller can prepend them to the DOM without reversing.
@@ -285,6 +313,10 @@ func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter, sin
 	}
 	var collected []entry
 
+	// Set once a line starting before `since` is reached. Offsets only shrink
+	// as the walk goes back, so nothing further back can qualify either.
+	stop := false
+
 	fileIdx, physOffset := fc.fileAt(logicalOffset)
 	// physOffset may equal the file size if logicalOffset is at a file boundary.
 	// Move to the end of the previous file in that case.
@@ -293,66 +325,96 @@ func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter, sin
 		physOffset = fc.files[fileIdx].size
 	}
 
-	for fileIdx >= 0 && len(collected) < count {
+	for fileIdx >= 0 && !stop && len(collected) < count {
 		cf := fc.files[fileIdx]
-		readEnd := physOffset // read up to this physical position in this file
 
-		for readEnd > 0 && len(collected) < count {
+		// A line longer than a chunk spans several of them, and its bytes are
+		// only complete once the '\n' that precedes it has been found. carry
+		// holds the already-seen tail of such a line while the chunks holding
+		// its head are read. Lines never span *files*: each rotated generation
+		// begins on a line boundary, so carry is per file.
+		var carry []byte
+		// A line past maxLineBytes is dropped instead of buffered, so that one
+		// pathological line can neither pin unbounded memory nor — as simply
+		// bailing out would — hide every older line behind it.
+		carryTooLong := false
+
+		// take records one line: seg is its head, and when joinCarry is set the
+		// carried fragment is its tail. physPos is the line's start within cf.
+		// Returns false when the walk should stop.
+		take := func(seg []byte, physPos int64, joinCarry bool) bool {
+			lineStart := cf.start + physPos
+			if since >= 0 && lineStart < since {
+				return false
+			}
+
+			raw, dropped := seg, false
+			if joinCarry {
+				switch {
+				case carryTooLong || len(seg)+len(carry) > maxLineBytes:
+					dropped = true
+				case len(carry) > 0:
+					raw = make([]byte, 0, len(seg)+len(carry))
+					raw = append(raw, seg...)
+					raw = append(raw, carry...)
+				}
+				carry, carryTooLong = nil, false
+			}
+			if dropped {
+				return true
+			}
+
+			raw = bytes.TrimRight(raw, "\r")
+			if len(raw) > 0 && f.Match(raw) {
+				cp := make([]byte, len(raw))
+				copy(cp, raw)
+				collected = append(collected, entry{line: cp, offset: lineStart})
+			}
+			return true
+		}
+
+		for readEnd := physOffset; readEnd > 0 && !stop && len(collected) < count; {
 			chunkStart := readEnd - backwardChunkSize
 			if chunkStart < 0 {
 				chunkStart = 0
 			}
-			chunkSize := readEnd - chunkStart
 
-			fh, ferr := os.Open(cf.path)
-			if ferr != nil {
+			buf, rerr := readChunk(cf.path, chunkStart, readEnd)
+			if rerr != nil {
 				break
 			}
-			if _, serr := fh.Seek(chunkStart, io.SeekStart); serr != nil {
-				fh.Close()
-				break
-			}
-			buf := make([]byte, chunkSize)
-			n, rerr := io.ReadFull(fh, buf)
-			fh.Close()
-			if n == 0 || (rerr != nil && rerr != io.ErrUnexpectedEOF) {
-				break
-			}
-			buf = buf[:n]
 
-			// Find newlines from right to left.
-			// Each '\n' at position p means the line ending at p starts after
-			// the previous '\n'.
+			// Walk the chunk right to left. end is the exclusive end of the
+			// segment being built; the one segment reaching len(buf) is the
+			// one the carried fragment belongs to.
 			end := len(buf)
-			// If the chunk ends exactly at readEnd and readEnd < file size,
-			// the byte at end is the '\n' terminating the line before our
-			// window — skip it.
-			if readEnd < cf.size {
-				// The last byte in buf is a '\n' we already account for;
-				// scan from end-1 to avoid double-counting.
-				end--
+			for i := end - 1; i >= 0 && !stop && len(collected) < count; i-- {
+				if buf[i] != '\n' {
+					continue
+				}
+				stop = !take(buf[i+1:end], chunkStart+int64(i)+1, end == len(buf))
+				end = i
+			}
+			if stop || len(collected) >= count {
+				break
 			}
 
-			for i := end - 1; i >= 0 && len(collected) < count; i-- {
-				if buf[i] == '\n' || i == 0 {
-					lineStart := i
-					if buf[i] == '\n' {
-						lineStart = i + 1
-					}
-					raw := bytes.TrimRight(buf[lineStart:end], "\r")
-					logicalLineStart := cf.start + chunkStart + int64(lineStart)
+			if chunkStart == 0 {
+				// The first byte of a file always starts a line, so buf[:end]
+				// needs no further bytes to be complete.
+				stop = !take(buf[:end], 0, end == len(buf))
+				break
+			}
 
-					if since >= 0 && logicalLineStart < since {
-						break
-					}
-
-					if len(raw) > 0 && f.Match(raw) {
-						cp := make([]byte, len(raw))
-						copy(cp, raw)
-						collected = append(collected, entry{line: cp, offset: logicalLineStart})
-					}
-					end = i // next iteration ends before this newline
-				}
+			// buf[:end] is the tail of a line that starts below this chunk.
+			switch {
+			case carryTooLong || len(carry)+end > maxLineBytes:
+				carry, carryTooLong = nil, true
+			case end > 0:
+				joined := make([]byte, 0, end+len(carry))
+				joined = append(joined, buf[:end]...)
+				joined = append(joined, carry...)
+				carry = joined
 			}
 
 			readEnd = chunkStart
@@ -405,7 +467,7 @@ func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (result
 		}
 
 		scanner := bufio.NewScanner(fh)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		scanner.Buffer(make([]byte, 64*1024), maxLineBytes)
 
 		var physOffset int64
 		for scanner.Scan() {
