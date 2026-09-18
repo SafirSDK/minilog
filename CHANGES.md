@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **A datagram can no longer forge a second entry in the text sink.** The text sink wrote the
+  payload byte for byte, so an embedded newline ended the record and started another one that the
+  sender had written in full — including its own PRI, so the forged line could claim a facility and
+  severity the datagram never had, and nothing reading the file afterwards could tell it from a
+  genuine entry. C0 control characters and DEL are now escaped before the write: `\n`, `\r`, `\\`
+  for a literal backslash, and `\xNN` for the rest, which is the dialect the JSONL sink already
+  speaks. TAB stays literal and nothing above `0x7F` is touched, so UTF-8 text is unaffected. The
+  JSONL sink, the web viewer and the forwarding path already handled this correctly and are
+  unchanged.
+
 - **A UDP flood no longer grows minilog until the OS kills it.** The receive path had no admission
   control: each datagram was copied and posted to the io_context, the worker that picked it up
   posted a copy to every matching sink, and nothing anywhere asked how much was already queued. The

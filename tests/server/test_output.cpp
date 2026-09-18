@@ -20,6 +20,7 @@
 #include <boost/json.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -144,6 +145,45 @@ BOOST_AUTO_TEST_CASE(multiple_writes_appended)
     writeSync(lf, rfc3164Msg("line two"));
 
     BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), "line one\nline two\n");
+}
+
+// One datagram is one line, whatever the sender puts in it. An embedded newline
+// used to end the record and start a second one that the sender wrote in full —
+// PRI included — which nothing reading the file afterwards could tell from a
+// genuine entry.
+BOOST_AUTO_TEST_CASE(embedded_newline_cannot_forge_a_second_entry)
+{
+    OutputConfig cfg;
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.includeMalformed = true;
+
+    const std::string forged = "<0>Mar 15 12:00:00 host sshd[1]: root login SUCCEEDED";
+
+    LogFile lf(ioc, cfg);
+    writeSync(lf, rfc3164Msg("<14>Mar 15 12:00:00 host real: benign\n" + forged));
+
+    const auto contents = readAll(dir / "syslog.log");
+    BOOST_CHECK_EQUAL(contents, "<14>Mar 15 12:00:00 host real: benign\\n" + forged + "\n");
+    BOOST_CHECK_EQUAL(std::count(contents.begin(), contents.end(), '\n'), 1);
+}
+
+BOOST_AUTO_TEST_CASE(escaping_does_not_break_rotation_accounting)
+{
+    OutputConfig cfg;
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 8;
+    cfg.maxFiles         = 3;
+    cfg.includeMalformed = true;
+
+    // "a\nb" is three bytes in, five out. Rotation counts what was written, so
+    // the second write must land in a fresh file rather than being sized off the
+    // unescaped length.
+    LogFile lf(ioc, cfg);
+    writeSync(lf, rfc3164Msg("a\nb\nc"));
+    writeSync(lf, rfc3164Msg("second"));
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "a\\nb\\nc\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), "second\n");
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -803,6 +843,121 @@ BOOST_AUTO_TEST_CASE(valid_multibyte_and_invalid_interleaved)
     // Valid 2-byte (é), then an invalid byte, then valid 3-byte (€).
     const std::string in = "\xc3\xa9\xff\xe2\x82\xac";
     BOOST_CHECK_EQUAL(sanitizeUtf8(in), "\xc3\xa9" + R + "\xe2\x82\xac");
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── escapeControlChars ──────────────────────────────────────────────────────
+//
+// Tests call escapeControlChars() directly (declared in log_file.hpp). It must
+// leave one datagram unable to produce more than one line in the text sink,
+// stay reversible, and leave anything above 0x7F alone.
+
+BOOST_AUTO_TEST_SUITE(escape_control_chars)
+
+// ── Ordinary text — must pass through unchanged ──────────────────────────────
+
+BOOST_AUTO_TEST_CASE(empty_string)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars(""), "");
+}
+
+BOOST_AUTO_TEST_CASE(printable_ascii_unchanged)
+{
+    const std::string in = "<34>Oct 11 22:14:15 mymachine su[123]: hello, world!";
+    BOOST_CHECK_EQUAL(escapeControlChars(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(tab_stays_literal)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars("a\tb"), "a\tb");
+}
+
+// ── Line-forging characters ──────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(line_feed_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars("a\nb"), "a\\nb");
+}
+
+BOOST_AUTO_TEST_CASE(carriage_return_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars("a\rb"), "a\\rb");
+}
+
+BOOST_AUTO_TEST_CASE(crlf_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars("a\r\nb"), "a\\r\\nb");
+}
+
+BOOST_AUTO_TEST_CASE(nul_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars(std::string_view("a\0b", 3)), "a\\x00b");
+}
+
+BOOST_AUTO_TEST_CASE(escape_character_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars("a\x1b[2Jb"), "a\\x1B[2Jb");
+}
+
+BOOST_AUTO_TEST_CASE(del_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars(std::string("a\x7f") + "b"), "a\\x7Fb");
+}
+
+BOOST_AUTO_TEST_CASE(every_c0_except_tab_escaped)
+{
+    for (int c = 0x00; c <= 0x1F; ++c)
+    {
+        const std::string in(1, static_cast<char>(c));
+        const std::string out = escapeControlChars(in);
+        if (c == '\t')
+        {
+            BOOST_CHECK_EQUAL(out, in);
+        }
+        else
+        {
+            BOOST_CHECK_MESSAGE(out.size() > 1 && out[0] == '\\',
+                                "0x" << std::hex << c << " reached the file unescaped");
+        }
+    }
+}
+
+// ── Reversibility ────────────────────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(backslash_doubled)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars("a\\b"), "a\\\\b");
+}
+
+// A literal backslash-n in the datagram must not come out looking like an
+// escaped newline; without doubling the backslash the two would be the same
+// bytes and the transform would not be reversible.
+BOOST_AUTO_TEST_CASE(literal_backslash_n_distinct_from_escaped_newline)
+{
+    BOOST_CHECK_NE(escapeControlChars("a\\nb"), escapeControlChars("a\nb"));
+    BOOST_CHECK_EQUAL(escapeControlChars("a\\nb"), "a\\\\nb");
+}
+
+BOOST_AUTO_TEST_CASE(hex_escape_is_always_two_digits)
+{
+    // "\x1B" followed by hex digits: a C compiler would swallow "BAD" into the
+    // escape, a reader of this format takes exactly two digits and stops.
+    BOOST_CHECK_EQUAL(escapeControlChars(std::string("\x1b") + "BAD"), "\\x1BBAD");
+}
+
+// ── Non-ASCII — must pass through byte for byte ──────────────────────────────
+
+BOOST_AUTO_TEST_CASE(utf8_unchanged)
+{
+    const std::string in = "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e"; // 日本語
+    BOOST_CHECK_EQUAL(escapeControlChars(in), in);
+}
+
+BOOST_AUTO_TEST_CASE(eight_bit_bytes_unchanged)
+{
+    const std::string in = "\x80\xff\xc3\xa9";
+    BOOST_CHECK_EQUAL(escapeControlChars(in), in);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -234,6 +234,57 @@ class TestSmoke(unittest.TestCase):
             self.assertIn("from5424", log)
 
 
+# ── Log injection ─────────────────────────────────────────────────────────────
+
+
+class TestLogInjection(unittest.TestCase):
+    """One datagram must be one line in the text sink, whatever it contains.
+
+    The reproduction from the issue: an embedded newline used to end the record
+    and start a second one written entirely by the sender, PRI included, which
+    nothing reading the file afterwards could tell from a genuine entry.
+    """
+
+    def _run_and_read(self, payload: str) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            port = free_port()
+            conf = write_config(d, port)
+
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
+            try:
+                self.assertTrue(wait_for_port(port), "server did not start in time")
+                send_udp(payload, port)
+                time.sleep(0.3)
+            finally:
+                terminate(proc)
+                proc.wait(timeout=10)
+
+            return (d / "syslog.log").read_text()
+
+    def test_embedded_newline_produces_one_line(self):
+        forged = "<0>Mar 15 12:00:00 host sshd[1]: root login SUCCEEDED from 10.0.0.1"
+        log = self._run_and_read("<14>Mar 15 12:00:00 host real: benign\n" + forged)
+
+        self.assertEqual(log.count("\n"), 1)
+        self.assertNotIn("\n" + forged, log)
+        self.assertIn("benign\\n" + forged, log)
+
+    def test_control_characters_are_escaped(self):
+        log = self._run_and_read("<14>Mar 15 12:00:01 host app: \x1b[2J\x00\rdone")
+
+        self.assertEqual(log.count("\n"), 1)
+        self.assertNotIn("\x1b", log)
+        self.assertNotIn("\x00", log)
+        self.assertNotIn("\r", log)
+        self.assertIn("\\x1B[2J\\x00\\rdone", log)
+
+    def test_utf8_survives_escaping(self):
+        log = self._run_and_read("<14>Mar 15 12:00:02 host app: 日本語 café")
+
+        self.assertIn("日本語 café", log)
+
+
 # ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 

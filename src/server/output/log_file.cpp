@@ -154,6 +154,50 @@ std::string sanitizeUtf8(std::string_view s)
     return out;
 }
 
+// Escape C0 control characters and DEL so that one datagram always occupies
+// exactly one line in the text sink. Without this a sender can embed a newline
+// and author a second entry that is indistinguishable from a genuine one —
+// including its own PRI, so it appears to come from a facility the datagram
+// never had.
+//
+// The escapes are the ones boost::json already emits for the JSONL sink, so
+// both sinks speak one dialect, and doubling the backslash makes the transform
+// reversible. \xNN is always exactly two hex digits: unlike C, a hex escape
+// here never swallows the text that follows it.
+std::string escapeControlChars(std::string_view s)
+{
+    std::string out;
+    out.reserve(s.size());
+
+    for (const char ch : s)
+    {
+        const auto c = static_cast<unsigned char>(ch);
+
+        if (c == '\\')
+        {
+            out += "\\\\";
+        }
+        else if (c == '\n')
+        {
+            out += "\\n";
+        }
+        else if (c == '\r')
+        {
+            out += "\\r";
+        }
+        else if ((c < 0x20 && c != '\t') || c == 0x7F)
+        {
+            out += std::format("\\x{:02X}", c);
+        }
+        else
+        {
+            out += ch;
+        }
+    }
+
+    return out;
+}
+
 namespace
 {
 
@@ -292,7 +336,7 @@ void LogFile::doWrite(const SyslogMessage& msg)
 
     if (m_textStream.is_open())
     {
-        const std::string line = msg.raw + "\n";
+        const std::string line = escapeControlChars(msg.raw) + "\n";
         m_textStream.write(line.data(), static_cast<std::streamsize>(line.size()));
         m_textStream.flush();
         if (!m_textStream)

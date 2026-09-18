@@ -281,7 +281,7 @@ whether as both keys of one section or across two sections, is a config error.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `text_file` | — | Raw UDP payload bytes + `\n`, one line per message |
+| `text_file` | — | Raw UDP payload bytes + `\n`, one line per message ([control characters escaped](#text-file)) |
 | `jsonl_file` | — | One JSON object per line (see [JSONL format](#jsonl-format)) |
 | `max_size` | `0` (unlimited) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB` |
 | `max_files` | `10` | Rotated files to keep. `0` = unlimited |
@@ -311,7 +311,25 @@ Aliases: `kernel`=`kern`, `security`=`auth`, `system`=`daemon`, `cron`=`clock`, 
 
 ### Text file
 
-Raw UDP payload bytes written verbatim, followed by a single `\n`. No decoding or reformatting.
+Raw UDP payload bytes written verbatim, followed by a single `\n`. No decoding or reformatting,
+except that control characters are escaped so that one datagram is always exactly one line:
+
+| Byte | Written as |
+|------|------------|
+| LF (`0x0A`) | `\n` |
+| CR (`0x0D`) | `\r` |
+| backslash (`0x5C`) | `\\` |
+| any other C0 (`0x00`–`0x1F`) and DEL (`0x7F`) | `\xNN`, always two uppercase hex digits |
+| TAB (`0x09`) | itself — a tab cannot start a new line |
+
+Everything above `0x7F` is written byte for byte, so UTF-8 text is never mangled.
+
+Without this a sender could embed a newline in a datagram and write a second, entirely
+fabricated entry — PRI included, so it would appear to come from a facility the datagram never
+had — that nothing reading the file afterwards could distinguish from a genuine one. The
+escapes are the same ones the JSONL sink emits, and doubling the backslash keeps the transform
+reversible: `\n` in the file is always an escaped newline, and a literal backslash-n in the
+message is always written `\\n`.
 
 ### JSONL format
 

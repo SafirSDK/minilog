@@ -31,6 +31,13 @@ namespace minilog
 // Replace every invalid UTF-8 byte sequence with U+FFFD (0xEF 0xBF 0xBD).
 std::string sanitizeUtf8(std::string_view s);
 
+// Escape C0 control characters (0x00-0x1F) and DEL (0x7F) using C-style escapes
+// — \n, \r, \xNN with exactly two hex digits, and a doubled backslash for a
+// literal one, which is what keeps the transform reversible. TAB is left as-is:
+// it cannot start a new line, and escaping it only hurts readability. Bytes
+// above 0x7F pass through untouched, so UTF-8 text is never mangled.
+std::string escapeControlChars(std::string_view s);
+
 // Manages a pair of output files (text + jsonl) for one [output.X] section.
 // All public methods are safe to call from multiple threads — writes are
 // serialized through the strand.
