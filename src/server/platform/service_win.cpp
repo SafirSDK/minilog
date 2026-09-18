@@ -252,11 +252,29 @@ struct ServiceHandleCloser
 };
 using ScopedServiceHandle = std::unique_ptr<std::remove_pointer_t<SC_HANDLE>, ServiceHandleCloser>;
 
-struct HandleCloser
+// Not a unique_ptr: HANDLE is void*, and std::unique_ptr<void, D> is not
+// portable across standard libraries.
+class ScopedHandle
 {
-    void operator()(HANDLE handle) const noexcept { CloseHandle(handle); }
+public:
+    explicit ScopedHandle(HANDLE handle) : m_handle(handle) {}
+    ~ScopedHandle()
+    {
+        if (m_handle != nullptr)
+        {
+            CloseHandle(m_handle);
+        }
+    }
+
+    ScopedHandle(const ScopedHandle&)            = delete;
+    ScopedHandle& operator=(const ScopedHandle&) = delete;
+
+    HANDLE get() const { return m_handle; }
+    explicit operator bool() const { return m_handle != nullptr; }
+
+private:
+    HANDLE m_handle;
 };
-using ScopedHandle = std::unique_ptr<std::remove_pointer_t<HANDLE>, HandleCloser>;
 
 SERVICE_STATUS_PROCESS queryServiceStatus(SC_HANDLE svc)
 {
@@ -265,7 +283,7 @@ SERVICE_STATUS_PROCESS queryServiceStatus(SC_HANDLE svc)
     if (!QueryServiceStatusEx(svc,
                               SC_STATUS_PROCESS_INFO,
                               reinterpret_cast<LPBYTE>(&status),
-                              sizeof(status),
+                              static_cast<DWORD>(sizeof(status)),
                               &needed))
     {
         throw std::runtime_error("QueryServiceStatusEx failed: " + std::to_string(GetLastError()));
@@ -366,7 +384,8 @@ void installService(const std::string& configPath)
                                            nullptr,
                                            nullptr,
                                            nullptr,
-                                           nullptr);
+                                           nullptr));
+
     const bool created = static_cast<bool>(svc);
     if (!created)
     {
