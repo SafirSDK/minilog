@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **The web viewer no longer holds half-open connections open forever.** `http.Server` was built
+  with only `Addr` and `Handler`, and Go applies no timeouts by default, so a client that
+  connected and then stopped talking was never hung up on. Fifty connections each carrying half a
+  request header — about ten lines of script, no authentication and no traffic volume needed —
+  were all still open after 20 seconds, each costing a goroutine, a file descriptor and a read
+  buffer until the process ran out of descriptors and stopped accepting anything. On Windows the
+  viewer is an auto-start LocalSystem service, so once wedged it stays down until somebody
+  notices. The server now sets `ReadHeaderTimeout` (10 s), `ReadTimeout` (30 s) and `IdleTimeout`
+  (120 s); the same 50-connection test now leaves none of them open. `WriteTimeout` is
+  deliberately left unset, because a full-chain `/search` can legitimately take longer than any
+  value worth setting and a truncated response is indistinguishable from a complete one.
+
 - **One web-viewer URL can no longer exhaust the host's memory.** `count` on `/lines` and `limit`
   on `/search` were taken from the query string with no upper bound, and the read path
   materialises every matching line, copies it into a `[]string` and lets the JSON encoder buffer

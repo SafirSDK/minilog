@@ -5,6 +5,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -126,5 +129,160 @@ func TestServeUnbindableAddressFailsBeforeReady(t *testing.T) {
 	}
 	if ready {
 		t.Error("serve signalled ready despite failing to bind")
+	}
+}
+
+// ── Connection timeouts ───────────────────────────────────────────────────────
+//
+// http.Server has no timeouts by default, so a client that connects and then
+// stops talking is held forever. Each held connection costs a goroutine, a file
+// descriptor and a read buffer, and they accumulate until the process cannot
+// accept anything. These tests run the real newServer with millisecond
+// timeouts, so they prove the behaviour rather than restate the constants.
+
+// startTimeoutServer runs newServer on a loopback listener and returns its
+// address. handler may be nil, in which case a 204 handler is used.
+func startTimeoutServer(
+	t *testing.T, readHeader, read, idle time.Duration, handler http.Handler,
+) string {
+	t.Helper()
+	if handler == nil {
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot listen: %v", err)
+	}
+
+	srv := newServer(handler, readHeader, read, idle)
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	return ln.Addr().String()
+}
+
+// readUntilClosed reads from conn until the server hangs up. It fails the test
+// if conn's own deadline expires first, which is what "held open" looks like.
+func readUntilClosed(t *testing.T, conn net.Conn, what string) {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatalf("cannot set a read deadline: %v", err)
+	}
+
+	buf := make([]byte, 512)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				t.Fatalf("%s: the server held the connection instead of closing it", what)
+			}
+			return // EOF or reset — the server closed it, which is the point
+		}
+	}
+}
+
+func TestServerClosesHalfOpenConnection(t *testing.T) {
+	addr := startTimeoutServer(t, 200*time.Millisecond, time.Second, time.Second, nil)
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("cannot connect: %v", err)
+	}
+	defer conn.Close()
+
+	// The reproduction from the report: start a request and never finish the
+	// headers — no terminating blank line — then go quiet.
+	if _, err := conn.Write([]byte("GET /sinks HTTP/1.1\r\nHost: x\r\n")); err != nil {
+		t.Fatalf("cannot write a partial header: %v", err)
+	}
+
+	readUntilClosed(t, conn, "half-open connection")
+}
+
+func TestServerClosesIdleKeepAliveConnection(t *testing.T) {
+	addr := startTimeoutServer(t, time.Second, time.Second, 200*time.Millisecond, nil)
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("cannot connect: %v", err)
+	}
+	defer conn.Close()
+
+	// A complete request, answered, then silence. Without IdleTimeout the
+	// keep-alive connection would stay up indefinitely.
+	if _, err := conn.Write([]byte("GET /sinks HTTP/1.1\r\nHost: x\r\n\r\n")); err != nil {
+		t.Fatalf("cannot write the request: %v", err)
+	}
+
+	readUntilClosed(t, conn, "idle keep-alive connection")
+}
+
+// The other half of the requirement: a response the server is still
+// legitimately producing must not be cut off. A full-chain /search can take
+// far longer than the read timeouts, so this fails if WriteTimeout is ever set
+// to something a slow honest request can exceed.
+func TestSlowResponseIsNotTruncated(t *testing.T) {
+	const bodySize = 1 << 20 // 1 MiB, written in chunks after a long pause
+
+	slow := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Longer than every timeout newServer is given below.
+		time.Sleep(600 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		chunk := make([]byte, 4096)
+		for i := range chunk {
+			chunk[i] = 'x'
+		}
+		for written := 0; written < bodySize; written += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	})
+
+	addr := startTimeoutServer(t, 100*time.Millisecond, 200*time.Millisecond,
+		200*time.Millisecond, slow)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s/search", addr))
+	if err != nil {
+		t.Fatalf("the slow response never arrived: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("the response was cut off mid-body: %v", err)
+	}
+	if len(body) != bodySize {
+		t.Errorf("got %d bytes, want %d — the response was truncated", len(body), bodySize)
+	}
+}
+
+// The values serve() actually uses. The behavioural tests above run with
+// millisecond timeouts, so something has to say the shipped ones are set at
+// all, and that WriteTimeout is left off on purpose rather than forgotten.
+func TestServeUsesNonZeroTimeouts(t *testing.T) {
+	srv := newServer(http.NewServeMux(), readHeaderTimeout, readTimeout, idleTimeout)
+
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Error("ReadHeaderTimeout is unset")
+	}
+	if srv.ReadTimeout <= 0 {
+		t.Error("ReadTimeout is unset")
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Error("IdleTimeout is unset")
+	}
+	if srv.ReadHeaderTimeout > srv.ReadTimeout {
+		t.Errorf("ReadHeaderTimeout (%v) exceeds ReadTimeout (%v), so it can never fire",
+			srv.ReadHeaderTimeout, srv.ReadTimeout)
+	}
+	if srv.WriteTimeout != 0 {
+		t.Errorf("WriteTimeout is %v; it is left at 0 deliberately so that a slow "+
+			"full-chain /search cannot be truncated", srv.WriteTimeout)
 	}
 }

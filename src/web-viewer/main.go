@@ -112,6 +112,44 @@ func main() {
 	}
 }
 
+// Connection timeouts for the HTTP server.
+//
+// http.Server applies none of these by default, so a client that opens a
+// connection and then stops talking is held open indefinitely — the slowloris
+// case. Each held connection costs a goroutine, a file descriptor and a read
+// buffer, and they accumulate until the process runs out of descriptors and
+// stops accepting anything. It takes no traffic volume and no authentication to
+// do, and on Windows the viewer is an auto-start LocalSystem service that stays
+// down once it is wedged. gosec G112 flags the missing ReadHeaderTimeout
+// specifically.
+const (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+)
+
+// newServer builds the HTTP server.
+//
+// The timeouts are parameters rather than read from the constants directly so
+// that a test can demonstrate the behaviour in milliseconds instead of waiting
+// out the real values.
+//
+// WriteTimeout is deliberately left unset. It is the one timeout that can cut
+// off a response the server is still legitimately producing, and /search reads
+// the whole rotation chain — up to max_size x max_files, a gigabyte at the
+// documented defaults. The client would see a truncated body with no way to
+// tell it from a complete one. The three timeouts above already close every
+// connection an idle or half-open client can hold, so WriteTimeout buys nothing
+// against that and only risks breaking a slow honest request.
+func newServer(handler http.Handler, readHeader, read, idle time.Duration) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: readHeader,
+		ReadTimeout:       read,
+		IdleTimeout:       idle,
+	}
+}
+
 // serve loads the sinks, binds addr and serves until stop is closed.
 //
 // ready is called exactly once, after the config has loaded and the listen
@@ -128,9 +166,7 @@ func serve(configPath, addr string, stop <-chan struct{}, ready func()) error {
 	mux := http.NewServeMux()
 	registerHandlers(mux, sinks)
 
-	srv := &http.Server{
-		Handler: mux,
-	}
+	srv := newServer(mux, readHeaderTimeout, readTimeout, idleTimeout)
 
 	// Bind explicitly rather than via ListenAndServe, so that an unusable listen
 	// address is reported before ready() rather than after.

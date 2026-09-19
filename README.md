@@ -512,6 +512,13 @@ Anyone who can reach the listen address can read all exposed log data. Bind to `
 behind a reverse proxy that provides authentication. Do not expose it on an untrusted network
 without additional protection.
 
+**Connection timeouts:** the HTTP server closes a connection whose request headers are not
+complete within 10 seconds, whose request is not complete within 30 seconds, or that sits idle
+between keep-alive requests for 120 seconds. None of these are configurable. There is
+deliberately no write timeout: a full-chain `/search` can legitimately take a long time to
+produce, and cutting it off would hand the client a truncated response indistinguishable from a
+complete one.
+
 **Windows service:** `--install` registers the binary as an auto-start service named
 `minilog-web-viewer`. Pass `--config` and `--addr` at install time; those values are baked into
 the service entry. `--uninstall` stops and removes it, and `--stop` stops it without removing it —
