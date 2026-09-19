@@ -544,6 +544,12 @@ listen address is bound, and reports a failed run to the SCM as a service-specif
 | `GET /lines?sink=NAME&[tail=true\|offset=N&dir=forward\|backward]&count=N&sev=…&fac=…&inc=…&exc=…` | Page of log lines with offsets |
 | `GET /search?sink=NAME&q=TEXT&limit=N&sev=…&fac=…&inc=…&exc=…` | Full-chain search |
 
+`count` and `limit` default to 200 and are clamped to **5000**; a larger value is silently
+reduced rather than rejected. The ceiling bounds what one request can cost, since the response
+is built in memory before any of it is sent. It is not configurable, and the browser UI never
+asks for more than 200, so it is not a limit any normal client meets. On `/search` it bounds
+the results returned, not `total_matches`, which still counts every match in the chain.
+
 Filter parameters `sev` and `fac` accept comma-separated name strings (e.g. `sev=info,warning`, `fac=auth,daemon`).
 
 ## License

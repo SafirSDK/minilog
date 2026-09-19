@@ -64,7 +64,7 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 		q := r.URL.Query()
 		tail := q.Get("tail") == "true"
 		offset := parseInt64(q.Get("offset"), 0)
-		count := parseInt(q.Get("count"), 200)
+		count := parseLineCount(q.Get("count"), 200)
 		dir := q.Get("dir")
 		if dir == "" {
 			dir = "forward"
@@ -150,7 +150,7 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 
 		q := r.URL.Query()
 		query := q.Get("q")
-		limit := parseInt(q.Get("limit"), 200)
+		limit := parseLineCount(q.Get("limit"), 200)
 		since := parseInt64(q.Get("since"), -1)
 		f := parseFilter(r)
 
@@ -244,6 +244,29 @@ func parseFilter(r *http.Request) *Filter {
 	}
 
 	return f
+}
+
+// maxLines caps how many lines one request may ask for.
+//
+// The read path materialises every matching line as [][]byte, copies it into a
+// []string and lets json.Encoder buffer the whole response before writing a
+// byte, so an unbounded count costs several times the chain size in memory:
+// count=1000000000 against a 73 MB sink returned an 83 MB body and took the
+// process from 5 MB to 438 MB. At the documented defaults — max_size = 100MB,
+// max_files = 10, so a 1 GB chain — that is roughly 6 GB for a single GET, and
+// concurrent requests multiply it. The viewer normally runs on the collector's
+// host, so the process that gets OOM-killed may well be the syslog server.
+//
+// No attacker is needed: a bookmarked URL, a typo or a crawler will do it.
+// There is deliberately no config knob, because assets/app.js never asks for
+// more than BATCH (200) and no legitimate client comes near this.
+const maxLines = 5000
+
+// parseLineCount parses a caller-supplied line count. Non-numeric and
+// non-positive input falls back to def; anything above maxLines is clamped to
+// it rather than rejected, so an oversized request still answers usefully.
+func parseLineCount(s string, def int) int {
+	return min(parseInt(s, def), maxLines)
 }
 
 func parseInt(s string, def int) int {

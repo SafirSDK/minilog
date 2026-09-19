@@ -540,6 +540,97 @@ func TestHandler_Lines_BadCountFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// ── count / limit clamping ────────────────────────────────────────────────────
+
+// oversizedCountSink builds a sink holding maxLines+50 lines, so a clamped
+// response is distinguishable from one that simply ran out of lines.
+func oversizedCountSink(t *testing.T) Sink {
+	t.Helper()
+	dir := t.TempDir()
+	lines := make([]string, 0, maxLines+50)
+	for i := 0; i < maxLines+50; i++ {
+		lines = append(lines, makeLine(fmt.Sprintf("target %d", i), "info", "daemon"))
+	}
+	return makeSink(t, dir, "main", lines)
+}
+
+func TestParseLineCount_ClampsToMaxLines(t *testing.T) {
+	cases := []struct {
+		in   string
+		def  int
+		want int
+	}{
+		{"1000000000", 200, maxLines},
+		{fmt.Sprint(maxLines + 1), 200, maxLines},
+		{fmt.Sprint(maxLines), 200, maxLines},
+		{"200", 200, 200},
+		{"1", 200, 1},
+		// Non-numeric, zero and negative keep falling back to the default,
+		// which parseInt already handled.
+		{"notanumber", 200, 200},
+		{"0", 200, 200},
+		{"-5", 200, 200},
+		{"", 200, 200},
+	}
+	for _, c := range cases {
+		if got := parseLineCount(c.in, c.def); got != c.want {
+			t.Errorf("parseLineCount(%q, %d) = %d, want %d", c.in, c.def, got, c.want)
+		}
+	}
+}
+
+// The three read paths reached through /lines all take the same count, so each
+// one has to come back clamped: forward, backward (infinite scroll upward) and
+// tail (the live view's initial load).
+func TestHandler_Lines_OversizedCountIsClamped(t *testing.T) {
+	sink := oversizedCountSink(t)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	for _, path := range []string{
+		"/lines?sink=main&count=1000000000",
+		"/lines?sink=main&dir=backward&offset=999999999&count=1000000000",
+		"/lines?sink=main&tail=true&count=1000000000",
+	} {
+		var result linesResponse
+		decodeJSON(t, get(t, ts, path), &result)
+		if len(result.Lines) != maxLines {
+			t.Errorf("%s: got %d lines, want %d", path, len(result.Lines), maxLines)
+		}
+	}
+}
+
+// Clamping must not truncate a request that was already within the ceiling.
+func TestHandler_Lines_CountBelowCeilingIsHonoured(t *testing.T) {
+	sink := oversizedCountSink(t)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	var result linesResponse
+	decodeJSON(t, get(t, ts, "/lines?sink=main&tail=true&count=200"), &result)
+	if len(result.Lines) != 200 {
+		t.Errorf("got %d lines, want 200", len(result.Lines))
+	}
+}
+
+func TestHandler_Search_OversizedLimitIsClamped(t *testing.T) {
+	sink := oversizedCountSink(t)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	var result searchResponse
+	decodeJSON(t, get(t, ts, "/search?sink=main&q=target&limit=1000000000"), &result)
+
+	if len(result.Results) != maxLines {
+		t.Errorf("got %d results, want %d", len(result.Results), maxLines)
+	}
+	// The clamp bounds what is returned, not what is counted: the UI still
+	// reports how many matches exist in the chain.
+	if result.TotalMatches != maxLines+50 {
+		t.Errorf("total_matches = %d, want %d", result.TotalMatches, maxLines+50)
+	}
+}
+
 // ── /search — additional coverage ─────────────────────────────────────────────
 
 func TestHandler_Search_ContentType_IsJSON(t *testing.T) {

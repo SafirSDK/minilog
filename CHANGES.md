@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **One web-viewer URL can no longer exhaust the host's memory.** `count` on `/lines` and `limit`
+  on `/search` were taken from the query string with no upper bound, and the read path
+  materialises every matching line, copies it into a `[]string` and lets the JSON encoder buffer
+  the whole response before sending a byte — several times the chain size in RSS. Against a 73 MB
+  sink, `count=1000000000` returned an 89 MB body and took the process from 9 MB to 377 MB peak;
+  at the documented defaults (`max_size = 100MB` x `max_files = 10`) that is roughly 6 GB for a
+  single GET. Both are now clamped to 5000 lines: the same request returns 1.9 MB and peaks at
+  21 MB. No attacker is needed for the old behaviour — a bookmarked URL, a typo or a crawler
+  would do it — and because the viewer usually shares a host with the collector, the process
+  killed for memory could be the syslog server. The browser UI never asks for more than 200
+  lines, so no legitimate client is affected, and there is deliberately no setting for it.
+
 - **The cli-viewer no longer lets a syslog sender drive the operator's terminal.** ESC survived
   the whole pipeline — the server wrote it as a JSON escape, so the file stayed well-formed, and
   `json.loads` handed it back as a real ESC byte, which `print()` passed to the terminal. Anyone
