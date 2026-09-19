@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **The cli-viewer no longer lets a syslog sender drive the operator's terminal.** ESC survived
+  the whole pipeline — the server wrote it as a JSON escape, so the file stayed well-formed, and
+  `json.loads` handed it back as a real ESC byte, which `print()` passed to the terminal. Anyone
+  able to send a datagram could clear the screen, move the cursor back over entries already
+  printed, recolour a benign line as critical, change the window title, or write the clipboard.
+  C0 control characters and DEL are now escaped in **every** displayed field, not just `message`:
+  `hostname`, `app`, `msgid` and `pid` are parsed straight out of the datagram and are equally
+  attacker-controlled. An embedded newline in a message now renders on one line instead of
+  printing as a second, forged-looking entry. TAB and anything above `0x7F` are untouched, so
+  UTF-8 still displays, and the viewer's own colour codes are unaffected — those come from a
+  table, never from the record.
+
 - **A datagram can no longer forge a second entry in the text sink.** The text sink wrote the
   payload byte for byte, so an embedded newline ended the record and started another one that the
   sender had written in full — including its own PRI, so the forged line could claim a facility and

@@ -463,6 +463,17 @@ python3 minilog-cli-viewer.py [options]
 | `[filters]` | `exclude` | — | One pattern per line; combined with `--exclude` CLI flags |
 | `[filters]` | `include` | — | One pattern per line; combined with `--include` CLI flags |
 
+**Control characters on screen.** Every displayed field comes from the datagram, so every
+displayed field is escaped before it is printed: `\n`, `\r`, and `\xNN` (two uppercase hex
+digits) for the rest of C0 and DEL. Without this, ESC would reach the terminal and be obeyed —
+clearing the screen, moving the cursor back over entries already printed, recolouring a benign
+line as critical — and an embedded newline would let one record print as two.
+
+TAB prints as itself, and nothing above `0x7F` is touched, so UTF-8 messages display normally.
+Unlike the [text sink](#text-file), a literal backslash is **not** doubled: nothing decodes
+what is on screen, and doubling it would obscure every Windows path in a message. The viewer's
+own colour codes are unaffected — they are chosen from a table, never taken from the record.
+
 ### web-viewer
 
 `src/web-viewer/` — Go 1.25 HTTP server with an embedded single-page app. Reads JSONL files

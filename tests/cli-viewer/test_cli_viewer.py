@@ -716,6 +716,150 @@ class TestLogRotation(unittest.TestCase):
             self.assertIn("non-negative", result.stderr)
 
 
+# ── Terminal escape injection tests ──────────────────────────────────────────
+
+
+def _load_viewer_module():
+    """Import the viewer as a module so its helpers can be tested directly.
+
+    The filename has a dash in it, so a plain import will not do.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("minilog_cli_viewer", VIEWER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestEscapeControlChars(unittest.TestCase):
+    """escape_control_chars must leave a field able to print but never to act."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.escape = staticmethod(_load_viewer_module().escape_control_chars)
+
+    def test_escape_sequence_is_escaped(self):
+        self.assertEqual(self.escape("\x1b[2J\x1b[1;31mFAKE"), "\\x1B[2J\\x1B[1;31mFAKE")
+
+    def test_newline_is_escaped(self):
+        self.assertEqual(self.escape("a\nb"), "a\\nb")
+
+    def test_carriage_return_is_escaped(self):
+        self.assertEqual(self.escape("a\rb"), "a\\rb")
+
+    def test_nul_is_escaped(self):
+        self.assertEqual(self.escape("a\x00b"), "a\\x00b")
+
+    def test_del_is_escaped(self):
+        self.assertEqual(self.escape("a\x7fb"), "a\\x7Fb")
+
+    def test_tab_stays_literal(self):
+        self.assertEqual(self.escape("a\tb"), "a\tb")
+
+    def test_every_c0_except_tab_is_escaped(self):
+        for code in range(0x00, 0x20):
+            ch = chr(code)
+            out = self.escape(ch)
+            if ch == "\t":
+                self.assertEqual(out, ch)
+            else:
+                self.assertTrue(
+                    out.startswith("\\") and len(out) > 1,
+                    f"0x{code:02X} reached the terminal unescaped",
+                )
+
+    def test_backslash_is_left_alone(self):
+        """Unlike the text sink, the display does not double it: nothing decodes
+        what is on screen, and doubling would tax every Windows path."""
+        path = "opened C:\\Users\\svc\\app.log"
+        self.assertEqual(self.escape(path), path)
+
+    def test_utf8_is_untouched(self):
+        self.assertEqual(self.escape("日本語 café ☃"), "日本語 café ☃")
+
+    def test_printable_ascii_is_untouched(self):
+        self.assertEqual(self.escape("ordinary message text!"), "ordinary message text!")
+
+    def test_non_string_values_are_accepted(self):
+        self.assertEqual(self.escape(123), "123")
+
+
+class TestNoRawControlCharsReachStdout(unittest.TestCase):
+    """End to end: every displayed field is escaped, not just `message`.
+
+    `hostname`, `app`, `msgid` and `pid` are parsed straight out of the datagram
+    and are just as attacker-controlled as the message is.
+    """
+
+    def _show_all(self, record: dict) -> str:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            jsonl = tmpdir / "test.jsonl"
+            write_server_config(tmpdir, jsonl)
+            jsonl.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, VIEWER, "--show-all", "--no-color"],
+                cwd=tmpdir, capture_output=True, text=True, encoding="utf-8", timeout=5,
+            )
+            return result.stdout
+
+    @staticmethod
+    def _record(**overrides) -> dict:
+        record = {
+            "rcv": "2026-03-29T12:00:00Z",
+            "src": "192.168.1.1",
+            "proto": "RFC3164",
+            "facility": "daemon",
+            "severity": "INFO",
+            "hostname": "testhost",
+            "app": "testapp",
+            "pid": "123",
+            "msgid": None,
+            "message": "ordinary text",
+        }
+        record.update(overrides)
+        return record
+
+    def test_esc_in_message_does_not_reach_the_terminal(self):
+        stdout = self._show_all(
+            self._record(message="\x1b[2J\x1b[1;31mFAKE ALERT\x1b[0m")
+        )
+        self.assertNotIn("\x1b", stdout)
+        self.assertIn("\\x1B[2J", stdout)
+        self.assertIn("FAKE ALERT", stdout)
+
+    def test_esc_in_every_field_does_not_reach_the_terminal(self):
+        marker = "\x1b[2J"
+        stdout = self._show_all(
+            self._record(
+                hostname="host" + marker,
+                app="app" + marker,
+                pid="1" + marker,
+                message="msg" + marker,
+            )
+        )
+        self.assertNotIn("\x1b", stdout)
+        self.assertEqual(stdout.count("\\x1B[2J"), 4)
+
+    def test_embedded_newline_renders_on_one_line(self):
+        forged = "<0>Mar 15 12:00:00 host sshd[1]: root login SUCCEEDED"
+        stdout = self._show_all(self._record(message="benign\n" + forged))
+
+        self.assertEqual(stdout.count("\n"), 1, "the record printed as more than one line")
+        self.assertIn("benign\\n" + forged, stdout)
+
+    def test_other_control_chars_do_not_reach_the_terminal(self):
+        stdout = self._show_all(self._record(message="a\x00b\rc\x07d\x7fe"))
+
+        self.assertNotIn("\x00", stdout)
+        self.assertNotIn("\r", stdout)
+        self.assertNotIn("\x07", stdout)
+        self.assertNotIn("\x7f", stdout)
+        self.assertIn("a\\x00b\\rc\\x07d\\x7Fe", stdout)
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

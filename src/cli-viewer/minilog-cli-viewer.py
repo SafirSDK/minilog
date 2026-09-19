@@ -14,6 +14,7 @@ import configparser
 import json
 import os
 import platform
+import re
 import sys
 import time
 from collections import deque
@@ -284,18 +285,62 @@ def get_severity_color(severity: str | None) -> str:
         return ""
 
 
+# Anything that would drive the terminal rather than print on it. TAB is left
+# out deliberately: it cannot move the cursor off the current line, and escaping
+# it would only make columnar messages unreadable.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
+def escape_control_chars(value) -> str:
+    """Render a field so that it can only ever print, never act.
+
+    Every field here comes from the datagram, so every field is escaped, not
+    just `message`: `hostname`, `app`, `msgid` and `pid` are parsed straight out
+    of it. ESC survives the whole pipeline — the server writes it as a JSON
+    escape, so the file is well-formed, and json.loads gives it back as a real
+    ESC byte — and the terminal then obeys it: clear the screen, move the cursor
+    back over lines already printed, recolour a benign entry as critical, change
+    the window title, write the clipboard. A newline is the same problem in
+    miniature: it would let one record print as two.
+
+    The escapes are the ones the server's text sink uses, so a line on screen
+    reads the same way as a line in the file. A literal backslash is left alone,
+    unlike in the file: nothing decodes what is on screen, and doubling it would
+    tax every Windows path in every message for a distinction only forensics
+    would want. Nothing above 0x7F is touched, so UTF-8 still displays.
+    """
+    text = value if isinstance(value, str) else str(value)
+    if not _CONTROL_CHARS.search(text):
+        return text
+
+    def replace(m: re.Match) -> str:
+        ch = m.group()
+        if ch == "\n":
+            return "\\n"
+        if ch == "\r":
+            return "\\r"
+        return f"\\x{ord(ch):02X}"
+
+    return _CONTROL_CHARS.sub(replace, text)
+
+
 def format_message(record: dict, config: ViewerConfig) -> str:
     """Format a JSONL record for display"""
     parts = []
 
     for col in config.columns:
-        value = record.get(col)
+        raw = record.get(col)
 
-        if value is None:
+        if raw is None:
             continue
 
+        # Escaped before anything else touches it. The colour lookups below
+        # still take the raw value — they are table-driven and return "" for
+        # anything they do not recognise — but nothing raw reaches `parts`.
+        value = escape_control_chars(raw)
+
         if col == "rcv":
-            formatted = format_timestamp(value, config.timestamp_format)
+            formatted = escape_control_chars(format_timestamp(raw, config.timestamp_format))
             if config.use_colors:
                 parts.append(f"{Colors.BOLD}[{formatted}]{Colors.RESET}")
             else:
@@ -303,28 +348,28 @@ def format_message(record: dict, config: ViewerConfig) -> str:
 
         elif col == "facility":
             if config.use_colors:
-                color = get_facility_color(value)
+                color = get_facility_color(raw)
                 parts.append(f"{color}{value}{Colors.RESET}")
             else:
                 parts.append(value)
 
         elif col == "severity":
             if config.use_colors:
-                color = get_severity_color(value)
+                color = get_severity_color(raw)
                 parts.append(f"{color}{value}{Colors.RESET}")
             else:
                 parts.append(value)
 
         elif col == "pid":
-            if value:
+            if raw:
                 parts.append(f"[{value}]")
 
         elif col in ("src", "proto", "hostname", "app", "msgid"):
-            parts.append(str(value))
+            parts.append(value)
 
         elif col == "message":
             # Message is typically the last column and can be long
-            parts.append(str(value))
+            parts.append(value)
 
     return " ".join(parts)
 

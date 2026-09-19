@@ -73,6 +73,7 @@ Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 - Config discovery: looks for `minilog.conf` in `./`, platform default dir, then script dir;
   looks for `minilog-cli-viewer.conf` next to `minilog.conf` or `./`.
 - Key classes/functions: `ViewerConfig`, `tail_file()`, `format_message()`, `should_display()`,
+  `escape_control_chars()` (C0/DEL escaping applied to every displayed field),
   `_file_id()`, `_open_shared()` (Windows-aware FILE_SHARE_DELETE open).
 - Tests: `tests/cli-viewer/test_cli_viewer.py` (invoked via CTest).
 
