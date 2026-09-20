@@ -262,6 +262,12 @@ service and every later message routed to it is dropped. The failure is reported
 sinks and the forwarder keep running, and the process stays up. A closed sink is not reopened
 automatically, so restart minilog once the underlying storage problem is fixed.
 
+**Comments start a line; values run to the end of one.** `;` and `#` introduce a comment only as
+the first character of a line. After a `=` they are ordinary characters, so
+`jsonl_file = C:\logs\build#3.jsonl` names a file with a `#` in it, and
+`max_files = 10 ; ten generations` is not the number 10. All three programs that read this file —
+minilog, the cli-viewer and the web-viewer — read it that way.
+
 See [`minilog.conf.example`](minilog.conf.example) for a fully commented example.
 
 ### `[server]`

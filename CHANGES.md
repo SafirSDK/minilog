@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **The web viewer now opens the file minilog actually writes when the path contains `;` or `#`.**
+  Its config parser stripped everything after the first `;` or `#` in a value, which no other
+  reader of `minilog.conf` does: Boost's INI parser in the server keeps the whole value, and the
+  cli-viewer's `configparser` is built without `inline_comment_prefixes`. With
+  `jsonl_file = hash#name.jsonl` the server created and wrote `hash#name.jsonl` while the viewer
+  opened `hash` — and a sink file that is not there looks exactly like a sink that has had no
+  traffic yet, so the viewer showed an empty pane and no error. `#` is a legal filename character
+  on NTFS and ext4 alike. Values now run to the end of the line in the viewer as well; `;` and `#`
+  still start a comment at the beginning of a line. One consequence worth knowing: a trailing
+  `max_files = 10 ; ten generations` is not a number to either end, so both fall back to the
+  default of 10 rather than disagreeing about how deep to rotate.
+
 - **The web viewer no longer holds half-open connections open forever.** `http.Server` was built
   with only `Addr` and `Handler`, and Go applies no timeouts by default, so a client that
   connected and then stopped talking was never hung up on. Fifty connections each carrying half a

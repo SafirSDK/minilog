@@ -147,10 +147,15 @@ jsonl_file = auth.jsonl
 	}
 }
 
-func TestLoadSinks_InlineCommentStripped(t *testing.T) {
+// A value runs to the end of the line, exactly as the server reads it. The
+// viewer used to strip from the first ';' or '#', so it opened a different file
+// from the one minilog writes — silently, because a missing sink file is
+// indistinguishable from one that has had no traffic yet.
+
+func TestLoadSinks_SemicolonIsPartOfTheValue(t *testing.T) {
 	dir := t.TempDir()
-	abs := filepath.Join(dir, "syslog.jsonl")
-	p := writeConfig(t, dir, "[output.main]\njsonl_file = "+abs+" ; this is a comment\n")
+	abs := filepath.Join(dir, "semi;colon.jsonl")
+	p := writeConfig(t, dir, "[output.main]\njsonl_file = "+abs+"\n")
 	sinks, err := loadSinks(p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -160,16 +165,33 @@ func TestLoadSinks_InlineCommentStripped(t *testing.T) {
 	}
 }
 
-func TestLoadSinks_HashInlineCommentStripped(t *testing.T) {
+func TestLoadSinks_HashIsPartOfTheValue(t *testing.T) {
+	// '#' is a legal filename character on NTFS and ext4 alike.
 	dir := t.TempDir()
-	abs := filepath.Join(dir, "syslog.jsonl")
-	p := writeConfig(t, dir, "[output.main]\njsonl_file = "+abs+" # this is a comment\n")
+	abs := filepath.Join(dir, "hash#name.jsonl")
+	p := writeConfig(t, dir, "[output.main]\njsonl_file = "+abs+"\n")
 	sinks, err := loadSinks(p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if sinks[0].Path != abs {
 		t.Errorf("path: want %q, got %q", abs, sinks[0].Path)
+	}
+}
+
+func TestLoadSinks_TrailingCommentIsNotStripped(t *testing.T) {
+	// What somebody writing a comment after a value would get: the comment is
+	// part of the path, so the sink names a file that does not exist. That is
+	// the server's behaviour too, which is the point — one file, one reading.
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "[output.main]\njsonl_file = /var/log/syslog.jsonl ; the main sink\n")
+	sinks, err := loadSinks(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	const want = "/var/log/syslog.jsonl ; the main sink"
+	if sinks[0].Path != want {
+		t.Errorf("path: want %q, got %q", want, sinks[0].Path)
 	}
 }
 
@@ -261,18 +283,22 @@ func TestLoadSinks_SectionNameWithWhitespace(t *testing.T) {
 	}
 }
 
-func TestLoadSinks_MaxFiles_InlineComment_Stripped(t *testing.T) {
+func TestLoadSinks_MaxFiles_TrailingComment_FallsBackToDefault(t *testing.T) {
+	// "7 ; keep 7 generations" is not a number, so the value is ignored and the
+	// default applies. Boost does the same thing with the same line in the
+	// server — ptree::get<int>(path, default) returns the default when the
+	// value will not translate — so both ends rotate to the same depth.
 	dir := t.TempDir()
 	p := writeConfig(t, dir, `[output.main]
-jsonl_file = syslog.jsonl
+jsonl_file = /var/log/syslog.jsonl
 max_files = 7 ; keep 7 generations
 `)
 	sinks, err := loadSinks(p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if sinks[0].MaxFiles != 7 {
-		t.Errorf("MaxFiles: want 7, got %d", sinks[0].MaxFiles)
+	if sinks[0].MaxFiles != 10 {
+		t.Errorf("MaxFiles: want 10 (default), got %d", sinks[0].MaxFiles)
 	}
 }
 

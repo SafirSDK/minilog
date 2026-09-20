@@ -699,6 +699,30 @@ BOOST_AUTO_TEST_CASE(crlf_line_endings_parsed)
     BOOST_TEST(cfg.udpPort == 5514);
 }
 
+BOOST_AUTO_TEST_CASE(semicolon_and_hash_are_part_of_the_value)
+{
+    // There are no inline comments in this file format: a ';' or '#' after the
+    // '=' belongs to the value, which is what Boost's INI parser does and what
+    // the server therefore defines. The web-viewer used to strip from the first
+    // one and so opened "hash" while the server wrote "hash#name.log"; this test
+    // pins the behaviour the viewer now matches.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/hash#name.log\n"
+                 "jsonl_file=" ABS "/tmp/semi;colon.jsonl\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.outputs[0].textFile == ABS "/tmp/hash#name.log");
+    BOOST_TEST(cfg.outputs[0].jsonlFile == ABS "/tmp/semi;colon.jsonl");
+}
+
+BOOST_AUTO_TEST_CASE(trailing_comment_is_not_an_integer_so_max_files_defaults)
+{
+    // The same line read by the web-viewer's max_files handling. Neither end
+    // parses it, so both fall back to the default rather than disagreeing about
+    // how deep to rotate.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_files=7 ; keep 7 generations\n");
+    Config cfg = loadConfig(tmp.path);
+    BOOST_TEST(cfg.outputs[0].maxFiles == 10);
+}
+
 BOOST_AUTO_TEST_CASE(path_with_spaces)
 {
     TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/my log dir/syslog.log\n");

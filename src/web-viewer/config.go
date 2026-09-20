@@ -79,14 +79,14 @@ func loadSinks(configPath string) ([]Sink, error) {
 			continue
 		}
 		key := strings.TrimSpace(line[:eq])
+		// A value runs to the end of the line. ';' and '#' only start a comment
+		// at the start of a line, which is what Boost's INI parser does in the
+		// server and what Python's configparser does in the cli-viewer — and the
+		// server is what defines this file format. Stripping them here used to
+		// make "jsonl_file = hash#name.jsonl" open "hash" while the server wrote
+		// "hash#name.jsonl", and a file that is not there reads as an idle sink
+		// rather than as an error.
 		val := strings.TrimSpace(line[eq+1:])
-		// Strip inline comments (; or #).
-		if sc := strings.Index(val, ";"); sc >= 0 {
-			val = strings.TrimSpace(val[:sc])
-		}
-		if hc := strings.Index(val, "#"); hc >= 0 {
-			val = strings.TrimSpace(val[:hc])
-		}
 		switch key {
 		case "jsonl_file":
 			current.jsonlFile = val
