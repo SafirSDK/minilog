@@ -279,10 +279,17 @@ Any number of named output sections. At least one of `text_file` or `jsonl_file`
 and every configured file must belong to exactly one section — naming the same path twice,
 whether as both keys of one section or across two sections, is a config error.
 
+Both paths must be **absolute**. A relative path would resolve against the working directory of
+whichever process read it, and minilog, the cli-viewer and the web-viewer each have a different
+one — a Windows service inherits `C:\Windows\System32`. Environment variables are not expanded,
+so `%ProgramData%\minilog\logs\syslog.log` is rejected rather than treated as a path. On Windows
+a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\syslog.log`);
+`\logs\syslog.log` is relative to the current drive and is rejected.
+
 | Key | Default | Description |
 |-----|---------|-------------|
-| `text_file` | — | Raw UDP payload bytes + `\n`, one line per message ([control characters escaped](#text-file)) |
-| `jsonl_file` | — | One JSON object per line (see [JSONL format](#jsonl-format)) |
+| `text_file` | — | Absolute path. Raw UDP payload bytes + `\n`, one line per message ([control characters escaped](#text-file)) |
+| `jsonl_file` | — | Absolute path. One JSON object per line (see [JSONL format](#jsonl-format)) |
 | `max_size` | `0` (unlimited) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB` |
 | `max_files` | `10` | Rotated files to keep. `0` = unlimited |
 | `facility` | `*` | Comma-separated facility names to accept. `*` = all |

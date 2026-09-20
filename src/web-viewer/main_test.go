@@ -48,7 +48,7 @@ func serveConfig(t *testing.T) string {
 	if err := os.WriteFile(jsonl, nil, 0o600); err != nil {
 		t.Fatalf("cannot create sink file: %v", err)
 	}
-	return writeConfig(t, dir, "[output.main]\njsonl_file = syslog.jsonl\n")
+	return writeConfig(t, dir, "[output.main]\njsonl_file = "+jsonl+"\n")
 }
 
 func TestServeSignalsReadyOnlyOnceListening(t *testing.T) {

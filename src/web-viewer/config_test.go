@@ -38,7 +38,11 @@ jsonl_file = syslog.jsonl
 	}
 }
 
-func TestLoadSinks_RelativePathResolvedAgainstConfigDir(t *testing.T) {
+func TestLoadSinks_RelativePathUsedVerbatim(t *testing.T) {
+	// The viewer does not resolve a relative path against anything: minilog's
+	// config loader rejects one, so this can only be reached by pointing the
+	// viewer at a config the server would refuse to start on. Resolving it here
+	// is what used to make one config name two different files.
 	dir := t.TempDir()
 	p := writeConfig(t, dir, `
 [output.main]
@@ -48,9 +52,8 @@ jsonl_file = logs/syslog.jsonl
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := filepath.Join(dir, "logs", "syslog.jsonl")
-	if sinks[0].Path != want {
-		t.Errorf("path: want %q, got %q", want, sinks[0].Path)
+	if sinks[0].Path != "logs/syslog.jsonl" {
+		t.Errorf("path: want %q, got %q", "logs/syslog.jsonl", sinks[0].Path)
 	}
 }
 
@@ -146,27 +149,27 @@ jsonl_file = auth.jsonl
 
 func TestLoadSinks_InlineCommentStripped(t *testing.T) {
 	dir := t.TempDir()
-	p := writeConfig(t, dir, "[output.main]\njsonl_file = syslog.jsonl ; this is a comment\n")
+	abs := filepath.Join(dir, "syslog.jsonl")
+	p := writeConfig(t, dir, "[output.main]\njsonl_file = "+abs+" ; this is a comment\n")
 	sinks, err := loadSinks(p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := filepath.Join(dir, "syslog.jsonl")
-	if sinks[0].Path != want {
-		t.Errorf("path: want %q, got %q", want, sinks[0].Path)
+	if sinks[0].Path != abs {
+		t.Errorf("path: want %q, got %q", abs, sinks[0].Path)
 	}
 }
 
 func TestLoadSinks_HashInlineCommentStripped(t *testing.T) {
 	dir := t.TempDir()
-	p := writeConfig(t, dir, "[output.main]\njsonl_file = syslog.jsonl # this is a comment\n")
+	abs := filepath.Join(dir, "syslog.jsonl")
+	p := writeConfig(t, dir, "[output.main]\njsonl_file = "+abs+" # this is a comment\n")
 	sinks, err := loadSinks(p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := filepath.Join(dir, "syslog.jsonl")
-	if sinks[0].Path != want {
-		t.Errorf("path: want %q, got %q", want, sinks[0].Path)
+	if sinks[0].Path != abs {
+		t.Errorf("path: want %q, got %q", abs, sinks[0].Path)
 	}
 }
 

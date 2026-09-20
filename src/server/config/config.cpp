@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -191,6 +192,31 @@ uint64_t parseSize(const std::string& raw)
     return num * mult;
 }
 
+// A log file must be named by an absolute path. A relative one resolves against
+// whatever the reading process happens to have as its working directory, and the
+// three components that read this file have three different ones: the server's
+// CWD, the cli-viewer's CWD, and (previously) the config file's directory in the
+// web-viewer. One configuration therefore named up to three different files.
+//
+// The server's own case is the dangerous one: a service started by the SCM
+// inherits C:\Windows\System32 as its CWD, so a relative path silently aimed at
+// a system directory and left a dead sink behind when the open failed.
+//
+// std::filesystem decides what absolute means, which is what keeps UNC paths
+// (\\server\share\logs) working on Windows. Note that a POSIX-rooted "/var/log/x"
+// is *not* absolute on Windows — it has a root directory but no root name, making
+// it relative to the current drive — so it is rejected there, correctly.
+void requireAbsolutePath(const std::string& label, const std::string& value)
+{
+    if (!std::filesystem::path(value).is_absolute())
+    {
+        throw std::runtime_error(label + " = '" + value +
+                                 "' must be an absolute path. Environment variables are not "
+                                 "expanded, so a value such as '%ProgramData%\\minilog\\log' "
+                                 "does not become one.");
+    }
+}
+
 OutputConfig parseOutput(const std::string& name, const boost::property_tree::ptree& sec)
 {
     OutputConfig outCfg;
@@ -202,6 +228,14 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
     {
         throw std::runtime_error("[output." + name +
                                  "] must specify text_file, jsonl_file, or both");
+    }
+    if (!outCfg.textFile.empty())
+    {
+        requireAbsolutePath("[output." + name + "] text_file", outCfg.textFile);
+    }
+    if (!outCfg.jsonlFile.empty())
+    {
+        requireAbsolutePath("[output." + name + "] jsonl_file", outCfg.jsonlFile);
     }
     if (outCfg.textFile == outCfg.jsonlFile)
     {

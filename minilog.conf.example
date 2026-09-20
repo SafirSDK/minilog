@@ -36,6 +36,14 @@ max_queue_bytes = 16MB
 ; jsonl_file must be specified in each section. Multiple [output.*] sections
 ; may be defined; messages are routed to every section whose facility filter
 ; matches.
+;
+; text_file and jsonl_file must be ABSOLUTE paths. A relative path would mean
+; something different to each program that reads this file — minilog itself, the
+; cli-viewer and the web-viewer all have their own working directory, and a
+; Windows service inherits C:\Windows\System32 — so it is a config error.
+; Environment variables are not expanded: %ProgramData%\minilog\logs is not a
+; path. On Windows, use a drive (C:\ProgramData\minilog\logs\syslog.log) or a
+; UNC share (\\server\share\logs\syslog.log).
 ; ─────────────────────────────────────────────────────────────────────────────
 [output.main]
 

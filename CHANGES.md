@@ -160,6 +160,20 @@
 
 ### Changed
 
+- **`text_file` and `jsonl_file` must now be absolute paths.** A relative path resolved against
+  whatever working directory the reading process happened to have, and the three programs that
+  read `minilog.conf` each had a different one: the server used its own CWD, the cli-viewer used
+  its own, and the web-viewer resolved against the config file's directory. One configuration
+  therefore named up to three different files. Under the Windows SCM the server's CWD is
+  `C:\Windows\System32`, so a relative path aimed at a system directory and left a dead sink
+  behind when the open failed — with nothing to say why. A relative path is now a config error
+  naming the section and the key, and the message says that environment variables are not
+  expanded, because `%ProgramData%\minilog\logs` is the next thing people try. UNC paths
+  (`\\server\share\logs`) remain valid on Windows. Both viewers now use the configured value
+  exactly as written, so there is no longer a resolution rule to keep three implementations
+  agreeing on. The shipped `installer/minilog.conf` and `minilog.conf.example` already used
+  absolute paths; a hand-written config with relative ones has to be corrected.
+
 - **An RFC 3164 message without a tag now has `app` unset instead of its first word.** This goes
   with the parsing fix above. When no `tag:` is found the first word used to be taken as the app
   name and removed from the message, so `<14>… myhost Connection reset by peer` was stored as

@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -108,7 +107,6 @@ func loadSinks(configPath string) ([]Sink, error) {
 	// exist are simply skipped, so a large value is safe and effectively unlimited.
 	const unlimitedMaxFiles = 1000
 
-	configDir := filepath.Dir(configPath)
 	var sinks []Sink
 	for _, s := range sections {
 		if s.jsonlFile != "" {
@@ -120,11 +118,11 @@ func loadSinks(configPath string) ([]Sink, error) {
 					mf = s.maxFiles
 				}
 			}
-			path := s.jsonlFile
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(configDir, path)
-			}
-			sinks = append(sinks, Sink{Name: s.name, Path: path, MaxFiles: mf})
+			// The path is used exactly as configured. minilog's own config loader
+			// rejects a relative text_file / jsonl_file, so a path that reaches
+			// here is absolute; resolving one here would only reintroduce the
+			// disagreement about what it is relative to that rejection removed.
+			sinks = append(sinks, Sink{Name: s.name, Path: s.jsonlFile, MaxFiles: mf})
 		}
 	}
 	if len(sinks) == 0 {
