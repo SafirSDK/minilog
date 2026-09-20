@@ -200,5 +200,11 @@ func listenAddr(host, port string) (string, error) {
 	if err != nil || n < 0 || n > 65535 {
 		return "", fmt.Errorf("[web_viewer] port: %q is not a port number (0-65535)", port)
 	}
-	return net.JoinHostPort(host, port), nil
+	// Rebuilt from the parsed number rather than passing the string through.
+	// Atoi accepts spellings net.Listen reads differently: "-0" is 0 here and
+	// passes the range check, but ":-0" reaches the listener as a port it
+	// resolves to a random ephemeral one — so the viewer would answer nowhere
+	// near the configured port while the installer's shortcut still pointed at
+	// it, and nothing would report the difference.
+	return net.JoinHostPort(host, strconv.Itoa(n)), nil
 }

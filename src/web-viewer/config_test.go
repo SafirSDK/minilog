@@ -485,6 +485,31 @@ func TestLoadConfig_BadPortIsAnError(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_PortIsNormalisedNotPassedThrough(t *testing.T) {
+	// Atoi accepts spellings net.Listen reads differently. "-0" is 0 and passes
+	// the range check, but ":-0" reaches the listener as a port it resolves to a
+	// random ephemeral one — the viewer would answer nowhere near the configured
+	// port while the installer's shortcut still pointed at it.
+	for _, tc := range []struct{ port, want string }{
+		{"-0", ":0"},
+		{"09514", ":9514"},
+		{"0", ":0"},
+		{"9514", ":9514"},
+	} {
+		dir := t.TempDir()
+		content := "[output.main]\njsonl_file = /var/log/syslog.jsonl\n\n[web_viewer]\nport = " +
+			tc.port + "\n"
+		cfg, err := loadConfig(writeConfig(t, dir, content))
+		if err != nil {
+			t.Errorf("port %q: unexpected error: %v", tc.port, err)
+			continue
+		}
+		if cfg.Addr != tc.want {
+			t.Errorf("port %q: Addr = %q, want %q", tc.port, cfg.Addr, tc.want)
+		}
+	}
+}
+
 func TestLoadConfig_ViewerSectionKeysDoNotLeakIntoSinks(t *testing.T) {
 	// [web_viewer] is not an output section; a max_files there must not reach a
 	// sink, and the section ending must not leave the parser still inside it.

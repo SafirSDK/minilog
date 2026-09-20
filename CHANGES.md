@@ -290,6 +290,10 @@
   section, the key and the valid ones. Sections minilog does not know are still ignored, so the
   file can carry another tool's settings; `[web_viewer]` is validated despite belonging to the web
   viewer, because minilog is the only component that validates this file at all.
+  **Upgrading from v1.0.0 needs one edit:** that release's shipped `installer/minilog.conf`
+  carried `encoding = utf-8` in `[server]`, a key removed in v1.1.0, and the installer writes the
+  config `onlyifdoesntexist` — so an upgrade keeps the administrator's file verbatim and minilog
+  refuses to start until that line is deleted. Configs from v1.1.0 onward are unaffected.
 
 - **Security and cache headers on the web viewer.** Every response now carries a
   `Content-Security-Policy` (`default-src 'none'`, `script-src`/`style-src`/`connect-src` at

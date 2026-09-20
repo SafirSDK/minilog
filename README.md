@@ -591,7 +591,9 @@ than a re-registration of the Windows service.
 
 ```ini
 [web_viewer]
-host =        ; empty = every interface, IPv4 and IPv6; 127.0.0.1 = local machine only
+; An empty host means every interface, on both IPv4 and IPv6.
+; 127.0.0.1 restricts the viewer to the local machine.
+host =
 port = 9514
 ```
 

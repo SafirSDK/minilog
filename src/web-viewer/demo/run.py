@@ -54,6 +54,27 @@ def find_viewer(explicit: str | None) -> str:
     )
 
 
+def split_addr(addr: str) -> tuple[str, str]:
+    """Split "host:port" into its two parts.
+
+    rpartition(":") alone gets a bracketed IPv6 literal wrong: "[::1]:9514"
+    yields host "[::1]", which the viewer then brackets again into
+    "[[::1]]:9514" and fails to bind.
+    """
+    if addr.startswith("["):
+        end = addr.find("]")
+        if end < 0 or not addr[end + 1 :].startswith(":"):
+            sys.exit(f"error: --addr is not host:port, got {addr!r}")
+        host, port = addr[1:end], addr[end + 2 :]
+    else:
+        host, sep, port = addr.rpartition(":")
+        if not sep:
+            sys.exit(f"error: --addr must end in ':<port>', got {addr!r}")
+    if not port.isdigit():
+        sys.exit(f"error: --addr must end in ':<port>', got {addr!r}")
+    return host, port
+
+
 def write_config(addr: str) -> str:
     """Generate demo/minilog.conf with absolute log paths, and return its path.
 
@@ -64,9 +85,7 @@ def write_config(addr: str) -> str:
     The listen address goes in here too — the viewer has no --addr flag; it
     reads [web_viewer] out of minilog.conf like every other deployment fact.
     """
-    host, _, port = addr.rpartition(":")
-    if not port.isdigit():
-        sys.exit(f"error: --addr must end in ':<port>', got {addr!r}")
+    host, port = split_addr(addr)
     logs_dir = os.path.join(SCRIPT_DIR, "logs")
     config_path = os.path.join(SCRIPT_DIR, "minilog.conf")
     sections = [
