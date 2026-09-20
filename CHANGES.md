@@ -4,6 +4,32 @@
 
 ### Fixed
 
+- **A `workers` typo is a config error instead of a crash.** Only the lower bound was checked, so
+  `workers = 1000000` passed validation and `runServer` then looped spawning threads until
+  creation failed; the `std::system_error` escaped through `runServer` and `main` to
+  `std::terminate`. A core dump for a misplaced digit — and on Windows nothing in the Event Log,
+  because `osLogError` was never reached. The value is now capped at 256, and the spawn loop
+  reports a genuine resource failure and carries on with the workers it got rather than
+  terminating.
+
+- **A persistent receive error no longer spins a core.** Any error other than `operation_aborted`
+  or `bad_descriptor` was logged and the socket re-armed immediately. For a transient error that
+  is right; for a persistent one it was a tight loop at 100% of a core writing one log line per
+  iteration into the host's system log — which on a syslog collector is frequently relayed back
+  into minilog, so the loop fed itself. The re-arm now waits, from 50 ms doubling to a second, and
+  a repeat of the same error is counted rather than logged, with a summary at most once a minute.
+  The first occurrence is still reported immediately, a different error is always reported at
+  once, and recovery is reported with the length of the streak.
+
+- **The cli-viewer no longer exits on a record it did not expect.** `record.get("message", "")`
+  defaults only when the key is *absent*, so `"message": null` produced `None`, which reached
+  `.lower()` and ended the session with `AttributeError` — and the per-line handler caught
+  `JSONDecodeError` only, so it came straight back out. The same held for a numeric `facility`
+  reaching the colour table. minilog does not write such records, but the viewer reads whichever
+  file the config names and a rotated file can be cut mid-write. Fields are coerced on read and an
+  unshowable line is skipped instead of the session; printing stays outside the handler, so a
+  `BrokenPipeError` from `| head` still ends the run rather than being skipped over line by line.
+
 - **The web viewer now opens the file minilog actually writes when the path contains `;` or `#`.**
   Its config parser stripped everything after the first `;` or `#` in a value, which no other
   reader of `minilog.conf` does: Boost's INI parser in the server keeps the whole value, and the
@@ -203,6 +229,25 @@
   minilog starts, rather than when the first message arrives.
 
 ### New
+
+- **An unrecognised config key is now an error.** `loadConfig` read the keys it knew and ignored
+  everything else, so `max_sise = 100MB` left the size at its default, `enabeld = true` left
+  forwarding off and `faciltiy = auth` left the filter at the wildcard — a running server doing
+  something other than what the file said, with nothing anywhere to say so. An unknown key in
+  `[server]`, `[output.*]`, `[forwarding]` or `[web_viewer]` now fails the load, naming the
+  section, the key and the valid ones. Sections minilog does not know are still ignored, so the
+  file can carry another tool's settings; `[web_viewer]` is validated despite belonging to the web
+  viewer, because minilog is the only component that validates this file at all.
+
+- **Security and cache headers on the web viewer.** Every response now carries a
+  `Content-Security-Policy` (`default-src 'none'`, `script-src`/`style-src`/`connect-src` at
+  `'self'`, `img-src 'self' data:`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The UI renders text a syslog
+  sender chose, so the escaping in `app.js` is the control and the policy is the backstop for what
+  it misses; the assets are all local and free of inline script, style and event handlers, which a
+  test now checks so that a later edit cannot quietly make the policy wrong. `data:` is allowed
+  for images because the search icon is an inline SVG. `no-store` also stops an upgraded viewer
+  serving the previous version's `app.js` from a browser cache — the asset URLs carry no version.
 
 - **`[forwarding] host` accepts a hostname.** It took an IP literal only —
   `boost::asio::ip::make_address` does not resolve names — while the shipped example config

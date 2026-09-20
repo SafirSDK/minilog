@@ -9,6 +9,7 @@ Or directly for development:
     python3 tests/cli-viewer/test_cli_viewer.py ./minilog-cli-viewer.py
 """
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -305,6 +306,136 @@ class TestConfigDiscovery(unittest.TestCase):
                 cwd=tmpdir, capture_output=True, text=True, timeout=5,
             )
             self.assertIn("--config", result.stderr)
+
+
+# ── Malformed record tests ───────────────────────────────────────────────────
+
+
+class TestMalformedRecords(unittest.TestCase):
+    """A record the viewer did not expect must cost one line, not the session.
+
+    minilog does not write nulls or mistyped fields, but the viewer reads
+    whichever file the config names, and a rotated file can be cut mid-write.
+    The per-line handler used to catch JSONDecodeError only, so anything that
+    parsed as JSON and then surprised the formatter — a null message reaching
+    .lower(), a numeric facility reaching the colour table — ended a `tail -f`
+    that had been running for hours.
+    """
+
+    def _show_all(self, lines: list[str], extra_args: list[str] | None = None) -> tuple[str, str]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            jsonl = tmpdir / "test.jsonl"
+            jsonl.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+            write_server_config(tmpdir, jsonl)
+
+            result = subprocess.run(
+                [sys.executable, VIEWER, "--show-all", "--no-color", *(extra_args or [])],
+                cwd=tmpdir, capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, f"stderr: {result.stderr}")
+            return result.stdout, result.stderr
+
+    @staticmethod
+    def _record(**overrides) -> str:
+        record = {
+            "rcv": "2026-03-29T12:00:00Z",
+            "src": "192.168.1.1",
+            "proto": "RFC3164",
+            "facility": "daemon",
+            "severity": "INFO",
+            "hostname": "testhost",
+            "app": "testapp",
+            "pid": "123",
+            "msgid": None,
+            "message": "ordinary",
+        }
+        record.update(overrides)
+        return json.dumps(record)
+
+    def test_null_message_does_not_end_the_session(self):
+        stdout, _ = self._show_all([
+            self._record(message=None),
+            self._record(message="after the null"),
+        ])
+        self.assertIn("after the null", stdout)
+
+    def test_null_message_survives_a_filter(self):
+        # The filter path is where the None actually landed: should_display ->
+        # matches_filter -> .lower().
+        stdout, _ = self._show_all(
+            [self._record(message=None), self._record(message="wanted")],
+            ["--include", "wanted"],
+        )
+        self.assertIn("wanted", stdout)
+
+    def test_numeric_facility_does_not_end_the_session(self):
+        stdout, _ = self._show_all([
+            self._record(facility=3, severity=6),
+            self._record(message="after the numbers"),
+        ])
+        self.assertIn("after the numbers", stdout)
+
+    def test_non_string_fields_do_not_end_the_session(self):
+        stdout, _ = self._show_all([
+            self._record(hostname=["a", "b"], app={"x": 1}, pid=7, rcv=12345),
+            self._record(message="after the odd types"),
+        ])
+        self.assertIn("after the odd types", stdout)
+
+    def test_truncated_last_line_does_not_end_the_session(self):
+        # How a rotated file normally ends when it is read mid-write.
+        stdout, _ = self._show_all([
+            self._record(message="complete"),
+            '{"rcv": "2026-03-29T12:00:00Z", "mess',
+        ])
+        self.assertIn("complete", stdout)
+
+
+class TestMalformedRecordsInProcess(unittest.TestCase):
+    """The colour path, which a subprocess cannot reach.
+
+    Colours are switched off whenever stdout is not a TTY, and a test's stdout
+    is a pipe — so get_facility_color and get_severity_color are only reachable
+    by importing the viewer and calling them. They are where a numeric facility
+    used to land: `if not facility` passes for 3, and `3 .lower()` does not
+    exist.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("minilog_cli_viewer", VIEWER)
+        cls.viewer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.viewer)
+
+    def test_numeric_facility_and_severity_do_not_raise(self):
+        # Returning no colour is the right answer for a value no table knows.
+        self.assertEqual(self.viewer.get_facility_color(3), "")
+        self.assertEqual(self.viewer.get_severity_color(6), "")
+
+    def test_known_names_still_get_their_colour(self):
+        self.assertNotEqual(self.viewer.get_facility_color("auth"), "")
+        self.assertNotEqual(self.viewer.get_severity_color("ERROR"), "")
+
+    def test_list_facility_does_not_raise(self):
+        self.assertEqual(self.viewer.get_facility_color(["auth"]), "")
+
+    def test_should_display_handles_a_null_message(self):
+        config = self.viewer.ViewerConfig()
+        config.include_patterns = ["wanted"]
+        self.assertFalse(self.viewer.should_display({"message": None}, config))
+        self.assertTrue(self.viewer.should_display({"message": "wanted"}, config))
+
+    def test_render_returns_none_for_a_record_it_cannot_show(self):
+        config = self.viewer.ViewerConfig()
+        self.assertIsNone(self.viewer.render("{not json", config))
+        # A record that is JSON but not a dict: .get() does not exist on a list.
+        self.assertIsNone(self.viewer.render("[1, 2, 3]", config))
+
+    def test_render_formats_an_ordinary_record(self):
+        config = self.viewer.ViewerConfig()
+        line = json.dumps({"rcv": "2026-03-29T12:00:00Z", "message": "hello"})
+        self.assertIn("hello", self.viewer.render(line, config))
 
 
 # ── Output section tests ─────────────────────────────────────────────────────

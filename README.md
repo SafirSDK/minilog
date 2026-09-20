@@ -264,6 +264,12 @@ service and every later message routed to it is dropped. The failure is reported
 sinks and the forwarder keep running, and the process stays up. A closed sink is not reopened
 automatically, so restart minilog once the underlying storage problem is fixed.
 
+**An unrecognised key is a config error.** minilog rejects a key it does not know in `[server]`,
+`[output.*]`, `[forwarding]` or `[web_viewer]`, naming the section, the key and the valid ones.
+`max_sise = 100MB` used to leave the size at its default and `enabeld = true` used to leave
+forwarding off, with a running server doing something other than what the file said. Sections
+minilog does not know are ignored, so another tool can keep its own settings in this file.
+
 **Comments start a line; values run to the end of one.** `;` and `#` introduce a comment only as
 the first character of a line. After a `=` they are ordinary characters, so
 `jsonl_file = C:\logs\build#3.jsonl` names a file with a `#` in it, and
@@ -278,7 +284,7 @@ See [`minilog.conf.example`](minilog.conf.example) for a fully commented example
 |-----|---------|-------------|
 | `host` | `0.0.0.0` | IP address to bind |
 | `udp_port` | `514` | UDP port (0–65535; 0 = OS-assigned) |
-| `workers` | `4` | Number of I/O worker threads |
+| `workers` | `4` | Number of I/O worker threads (1–256) |
 | `max_queue_bytes` | `16MB` | Received-but-unwritten log held in memory before further datagrams are dropped. Same units as `max_size`; a plain number is bytes. No "unlimited" setting — see [Behaviour under flood](#behaviour-under-flood) |
 
 ### `[output.<name>]`
@@ -580,6 +586,17 @@ Anyone who can reach the listen address can read all exposed log data. Set
 `[web_viewer] host = 127.0.0.1` to restrict access to the local machine, or place the viewer
 behind a reverse proxy that provides authentication. Do not expose it on an untrusted network
 without additional protection.
+
+**Response headers.** Every response carries a `Content-Security-Policy` of `default-src 'none'`
+with `script-src`, `style-src` and `connect-src` at `'self'`, `img-src 'self' data:` (the search
+icon is an inline SVG data URI), and `frame-ancestors 'none'`; plus
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
+The UI's job is rendering text a syslog sender chose, so the escaping in `app.js` is the control
+and the CSP is the backstop for what it misses. The strict policy is possible because every asset
+is local and none of them uses an inline script, style or event handler — which a test checks, so
+that a later edit cannot quietly make the policy wrong. `no-store` also keeps an upgraded viewer
+from serving the previous version's `app.js` out of a browser cache, since the asset URLs carry no
+version.
 
 **Connection timeouts:** the HTTP server closes a connection whose request headers are not
 complete within 10 seconds, whose request is not complete within 30 seconds, or that sits idle

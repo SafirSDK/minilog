@@ -423,6 +423,24 @@ BOOST_AUTO_TEST_CASE(max_files_negative_throws)
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
+BOOST_AUTO_TEST_CASE(workers_above_cap_throws)
+{
+    // A std::thread per worker: "workers = 1000000" used to loop until thread
+    // creation failed and the std::system_error escaped to std::terminate — a
+    // core dump, and on Windows an empty Event Log, for a typo.
+    TempFile tmp("[server]\nworkers=257\n\n[output.m]\ntext_file=" ABS "/tmp/f\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+
+    TempFile huge("[server]\nworkers=1000000\n\n[output.m]\ntext_file=" ABS "/tmp/f\n");
+    BOOST_CHECK_THROW(loadConfig(huge.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(workers_at_cap_accepted)
+{
+    TempFile tmp("[server]\nworkers=256\n\n[output.m]\ntext_file=" ABS "/tmp/f\n");
+    BOOST_TEST(loadConfig(tmp.path).workers == 256);
+}
+
 BOOST_AUTO_TEST_CASE(workers_zero_throws)
 {
     TempFile tmp("[server]\nworkers=0\n\n[output.m]\ntext_file=" ABS "/tmp/f\n");
@@ -582,6 +600,84 @@ BOOST_AUTO_TEST_CASE(sections_configuring_only_one_kind_do_not_collide)
                  "/tmp/b.jsonl\n");
     Config cfg = loadConfig(tmp.path);
     BOOST_TEST(cfg.outputs.size() == 2u);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Unknown keys ─────────────────────────────────────────────────────────────
+//
+// A key minilog does not understand is a config error. It used to be accepted
+// and ignored, so "max_sise = 100MB" left the size at its default and
+// "enabeld = true" left forwarding off, with a running server doing something
+// other than what the file said and nothing anywhere to say so.
+
+BOOST_AUTO_TEST_SUITE(unknown_keys)
+
+BOOST_AUTO_TEST_CASE(unknown_server_key_throws_naming_section_and_key)
+{
+    TempFile tmp("[server]\nudp_prot = 514\n\n[output.m]\ntext_file=" ABS "/tmp/f\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for an unknown [server] key");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("udp_prot") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("[server]") != std::string::npos, "message: " << what);
+        // The valid keys are listed, because the point of failing is to be fixable.
+        BOOST_TEST(what.find("udp_port") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(unknown_output_key_throws_naming_the_section)
+{
+    TempFile tmp("[output.main]\ntext_file=" ABS "/tmp/f\nmax_sise=100MB\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for an unknown [output.*] key");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("max_sise") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("[output.main]") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(unknown_forwarding_key_throws)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nenabeld=true\nhost=10.0.0.5\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(unknown_web_viewer_key_throws)
+{
+    // The section belongs to the web viewer, but this is the only component
+    // that validates the file, so a typo here has to fail here or nowhere.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n\n[web_viewer]\nprot=8080\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(web_viewer_section_accepted)
+{
+    // minilog ignores what the section means and must keep starting with it
+    // present — the installer ships a config that has one.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n\n[web_viewer]\nhost=\nport=9514\n");
+    BOOST_CHECK_NO_THROW(loadConfig(tmp.path));
+}
+
+BOOST_AUTO_TEST_CASE(unknown_section_is_ignored)
+{
+    // Only keys in sections minilog owns are checked. The file is shared with
+    // other components, and claiming the whole section namespace would mean the
+    // server rejecting a config the next tool to read it needs — which is
+    // exactly what would have happened to [web_viewer].
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n\n[something_else]\nkey=value\n");
+    BOOST_CHECK_NO_THROW(loadConfig(tmp.path));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

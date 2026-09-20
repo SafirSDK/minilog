@@ -11,6 +11,48 @@ import (
 	"strings"
 )
 
+// securityHeaders is the response header set applied to everything the viewer
+// serves.
+//
+// The UI's whole job is rendering text that a syslog sender chose, so the
+// escaping in app.js is the control and this is the backstop for the cases it
+// misses. A restrictive policy is possible because every asset is local: no
+// CDN, no inline <script> or <style>, no inline event handlers. 'none' by
+// default and each source enumerated, so a future asset that reaches outside
+// fails loudly here rather than widening the policy by accident.
+//
+// img-src allows data: because style.css draws the search icon from an inline
+// SVG data URI; a background-image is fetched under img-src, so without it the
+// icon silently disappears.
+//
+// Cache-Control is no-store throughout. Log data must not sit in a proxy or a
+// browser cache, and the assets are embedded in the binary with no
+// cache-busting in their URLs — so an upgraded viewer serving a cached app.js
+// from the previous version is the failure that would be left.
+var securityHeaders = map[string]string{
+	"Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; " +
+		"img-src 'self' data:; connect-src 'self'; base-uri 'none'; " +
+		"form-action 'none'; frame-ancestors 'none'",
+	"X-Content-Type-Options": "nosniff",
+	"Referrer-Policy":        "no-referrer",
+	"Cache-Control":          "no-store",
+}
+
+// withSecurityHeaders applies securityHeaders to every response.
+//
+// Wrapping the mux rather than the asset handler alone: nosniff and no-store
+// matter as much on the JSON endpoints, which are where the log data itself
+// leaves the process.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		for name, value := range securityHeaders {
+			header.Set(name, value)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // registerHandlers wires up all HTTP routes onto mux.
 func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 	// Build a lookup map: sink name → Sink.

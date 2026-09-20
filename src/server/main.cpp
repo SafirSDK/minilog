@@ -143,11 +143,26 @@ int runServer(const std::string& configPath)
         }
     };
 
+    // loadConfig caps workers, so exhausting the thread limit here means the
+    // host is genuinely out of resources rather than the config being wrong.
+    // Either way it must be reported: an escaping std::system_error reaches
+    // std::terminate, which on Windows means a core dump and an empty Event Log.
+    // The threads already started keep running — ingestion on fewer workers than
+    // asked for beats no ingestion at all.
     std::vector<std::thread> threads;
     threads.reserve(static_cast<std::size_t>(cfg.workers - 1));
-    for (int i = 0; i < cfg.workers - 1; ++i)
+    try
     {
-        threads.emplace_back(runWorker);
+        for (int i = 0; i < cfg.workers - 1; ++i)
+        {
+            threads.emplace_back(runWorker);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        minilog::osLogError("minilog: could not start all " + std::to_string(cfg.workers) +
+                            " workers (" + e.what() + "); continuing with " +
+                            std::to_string(threads.size() + 1));
     }
     runWorker();
 

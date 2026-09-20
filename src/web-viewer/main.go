@@ -170,7 +170,7 @@ func serve(configPath string, stop <-chan struct{}, ready func()) error {
 	mux := http.NewServeMux()
 	registerHandlers(mux, sinks)
 
-	srv := newServer(mux, readHeaderTimeout, readTimeout, idleTimeout)
+	srv := newServer(withSecurityHeaders(mux), readHeaderTimeout, readTimeout, idleTimeout)
 
 	// Bind explicitly rather than via ListenAndServe, so that an unusable listen
 	// address is reported before ready() rather than after.

@@ -15,6 +15,7 @@
 
 #pragma once
 #include "admission.hpp"
+#include "receive_backoff.hpp"
 
 #include "config/config.hpp"
 #include "forwarder/forwarder.hpp"
@@ -22,6 +23,7 @@
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <chrono>
 #include <memory>
@@ -62,6 +64,10 @@ private:
     // in the Event Log. Called only from the socket strand.
     void reportDrops(bool force);
 
+    // Report a receive error and re-arm after the backoff the policy asks for,
+    // rather than immediately. Called only from the socket strand.
+    void handleReceiveError(const boost::system::error_code& ec);
+
     const Config& m_cfg;
     boost::asio::io_context& m_ioc;
     boost::asio::ip::udp::socket m_socket;
@@ -69,6 +75,12 @@ private:
     OutputManager& m_outputMgr;
     Forwarder* m_forwarder;
     AdmissionControl m_admission;
+    ReceiveBackoff m_backoff;
+
+    // Delays the re-arm after a receive error. Cancelled by stop(): an
+    // outstanding timer is work, and io_context::run() does not return while
+    // there is work outstanding.
+    boost::asio::steady_timer m_rearmTimer;
 
     // Socket-strand only, so no synchronisation. Unset until the first report.
     std::optional<std::chrono::steady_clock::time_point> m_lastDropReport;

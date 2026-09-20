@@ -81,7 +81,6 @@ def write_config(
         "[server]",
         "host = 127.0.0.1",
         f"udp_port = {port}",
-        "encoding = utf-8",
         f"workers = {workers}",
         "",
         "[output.main]",

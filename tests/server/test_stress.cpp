@@ -14,6 +14,7 @@
  ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_stress
+#include "receive_backoff.hpp"
 #include "udp_server.hpp"
 
 #include "forwarder/forwarder.hpp"
@@ -462,6 +463,121 @@ BOOST_AUTO_TEST_CASE(token_outlives_the_control_it_came_from)
         BOOST_REQUIRE(token);
     }
     BOOST_CHECK_NO_THROW(token.reset());
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Receive-error backoff ───────────────────────────────────────────────────
+// A receive error used to log and re-arm immediately. For a transient error
+// that is right; for a persistent one it is a core at 100% and a log line per
+// iteration, written into the host's syslog — which on a collector is often
+// relayed straight back into minilog. Unit level, because provoking a real
+// persistent socket error is not something a test can do portably.
+
+BOOST_AUTO_TEST_SUITE(receive_backoff)
+
+BOOST_AUTO_TEST_CASE(first_error_is_reported_at_once)
+{
+    ReceiveBackoff backoff;
+    const auto now = std::chrono::steady_clock::now();
+
+    const auto decision = backoff.onError("connection reset", now);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.suppressed == 0u);
+    BOOST_TEST(decision.delay.count() == ReceiveBackoff::kFirstDelay.count());
+}
+
+BOOST_AUTO_TEST_CASE(repeats_are_not_reported_and_the_delay_grows)
+{
+    ReceiveBackoff backoff;
+    const auto now = std::chrono::steady_clock::now();
+    backoff.onError("connection reset", now);
+
+    auto previous = ReceiveBackoff::kFirstDelay;
+    for (int i = 0; i < 20; ++i)
+    {
+        // Same instant every time: nothing here may depend on the test being
+        // slow enough for the report interval to elapse.
+        const auto decision = backoff.onError("connection reset", now);
+        BOOST_TEST(!decision.report, "repeat " << i << " was reported");
+        BOOST_TEST(decision.delay.count() >= previous.count());
+        previous = decision.delay;
+    }
+
+    BOOST_TEST(previous.count() == ReceiveBackoff::kMaxDelay.count());
+}
+
+BOOST_AUTO_TEST_CASE(delay_is_capped)
+{
+    // The cap is what bounds how long the socket stays un-armed after the error
+    // clears, so it must not keep doubling.
+    ReceiveBackoff backoff;
+    const auto now = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i)
+    {
+        const auto decision = backoff.onError("no buffer space", now);
+        BOOST_TEST(decision.delay.count() <= ReceiveBackoff::kMaxDelay.count());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(a_summary_is_reported_once_the_interval_has_passed)
+{
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+    backoff.onError("no buffer space", start);
+    backoff.onError("no buffer space", start);
+    backoff.onError("no buffer space", start);
+
+    const auto decision =
+        backoff.onError("no buffer space", start + ReceiveBackoff::kReportInterval);
+
+    BOOST_TEST(decision.report);
+    // The first error was reported on its own, so it is not in the count: the
+    // two silent repeats after it, plus this one.
+    BOOST_TEST(decision.suppressed == 3u);
+}
+
+BOOST_AUTO_TEST_CASE(a_different_error_is_reported_immediately)
+{
+    // A new failure is news even in the middle of a streak of another one, and
+    // it may well be the transient kind — so the delay starts over too.
+    ReceiveBackoff backoff;
+    const auto now = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10; ++i)
+    {
+        backoff.onError("no buffer space", now);
+    }
+    BOOST_REQUIRE(backoff.delay().count() > ReceiveBackoff::kFirstDelay.count());
+
+    const auto decision = backoff.onError("connection reset", now);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.delay.count() == ReceiveBackoff::kFirstDelay.count());
+}
+
+BOOST_AUTO_TEST_CASE(success_ends_the_streak_and_reports_how_long_it_was)
+{
+    ReceiveBackoff backoff;
+    const auto now = std::chrono::steady_clock::now();
+    for (int i = 0; i < 5; ++i)
+    {
+        backoff.onError("no buffer space", now);
+    }
+
+    BOOST_TEST(backoff.onSuccess() == 5u);
+
+    // And the next error is a fresh one: full reporting, first delay.
+    const auto decision = backoff.onError("no buffer space", now);
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.delay.count() == ReceiveBackoff::kFirstDelay.count());
+}
+
+BOOST_AUTO_TEST_CASE(success_without_a_streak_reports_nothing)
+{
+    // Every ordinary datagram takes this path, so it must not produce a line.
+    ReceiveBackoff backoff;
+    BOOST_TEST(backoff.onSuccess() == 0u);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

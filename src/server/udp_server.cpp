@@ -33,7 +33,8 @@ UdpServer::UdpServer(boost::asio::io_context& ioc,
                      OutputManager& outputMgr,
                      Forwarder* forwarder)
     : m_cfg(cfg), m_ioc(ioc), m_socket(boost::asio::make_strand(ioc)), m_outputMgr(outputMgr),
-      m_forwarder(forwarder), m_admission(cfg.maxQueueBytes), m_recvBuffer(BUFFER_SIZE)
+      m_forwarder(forwarder), m_admission(cfg.maxQueueBytes), m_rearmTimer(m_socket.get_executor()),
+      m_recvBuffer(BUFFER_SIZE)
 {
 }
 
@@ -98,6 +99,12 @@ void UdpServer::stop()
                           m_socket.close(
                               ec); // NOLINT(bugprone-unused-return-value) — close(ec) returns void
 
+                          // A pending re-arm is outstanding work, and run() does
+                          // not return while there is any. Without this, a
+                          // shutdown during a receive-error streak would wait out
+                          // the backoff before finishing.
+                          m_rearmTimer.cancel();
+
                           // Whatever is left over, rather than losing the tail of
                           // a flood that stopped before the interval elapsed.
                           reportDrops(true);
@@ -117,6 +124,39 @@ void UdpServer::receive()
                                 { onReceive(ec, bytes); });
 }
 
+// A receive error used to log and re-arm straight away, which is correct for a
+// transient error and a tight loop for a persistent one — a core at 100% and a
+// log line per iteration, relayed straight back into minilog on a host whose
+// syslog it collects. The delay and the reporting interval come from
+// ReceiveBackoff; the operation_aborted / bad_descriptor handling above is
+// deliberately untouched, because those mean the socket is gone.
+void UdpServer::handleReceiveError(const boost::system::error_code& ec)
+{
+    const auto decision = m_backoff.onError(ec.message(), std::chrono::steady_clock::now());
+
+    if (decision.report)
+    {
+        std::string message = "minilog: receive error: " + ec.message();
+        if (decision.suppressed != 0)
+        {
+            message += " (still failing; " + std::to_string(decision.suppressed) +
+                       " further occurrence(s) since the last report)";
+        }
+        osLogError(message);
+    }
+
+    m_rearmTimer.expires_after(decision.delay);
+    m_rearmTimer.async_wait(
+        [this](const boost::system::error_code& timerEc)
+        {
+            if (timerEc)
+            {
+                return; // cancelled by stop()
+            }
+            receive();
+        });
+}
+
 void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes)
 {
     if (ec)
@@ -127,10 +167,15 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
         // Either way the socket is gone — do not re-arm.
         if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::bad_descriptor)
         {
-            osLogError("minilog: receive error: " + ec.message());
-            receive();
+            handleReceiveError(ec);
         }
         return;
+    }
+
+    if (const uint64_t ended = m_backoff.onSuccess(); ended != 0)
+    {
+        osLogInfo("minilog: receiving again after " + std::to_string(ended) +
+                  " consecutive receive error(s)");
     }
 
     // Admission control, before the first copy: nothing downstream of here

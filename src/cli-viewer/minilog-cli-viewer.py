@@ -255,12 +255,12 @@ def format_timestamp(iso_timestamp: str, format_type: str) -> str:
         return iso_timestamp
 
 
-def get_facility_color(facility: str | None) -> str:
+def get_facility_color(facility: object) -> str:
     """Get ANSI color code for facility"""
     if not facility:
         return ""
 
-    facility_lower = facility.lower()
+    facility_lower = _as_text(facility).lower()
     if facility_lower == "kern" or facility_lower == "kernel":
         return Colors.KERN
     elif facility_lower == "user":
@@ -279,12 +279,12 @@ def get_facility_color(facility: str | None) -> str:
         return ""
 
 
-def get_severity_color(severity: str | None) -> str:
+def get_severity_color(severity: object) -> str:
     """Get ANSI color code for severity"""
     if not severity:
         return ""
 
-    severity_upper = severity.upper()
+    severity_upper = _as_text(severity).upper()
     if severity_upper == "EMERG":
         return Colors.EMERG
     elif severity_upper == "ALERT":
@@ -352,6 +352,21 @@ def escape_control_chars(value) -> str:
     return _CONTROL_CHARS.sub(replace, text)
 
 
+def _as_text(value: object) -> str:
+    """Coerce a JSONL field to a string.
+
+    Every field here comes out of a file the viewer does not write. A null, a
+    number where a name belongs, or a list is enough to kill the session
+    otherwise — and "the viewer exited" is a worse answer than "one line looked
+    odd" for a tool whose job is to keep showing the log.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def format_message(record: dict, config: ViewerConfig) -> str:
     """Format a JSONL record for display"""
     parts = []
@@ -402,15 +417,19 @@ def format_message(record: dict, config: ViewerConfig) -> str:
     return " ".join(parts)
 
 
-def matches_filter(message_text: str, patterns: list[str]) -> bool:
+def matches_filter(message_text: object, patterns: list[str]) -> bool:
     """Check if message matches any of the patterns (case-insensitive)"""
-    message_lower = message_text.lower()
+    message_lower = _as_text(message_text).lower()
     return any(pattern.lower() in message_lower for pattern in patterns)
 
 
 def should_display(record: dict, config: ViewerConfig) -> bool:
     """Determine if a record should be displayed based on filters"""
-    message = record.get("message", "")
+    # get(key, "") only defaults when the key is absent: '"message": null'
+    # hands back None, which used to reach .lower() and end the session with an
+    # AttributeError. minilog never writes null, but the viewer reads whatever
+    # file the config points at, and a rotated file can be cut mid-write.
+    message = _as_text(record.get("message"))
 
     # Check exclude patterns
     if config.exclude_patterns and matches_filter(message, config.exclude_patterns):
@@ -418,6 +437,29 @@ def should_display(record: dict, config: ViewerConfig) -> bool:
 
     # Check include patterns (if any are specified, at least one must match)
     return not config.include_patterns or matches_filter(message, config.include_patterns)
+
+
+# Rendering a record must not be able to end the session.
+#
+# These blocks caught json.JSONDecodeError only, so a line that parsed as JSON
+# but held something unexpected — a null where a string belongs, a number, a
+# list — came back out through the handler at the bottom of tail_file and
+# stopped a `tail -f` that had been running for hours. minilog does not write
+# such records, but the viewer reads whatever file the config points at, and a
+# rotated file can be cut mid-write.
+#
+# Only the parse and format are inside the try. Printing stays outside it: a
+# BrokenPipeError from `| head` has to end the session, not be skipped over
+# line after line.
+def render(line: str, config: ViewerConfig) -> str | None:
+    """Format one JSONL line, or None if it cannot be shown."""
+    try:
+        record = json.loads(line)
+        if not should_display(record, config):
+            return None
+        return format_message(record, config)
+    except Exception:
+        return None
 
 
 def _file_id(file_path: Path):
@@ -480,13 +522,9 @@ def tail_file(
                     if not line:
                         continue
 
-                    try:
-                        record = json.loads(line)
-                        if should_display(record, config):
-                            formatted = format_message(record, config)
-                            print(formatted)
-                    except json.JSONDecodeError:
-                        continue
+                    formatted = render(line, config)
+                    if formatted is not None:
+                        print(formatted)
 
                 return  # Exit after showing all
 
@@ -499,13 +537,9 @@ def tail_file(
                     if not line:
                         continue
 
-                    try:
-                        record = json.loads(line)
-                        if should_display(record, config):
-                            formatted = format_message(record, config)
-                            last_lines.append(formatted)
-                    except json.JSONDecodeError:
-                        continue
+                    formatted = render(line, config)
+                    if formatted is not None:
+                        last_lines.append(formatted)
 
                 # Display collected lines
                 for formatted in last_lines:
@@ -543,17 +577,10 @@ def tail_file(
                 if not line:
                     continue
 
-                try:
-                    record = json.loads(line)
-
-                    if should_display(record, config):
-                        formatted = format_message(record, config)
-                        print(formatted)
-                        sys.stdout.flush()
-
-                except json.JSONDecodeError:
-                    # Skip malformed JSON lines
-                    continue
+                formatted = render(line, config)
+                if formatted is not None:
+                    print(formatted)
+                    sys.stdout.flush()
 
     except KeyboardInterrupt:
         print("\nExiting...", file=sys.stderr)

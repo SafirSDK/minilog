@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -1036,5 +1037,121 @@ func TestHandler_Lines_Tail_SinceAtTail_NextOffsetIsTailOffset(t *testing.T) {
 	}
 	if r.NextOffset != tail.TailOffset {
 		t.Errorf("next_offset: want %d, got %d", tail.TailOffset, r.NextOffset)
+	}
+}
+
+// ── Security headers ──────────────────────────────────────────────────────────
+//
+// The viewer renders text a syslog sender chose. app.js escaping it is the
+// control; the CSP is the backstop for whatever that misses.
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "syslog.jsonl")
+	writeLines(t, path, []string{`{"rcv":"2026-01-01T00:00:00Z","message":"one"}`})
+
+	mux := http.NewServeMux()
+	registerHandlers(mux, []Sink{{Name: "main", Path: path, MaxFiles: 10}})
+	srv := httptest.NewServer(withSecurityHeaders(mux))
+	defer srv.Close()
+
+	// The JSON endpoints matter as much as the HTML: they are where the log
+	// data itself leaves the process.
+	for _, target := range []string{"/", "/assets/app.js", "/sinks", "/version",
+		"/lines?sink=main&count=1"} {
+		resp, err := http.Get(srv.URL + target)
+		if err != nil {
+			t.Fatalf("GET %s: %v", target, err)
+		}
+		resp.Body.Close()
+
+		for _, header := range []string{"Content-Security-Policy", "X-Content-Type-Options",
+			"Referrer-Policy", "Cache-Control"} {
+			if resp.Header.Get(header) == "" {
+				t.Errorf("GET %s: %s is missing", target, header)
+			}
+		}
+		if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("GET %s: X-Content-Type-Options = %q, want nosniff", target, got)
+		}
+		if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-store", target, got)
+		}
+	}
+}
+
+func TestContentSecurityPolicyCoversWhatTheAssetsActuallyUse(t *testing.T) {
+	csp := securityHeaders["Content-Security-Policy"]
+
+	// style.css draws the search icon from an inline SVG data: URI, fetched as
+	// an image. Without data: in img-src the icon silently disappears — the
+	// kind of breakage a header-is-present test would not notice.
+	for _, want := range []string{
+		"default-src 'none'",
+		"script-src 'self'",
+		"style-src 'self'",
+		"img-src 'self' data:",
+		"connect-src 'self'",
+		"frame-ancestors 'none'",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP is missing %q: %s", want, csp)
+		}
+	}
+
+	// No 'unsafe-inline' or 'unsafe-eval' anywhere: they would give up most of
+	// what the policy is for.
+	for _, unwanted := range []string{"unsafe-inline", "unsafe-eval", "*"} {
+		if strings.Contains(csp, unwanted) {
+			t.Errorf("CSP contains %q, which defeats it: %s", unwanted, csp)
+		}
+	}
+}
+
+func TestAssetsStayCompatibleWithTheContentSecurityPolicy(t *testing.T) {
+	// The policy holds only while the assets stay free of the things it bans,
+	// and a future edit is what would break that — not the header. Checking the
+	// embedded files is a standing check where a browser test would be a
+	// one-off.
+	entries, err := assets.ReadDir("assets")
+	if err != nil {
+		t.Fatalf("reading embedded assets: %v", err)
+	}
+
+	inlineHandler := regexp.MustCompile(`(?i)\son[a-z]+\s*=`)
+	// A body, not merely a tag: <script src=...></script> is what the page uses.
+	inlineScript := regexp.MustCompile(`(?i)<script(?:\s[^>]*)?>\s*[^<\s]`)
+	inlineStyle := regexp.MustCompile(`(?i)<style[\s>]`)
+	externalRef := regexp.MustCompile(`(?i)(src|href)\s*=\s*["']https?://`)
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".html") && !strings.HasSuffix(name, ".js") &&
+			!strings.HasSuffix(name, ".css") {
+			continue
+		}
+		body, err := assets.ReadFile("assets/" + name)
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		text := string(body)
+
+		if strings.HasSuffix(name, ".html") {
+			if inlineScript.MatchString(text) {
+				t.Errorf("%s has an inline <script> body; script-src 'self' blocks it", name)
+			}
+			if inlineStyle.MatchString(text) {
+				t.Errorf("%s has an inline <style>; style-src 'self' blocks it", name)
+			}
+			if inlineHandler.MatchString(text) {
+				t.Errorf("%s has an inline event handler; script-src 'self' blocks it", name)
+			}
+		}
+		if externalRef.MatchString(text) {
+			t.Errorf("%s references an external origin; default-src 'none' blocks it", name)
+		}
+		if strings.Contains(text, "eval(") || strings.Contains(text, "new Function(") {
+			t.Errorf("%s uses eval; the policy has no 'unsafe-eval'", name)
+		}
 	}
 }

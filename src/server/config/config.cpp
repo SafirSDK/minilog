@@ -270,8 +270,45 @@ void requireAbsolutePath(const std::string& label, const std::string& value)
     }
 }
 
+// Reject a key minilog does not understand, naming the section and the key.
+//
+// Every other config mistake in minilog fails loudly and says what it was;
+// unrecognised keys were the last place one did not. "max_sise = 100MB" left the
+// size at its default, "enabeld = true" left forwarding off and "faciltiy =
+// auth" left the filter at the wildcard — each of them a working server doing
+// something other than what the file says, with nothing to read anywhere.
+//
+// [web_viewer] belongs to the web viewer rather than to the server, but the
+// server is the only component that validates this file, so a typo there would
+// be just as silent. Its keys are therefore listed here too: a key added to the
+// viewer has to be added here as well.
+void requireKnownKeys(const std::string& section,
+                      const boost::property_tree::ptree& sec,
+                      const std::set<std::string>& known)
+{
+    for (const auto& [key, unused] : sec)
+    {
+        (void)unused;
+        if (known.find(key) == known.end())
+        {
+            std::string valid;
+            for (const auto& k : known)
+            {
+                valid += (valid.empty() ? "" : ", ") + k;
+            }
+            throw std::runtime_error("Unknown key '" + key + "' in [" + section +
+                                     "]. Valid keys are: " + valid);
+        }
+    }
+}
+
 OutputConfig parseOutput(const std::string& name, const boost::property_tree::ptree& sec)
 {
+    requireKnownKeys(
+        "output." + name,
+        sec,
+        {"text_file", "jsonl_file", "max_size", "max_files", "facility", "include_malformed"});
+
     OutputConfig outCfg;
     outCfg.name      = name;
     outCfg.textFile  = sec.get<std::string>("text_file", "");
@@ -375,6 +412,10 @@ Config loadConfig(const std::string& path)
     Config cfg;
 
     // [server]
+    if (const auto serverNode = tree.get_child_optional("server"))
+    {
+        requireKnownKeys("server", *serverNode, {"host", "udp_port", "workers", "max_queue_bytes"});
+    }
     cfg.host = tree.get<std::string>("server.host", cfg.host);
     requireAddress("[server] host", cfg.host);
 
@@ -387,10 +428,25 @@ Config loadConfig(const std::string& path)
         cfg.udpPort = static_cast<uint16_t>(port);
     }
     {
-        const int w = requireInt(tree, "server.workers", cfg.workers);
-        if (w <= 0)
+        // The upper bound matters as much as the lower one. runServer spawns a
+        // std::thread per worker, so "workers = 1000000" — a misplaced digit —
+        // used to loop until thread creation failed, and the std::system_error
+        // escaped through runServer and main to std::terminate: a core dump
+        // instead of a config error, and on Windows nothing in the Event Log
+        // because osLogError was never reached.
+        //
+        // A flat cap rather than a multiple of hardware_concurrency: the number
+        // has to mean the same thing on the machine that writes the config and
+        // the one that runs it, and hardware_concurrency is also allowed to
+        // return 0. 256 is far past anything useful for an I/O-bound server and
+        // still nowhere near a thread limit.
+        constexpr int kMaxWorkers = 256;
+        const int w               = requireInt(tree, "server.workers", cfg.workers);
+        if (w <= 0 || w > kMaxWorkers)
         {
-            throw std::runtime_error("workers must be > 0");
+            throw std::runtime_error("workers must be between 1 and " +
+                                     std::to_string(kMaxWorkers) + " (got " + std::to_string(w) +
+                                     ")");
         }
         cfg.workers = w;
     }
@@ -438,10 +494,19 @@ Config loadConfig(const std::string& path)
 
     requireDistinctFiles(cfg.outputs);
 
+    // [web_viewer] — read by the web viewer, not by minilog. Validated here
+    // anyway, because this is the only component that validates the file at all.
+    if (const auto viewerNode = tree.get_child_optional("web_viewer"))
+    {
+        requireKnownKeys("web_viewer", *viewerNode, {"host", "port"});
+    }
+
     // [forwarding]
     if (auto fwdNode = tree.get_child_optional("forwarding"))
     {
-        auto& f                = *fwdNode;
+        auto& f = *fwdNode;
+        requireKnownKeys(
+            "forwarding", f, {"enabled", "host", "port", "facility", "max_message_size"});
         cfg.forwarding.enabled = f.get<bool>("enabled", false);
         cfg.forwarding.host    = f.get<std::string>("host", "");
         cfg.forwarding.maxMessageSize =
