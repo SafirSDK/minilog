@@ -297,21 +297,38 @@ def set_web_viewer_address(host: str, port: int) -> None:
     The listen address lives in minilog.conf rather than in the service
     registration, so changing it is an edit and a restart. It used to mean
     re-registering the service, which is what moving it into the config
-    removed. Everything outside the section is preserved verbatim, including
-    the sentinel the upgrade test appends.
+    removed.
+
+    The two keys are replaced where they stand rather than the section being
+    rewritten at the end of the file: everything else has to survive verbatim,
+    including the sentinel the upgrade test appends and anything an earlier
+    test left after it.
     """
-    kept: list[str] = []
+    out: list[str] = []
     in_section = False
+    written = False
     for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not written:
+                out += [f"host = {host}", f"port = {port}"]
+                written = True
             in_section = stripped.lower() == "[web_viewer]"
-        if not in_section:
-            kept.append(line)
-    body = "\n".join(kept).rstrip()
-    CONFIG_PATH.write_text(
-        f"{body}\n\n[web_viewer]\nhost = {host}\nport = {port}\n", encoding="utf-8"
-    )
+            out.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip().lower() if "=" in stripped else ""
+        if in_section and key in ("host", "port"):
+            if not written:
+                out += [f"host = {host}", f"port = {port}"]
+                written = True
+            continue
+        out.append(line)
+    if in_section and not written:
+        out += [f"host = {host}", f"port = {port}"]
+        written = True
+    if not written:
+        out += ["", "[web_viewer]", f"host = {host}", f"port = {port}"]
+    CONFIG_PATH.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 def web_viewer_responds(port: int = WEB_VIEWER_PORT) -> bool:
