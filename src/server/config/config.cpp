@@ -106,13 +106,18 @@ void requireAddress(const std::string& label, const std::string& value)
 void requireDestinationHost(const std::string& label, const std::string& value)
 {
     boost::system::error_code ec;
-    boost::asio::ip::make_address(value, ec);
+    const auto address = boost::asio::ip::make_address(value, ec);
 
     const bool bracketed =
         value.find('[') != std::string::npos || value.find(']') != std::string::npos;
     const bool looksLikeUrlOrPort =
         value.find(':') != std::string::npos || value.find('/') != std::string::npos;
-    const bool hasSpace = std::any_of(
+    // "10.0.0.5:514" parses on Windows, where Asio goes through
+    // WSAStringToAddressW, which accepts a port suffix and quietly discards it.
+    // It has to be caught by its shape or it is a config error on Linux and a
+    // silently wrong destination on the platform minilog is deployed to.
+    const bool strayPort = !ec && address.is_v4() && value.find(':') != std::string::npos;
+    const bool hasSpace  = std::any_of(
         value.begin(), value.end(), [](unsigned char c) { return std::isspace(c) != 0; });
 
     const bool digitsAndDots =
@@ -122,7 +127,7 @@ void requireDestinationHost(const std::string& label, const std::string& value)
 
     // An IPv6 literal contains colons legitimately, so the colon and digits
     // rules only apply to values that did not parse as an address at all.
-    if (bracketed || hasSpace || (ec && (looksLikeUrlOrPort || digitsAndDots)))
+    if (bracketed || hasSpace || strayPort || (ec && (looksLikeUrlOrPort || digitsAndDots)))
     {
         throw std::runtime_error("Invalid " + label + ": '" + value +
                                  "' is neither an IP address nor a hostname (the port belongs in "
