@@ -116,8 +116,14 @@ class ViewerConfig:
         self.include_patterns: list[str] = []
 
 
-def find_server_config() -> Path | None:
-    """Find minilog.conf using standard search order"""
+def server_config_search_paths() -> list[Path]:
+    """Where minilog.conf is looked for, in order.
+
+    The current directory comes first on purpose: a Windows shortcut's "Start
+    in" field, or a cd in a launcher script, is then all it takes to point the
+    viewer at one of several config directories. --config overrides the search
+    entirely.
+    """
     search_paths = [
         Path("./minilog.conf"),
     ]
@@ -134,21 +140,35 @@ def find_server_config() -> Path | None:
     script_dir = Path(__file__).parent.absolute()
     search_paths.append(script_dir / "minilog.conf")
 
-    for path in search_paths:
+    return search_paths
+
+
+def find_server_config() -> Path | None:
+    """Find minilog.conf using the standard search order"""
+    for path in server_config_search_paths():
         if path.exists():
             return path
 
     return None
 
 
-def find_viewer_config(server_config_path: Path) -> Path | None:
-    """Find minilog-cli-viewer.conf"""
-    search_paths = [
+def viewer_config_search_paths(server_config_path: Path) -> list[Path]:
+    """Where minilog-cli-viewer.conf is looked for, in order.
+
+    minilog.conf holds deployment facts and minilog-cli-viewer.conf holds one
+    person's display preferences, so the two are not necessarily managed
+    together — hence --viewer-config, and hence the current directory first
+    here too.
+    """
+    return [
         Path("./minilog-cli-viewer.conf"),
         server_config_path.parent / "minilog-cli-viewer.conf",
     ]
 
-    for path in search_paths:
+
+def find_viewer_config(server_config_path: Path) -> Path | None:
+    """Find minilog-cli-viewer.conf"""
+    for path in viewer_config_search_paths(server_config_path):
         if path.exists():
             return path
 
@@ -547,6 +567,19 @@ def main():
         description="Real-time JSONL log viewer for minilog",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Configuration discovery:
+  minilog.conf is looked for in ./minilog.conf, then the platform directory
+  (%ProgramData%\\minilog on Windows, /etc/minilog on Linux), then beside this
+  script. minilog-cli-viewer.conf is looked for in ./minilog-cli-viewer.conf,
+  then beside whichever minilog.conf was found.
+
+  The current directory is searched first on purpose: a shortcut's "Start in"
+  field or a cd in a launcher script then selects which configuration the viewer
+  picks up, so several config directories can be switched between. --config and
+  --viewer-config override the search outright and fail if the path is not
+  there, rather than quietly falling back to it. --verbose prints what was
+  found.
+
 Filtering behavior:
   Both --include and --exclude can be specified multiple times to add multiple
   patterns. Command-line patterns are ADDED to any patterns defined in the config
@@ -566,6 +599,17 @@ Filtering behavior:
     --include "error" --exclude "test"
       Shows messages with "error" but excludes any that also contain "test"
         """,
+    )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help="Path to minilog.conf; overrides the search order (error if it does not exist)",
+    )
+    parser.add_argument(
+        "--viewer-config",
+        metavar="PATH",
+        help="Path to minilog-cli-viewer.conf; overrides the search order "
+        "(error if it does not exist)",
     )
     parser.add_argument(
         "--output-section",
@@ -610,17 +654,22 @@ Filtering behavior:
     if args.lines < 0:
         parser.error("--lines must be a non-negative integer")
 
-    # Find server config
-    server_config_path = find_server_config()
-    if not server_config_path:
-        print("Error: minilog.conf not found in standard locations:", file=sys.stderr)
-        print("  - ./minilog.conf", file=sys.stderr)
-        if platform.system() == "Windows":
-            print("  - C:/Program Files/minilog/minilog.conf", file=sys.stderr)
-        else:
-            print("  - /etc/minilog/minilog.conf", file=sys.stderr)
-        print(f"  - {Path(__file__).parent.absolute()}/minilog.conf", file=sys.stderr)
-        sys.exit(1)
+    # Find server config. A path given on the command line is used as given:
+    # falling back to the search order when it is missing would mean a typo in a
+    # deployment script reads the wrong log file without saying anything.
+    if args.config:
+        server_config_path = Path(args.config)
+        if not server_config_path.exists():
+            print(f"Error: config file not found: {server_config_path}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        server_config_path = find_server_config()
+        if not server_config_path:
+            print("Error: minilog.conf not found in standard locations:", file=sys.stderr)
+            for path in server_config_search_paths():
+                print(f"  - {path}", file=sys.stderr)
+            print("Use --config PATH to name it explicitly.", file=sys.stderr)
+            sys.exit(1)
 
     if args.verbose:
         print(f"Found server config: {server_config_path}", file=sys.stderr)
@@ -631,7 +680,14 @@ Filtering behavior:
         sys.exit(1)
 
     # Find and parse viewer config
-    viewer_config_path = find_viewer_config(server_config_path)
+    if args.viewer_config:
+        viewer_config_path = Path(args.viewer_config)
+        if not viewer_config_path.exists():
+            print(f"Error: viewer config file not found: {viewer_config_path}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        viewer_config_path = find_viewer_config(server_config_path)
+
     if viewer_config_path:
         if args.verbose:
             print(f"Found viewer config: {viewer_config_path}", file=sys.stderr)
@@ -639,6 +695,8 @@ Filtering behavior:
     else:
         if args.verbose:
             print("No viewer config found, using defaults", file=sys.stderr)
+            for path in viewer_config_search_paths(server_config_path):
+                print(f"  - {path}", file=sys.stderr)
         config = ViewerConfig()
 
     config.jsonl_file = jsonl_file

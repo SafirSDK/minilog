@@ -204,6 +204,21 @@
 
 ### New
 
+- **`--config` and `--viewer-config` for the cli-viewer.** It was the only component that could
+  not be told where its configuration lives: `minilog.exe` takes a path as an argument and
+  `minilog-web-viewer` has `--config`, but the cli-viewer had a fixed search order and nothing
+  else. That blocks deployments which put binaries and configuration inside an existing
+  application tree rather than the platform directories, leaving "launch it from the config
+  directory" or "keep a second copy of minilog.conf beside the script" — which then drifts. Both
+  flags override the search outright, and a path that does not exist is an error rather than a
+  quiet fall-back, because a typo in a deployment script would otherwise read some other
+  configuration's logs and say nothing. Giving neither flag behaves exactly as before. The
+  not-found message now lists the paths actually searched, including
+  `%ProgramData%\minilog\minilog.conf` — it used to name `C:\Program Files\minilog\minilog.conf`,
+  which is not one of them — and says that `--config` exists. Searching the current directory
+  first is deliberate and now documented as such: a shortcut's "Start in" field selects which
+  configuration the viewer picks up.
+
 - **`[web_viewer] host` and `port`, replacing the web viewer's `--addr` flag.** The listen address
   was the one deployment fact that did not live in `minilog.conf` — it was a command-line flag,
   frozen into the Windows service registration at install time and supplied by the installer, so

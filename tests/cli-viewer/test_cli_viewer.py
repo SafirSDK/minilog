@@ -195,6 +195,117 @@ class TestConfigDiscovery(unittest.TestCase):
             self.assertIn("Found viewer config:", stderr)
             self.assertIn("minilog-cli-viewer.conf", stderr)
 
+    def test_config_flag_points_outside_the_search_order(self):
+        """--config takes a minilog.conf the search order would never find"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            conf_dir = tmpdir / "config"
+            conf_dir.mkdir()
+            run_dir = tmpdir / "run"
+            run_dir.mkdir()
+            jsonl = tmpdir / "elsewhere.jsonl"
+            jsonl.touch()
+            conf = write_server_config(conf_dir, jsonl)
+
+            # cwd deliberately has no minilog.conf in it.
+            proc, _, acc_err = _viewer(
+                [sys.executable, VIEWER, "--config", str(conf), "--no-color", "--verbose"],
+                cwd=run_dir)
+            stderr = _wait(acc_err, "Reading")
+            _stop(proc)
+
+            self.assertIn(str(conf), stderr)
+            self.assertIn("elsewhere.jsonl", stderr)
+
+    def test_config_flag_wins_over_the_current_directory(self):
+        """A named config is used even when ./minilog.conf exists"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            named_dir = tmpdir / "named"
+            named_dir.mkdir()
+            cwd_jsonl = tmpdir / "from-cwd.jsonl"
+            cwd_jsonl.touch()
+            named_jsonl = tmpdir / "from-flag.jsonl"
+            named_jsonl.touch()
+            write_server_config(tmpdir, cwd_jsonl)
+            conf = write_server_config(named_dir, named_jsonl)
+
+            proc, _, acc_err = _viewer(
+                [sys.executable, VIEWER, "--config", str(conf), "--no-color", "--verbose"],
+                cwd=tmpdir)
+            stderr = _wait(acc_err, "Reading")
+            _stop(proc)
+
+            self.assertIn("from-flag.jsonl", stderr)
+            self.assertNotIn("from-cwd.jsonl", stderr)
+
+    def test_missing_config_flag_path_is_an_error(self):
+        """--config naming a file that is not there must fail, not fall back
+
+        Falling back to the search order would mean a typo in a deployment
+        script reads some other machine's log file and says nothing about it.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            jsonl = tmpdir / "test.jsonl"
+            jsonl.touch()
+            write_server_config(tmpdir, jsonl)  # would be found by the search
+            missing = tmpdir / "nowhere" / "minilog.conf"
+
+            result = subprocess.run(
+                [sys.executable, VIEWER, "--config", str(missing)],
+                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not found", result.stderr)
+            self.assertIn(str(missing), result.stderr)
+
+    def test_viewer_config_flag_points_outside_the_search_order(self):
+        """--viewer-config takes a preferences file from anywhere"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            prefs_dir = tmpdir / "prefs"
+            prefs_dir.mkdir()
+            jsonl = tmpdir / "test.jsonl"
+            jsonl.touch()
+            write_server_config(tmpdir, jsonl)
+            viewer_conf = write_viewer_config(prefs_dir, columns="message")
+
+            proc, _, acc_err = _viewer(
+                [sys.executable, VIEWER, "--viewer-config", str(viewer_conf),
+                 "--no-color", "--verbose"], cwd=tmpdir)
+            stderr = _wait(acc_err, "Found viewer config:")
+            _stop(proc)
+
+            self.assertIn(str(viewer_conf), stderr)
+
+    def test_missing_viewer_config_flag_path_is_an_error(self):
+        """--viewer-config naming a file that is not there must fail"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            jsonl = tmpdir / "test.jsonl"
+            jsonl.touch()
+            write_server_config(tmpdir, jsonl)
+            write_viewer_config(tmpdir, columns="message")  # would be found
+            missing = tmpdir / "nowhere" / "minilog-cli-viewer.conf"
+
+            result = subprocess.run(
+                [sys.executable, VIEWER, "--viewer-config", str(missing)],
+                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not found", result.stderr)
+            self.assertIn(str(missing), result.stderr)
+
+    def test_error_when_no_server_config_names_the_flag(self):
+        """The not-found error has to say how to point the viewer at one"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, VIEWER],
+                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+            )
+            self.assertIn("--config", result.stderr)
+
 
 # ── Output section tests ─────────────────────────────────────────────────────
 

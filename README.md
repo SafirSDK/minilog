@@ -470,6 +470,15 @@ surviving log rotation transparently.
 The viewer also looks for `minilog-cli-viewer.conf` next to `minilog.conf` (or `./`) for display
 and filter settings. See [`src/cli-viewer/minilog-cli-viewer.conf.example`](src/cli-viewer/minilog-cli-viewer.conf.example).
 
+**The current directory is searched first on purpose.** A Windows shortcut's "Start in" field, or
+a `cd` in a launcher script, then decides which configuration the viewer picks up — so several
+config directories can be kept and switched between with different shortcuts. `--verbose` prints
+which files were found when it is not obvious.
+
+`--config` and `--viewer-config` name either file directly and skip the search entirely. A path
+that does not exist is an error, not a fall-back to the search order: a typo in a deployment
+script would otherwise read some other configuration's logs without saying so.
+
 **Usage:**
 
 ```
@@ -478,6 +487,8 @@ python3 minilog-cli-viewer.py [options]
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--config PATH` | search order | Path to `minilog.conf`; error if it does not exist |
+| `--viewer-config PATH` | search order | Path to `minilog-cli-viewer.conf`; error if it does not exist |
 | `--output-section NAME` | `main` | Read `[output.NAME]` from `minilog.conf` |
 | `--lines N` / `-n N` | `10` | Lines to show on startup; `0` = follow-only |
 | `--show-all` | — | Print all existing entries and exit (no follow) |

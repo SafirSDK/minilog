@@ -71,7 +71,8 @@ Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 - Behaviour: `tail -f` style — shows last N lines on startup (default 10), then follows new lines.
   Detects log rotation via inode change (POSIX) or file-size regression (Windows) and re-opens.
 - Config discovery: looks for `minilog.conf` in `./`, platform default dir, then script dir;
-  looks for `minilog-cli-viewer.conf` next to `minilog.conf` or `./`.
+  looks for `minilog-cli-viewer.conf` next to `minilog.conf` or `./`. `--config` and
+  `--viewer-config` override either search and error if the path is missing (no fall-back).
 - Key classes/functions: `ViewerConfig`, `tail_file()`, `format_message()`, `should_display()`,
   `escape_control_chars()` (C0/DEL escaping applied to every displayed field),
   `_file_id()`, `_open_shared()` (Windows-aware FILE_SHARE_DELETE open).

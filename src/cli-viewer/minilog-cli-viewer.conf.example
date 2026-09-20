@@ -1,14 +1,32 @@
 ; minilog-cli-viewer configuration file
 ;
 ; This file configures the display and filtering options for minilog-cli-viewer.py.
-; The viewer automatically reads minilog.conf to find log file locations, so you
-; only need to configure display preferences and filters here.
+; The viewer reads minilog.conf to find the log files, so only display
+; preferences and filters belong here. The two files have different owners:
+; minilog.conf is a deployment fact installed with the system, this one is one
+; person's taste, and two users of the same machine can reasonably differ.
 ;
-; Place this file as:
-;   - ./minilog-cli-viewer.conf (current directory), or
-;   - In the same directory as minilog.conf (e.g., /etc/minilog/)
+; Where this file is looked for, in order:
+;   1. ./minilog-cli-viewer.conf          (the current directory)
+;   2. beside whichever minilog.conf was found
 ;
-; If no config file is found, the viewer uses sensible defaults.
+; Where minilog.conf is looked for, in order:
+;   1. ./minilog.conf                     (the current directory)
+;   2. %ProgramData%\minilog\minilog.conf  (Windows — where the installer puts it)
+;      /etc/minilog/minilog.conf          (Linux)
+;   3. beside minilog-cli-viewer.py
+;
+; The current directory comes first in both lists on purpose: a Windows
+; shortcut's "Start in" field, or a cd in a launcher script, then decides which
+; configuration the viewer picks up, so several config directories can be kept
+; and switched between.
+;
+; --config PATH and --viewer-config PATH name either file directly and skip the
+; search. A path that is not there is an error rather than a fall-back to the
+; search order, so a typo cannot quietly read the wrong logs. --verbose prints
+; which files were found.
+;
+; If no viewer config file is found, the viewer uses sensible defaults.
 
 ; ─────────────────────────────────────────────────────────────────────────────
 ; Display settings
