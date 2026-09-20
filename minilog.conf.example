@@ -12,7 +12,13 @@
 [server]
 
 ; IP address to bind the UDP socket to.
-; 0.0.0.0 listens on all interfaces; use 127.0.0.1 to restrict to localhost.
+; 0.0.0.0 listens on all IPv4 interfaces; use 127.0.0.1 to restrict to localhost.
+;
+; An IPv6 literal (:: or ::1) is accepted and binds an IPv6 socket. minilog
+; binds one socket, so it serves one address family at a time — there is no
+; dual-stack listener, and "::" will not receive IPv4 traffic. That path is
+; covered only by a loopback smoke test and has not been validated against real
+; IPv6 senders, so treat IPv6 as unsupported rather than optional.
 host = 0.0.0.0
 
 ; UDP port to listen on (0–65535).

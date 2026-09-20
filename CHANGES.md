@@ -234,6 +234,15 @@
 
 ### Changed
 
+- **The README no longer claims IPv4-only.** It said "IPv6 is not supported" while
+  `make_address` accepted an IPv6 literal and `udp::endpoint` then bound an IPv6 socket — a
+  documented limitation the code did not implement, sitting directly above the Standards
+  conformance section. The documentation now says what is true: one socket, one address family at
+  a time, no dual-stack listener, and an IPv6 `host` binds an IPv6 socket but is exercised only by
+  a loopback smoke test, so treat it as unsupported. Behaviour is unchanged, and the smoke test is
+  new — it pins the path as working without claiming more than that. `minilog.conf.example` says
+  the same on `[server] host`.
+
 - **CI pins third-party actions to commit SHAs.** `ilammy/msvc-dev-cmd`, `softprops/action-gh-release`
   and `codecov/codecov-action` were referenced by tag, which is a mutable pointer — the code those
   jobs run could change with no change in the repository, and they hold `GITHUB_TOKEN` (release

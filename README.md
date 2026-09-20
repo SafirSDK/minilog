@@ -25,9 +25,13 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 ## Limitations
 
 - **UDP only** — no TCP, TLS, or RELP; message delivery is best-effort
-- **Receiving is IPv4 only** — the receive socket is opened from `[server] host`, which is
-  documented and tested as an IPv4 address; forwarding to an IPv6 destination does work, since
-  that socket is opened from the resolved endpoint
+- **IPv6 is untested** — minilog binds a single socket to `[server] host`, so it serves one address
+  family at a time; there is no dual-stack listener and nothing sets `v6_only(false)`, which on
+  Windows an IPv6 socket defaults to anyway. An IPv6 `host` does bind an IPv6 socket and does
+  receive, but that path is exercised only by a loopback smoke test and has never been validated
+  against real IPv6 senders — treat it as unsupported. Forwarding is the same: the destination
+  socket is opened from the resolved endpoint, so an IPv6 collector works as far as the same
+  loopback test goes and no further
 - **No multicast or promiscuous capture** — minilog receives datagrams addressed to the host it runs on; it does not join multicast groups or sniff traffic addressed elsewhere (neither is part of the syslog RFCs)
 - **RFC 5424 structured data is not parsed** — it is just passed along to the output files
 - **Rotated files are not compressed** — generation files are plain text/JSONL; no gzip
@@ -282,7 +286,7 @@ See [`minilog.conf.example`](minilog.conf.example) for a fully commented example
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `host` | `0.0.0.0` | IP address to bind |
+| `host` | `0.0.0.0` | IP address to bind. An IPv6 literal binds an IPv6 socket — one family at a time, and untested against real senders; see [Limitations](#limitations) |
 | `udp_port` | `514` | UDP port (0–65535; 0 = OS-assigned) |
 | `workers` | `4` | Number of I/O worker threads (1–256) |
 | `max_queue_bytes` | `16MB` | Received-but-unwritten log held in memory before further datagrams are dropped. Same units as `max_size`; a plain number is bytes. No "unlimited" setting — see [Behaviour under flood](#behaviour-under-flood) |

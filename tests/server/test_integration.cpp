@@ -77,10 +77,33 @@ struct Fixture
 
     static void sendUdp(const std::string& data, uint16_t port)
     {
+        sendUdpTo(data, "127.0.0.1", port);
+    }
+
+    static void sendUdpTo(const std::string& data, const std::string& host, uint16_t port)
+    {
         boost::asio::io_context senderIoc;
-        boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
-        const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), port);
+        const auto address = boost::asio::ip::make_address(host);
+        const boost::asio::ip::udp::endpoint ep(address, port);
+        boost::asio::ip::udp::socket sock(senderIoc, ep.protocol());
         sock.send_to(boost::asio::buffer(data), ep);
+    }
+
+    // True if this host can bind IPv6 loopback at all. Containers and minimal
+    // CI images sometimes cannot, and a smoke test is not worth failing over
+    // something the host does not have.
+    static bool hasIpv6Loopback()
+    {
+        boost::asio::io_context probeIoc;
+        boost::asio::ip::udp::socket probe(probeIoc);
+        boost::system::error_code ec;
+        probe.open(boost::asio::ip::udp::v6(), ec);
+        if (ec)
+        {
+            return false;
+        }
+        probe.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::loopback(), 0), ec);
+        return !ec;
     }
 
     // Run the ioc long enough to receive and fully process all sent messages,
@@ -366,6 +389,83 @@ BOOST_AUTO_TEST_CASE(start_exception_message_contains_port_number)
     om1.close();
     ioc.restart();
     ioc.run_for(std::chrono::milliseconds(50));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Address family ──────────────────────────────────────────────────────────
+//
+// minilog binds one socket to whatever [server] host names, so it serves one
+// address family at a time — there is no dual-stack listener and nothing sets
+// v6_only(false). An IPv6 host therefore binds an IPv6 socket, which the README
+// used to deny outright while the code did it anyway.
+//
+// This is a smoke test over loopback and nothing more. It proves the path is
+// not broken, which is exactly what the README now claims and no more: IPv6 is
+// documented as untested against real senders rather than as supported.
+
+BOOST_FIXTURE_TEST_SUITE(address_family, Fixture)
+
+BOOST_AUTO_TEST_CASE(ipv6_host_binds_ipv6_and_receives)
+{
+    if (!hasIpv6Loopback())
+    {
+        BOOST_TEST_MESSAGE("no IPv6 loopback on this host; skipping");
+        return;
+    }
+
+    auto cfg = makeConfig();
+    cfg.host = "::1";
+
+    OutputManager om(ioc, cfg);
+    BOOST_REQUIRE(om.open());
+    UdpServer server(ioc, cfg, om, nullptr);
+    BOOST_REQUIRE_NO_THROW(server.start());
+
+    sendUdpTo("<13>Feb  5 17:32:18 v6host app: over ipv6", "::1", server.localPort());
+    drain(server, om);
+
+    const auto text = readAll(dir / "syslog.log");
+    BOOST_TEST(text.find("over ipv6") != std::string::npos, "text sink: " << text);
+
+    const auto record = parseJsonl(readAll(dir / "syslog.jsonl"));
+    BOOST_TEST(record.at("message").as_string() == "over ipv6");
+    // The sender address is recorded as written by the v6 stack, not mapped
+    // into a v4 shape.
+    BOOST_TEST(record.at("src").as_string() == "::1");
+}
+
+BOOST_AUTO_TEST_CASE(ipv4_host_does_not_receive_over_ipv6)
+{
+    // One socket, one family: there is no dual-stack listener, which is the
+    // half of the behaviour a reader configuring host = :: needs to know.
+    if (!hasIpv6Loopback())
+    {
+        BOOST_TEST_MESSAGE("no IPv6 loopback on this host; skipping");
+        return;
+    }
+
+    auto cfg = makeConfig();
+    OutputManager om(ioc, cfg);
+    BOOST_REQUIRE(om.open());
+    UdpServer server(ioc, cfg, om, nullptr);
+    BOOST_REQUIRE_NO_THROW(server.start());
+    const uint16_t port = server.localPort();
+
+    // Same port number, other family. Nothing is listening there.
+    boost::system::error_code ignored;
+    {
+        boost::asio::io_context senderIoc;
+        boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v6());
+        sock.send_to(boost::asio::buffer(std::string("<13>over the wrong family")),
+                     boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::loopback(), port),
+                     0,
+                     ignored);
+    }
+    drain(server, om);
+
+    const auto text = readAll(dir / "syslog.log");
+    BOOST_TEST(text.find("wrong family") == std::string::npos, "text sink: " << text);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
