@@ -35,20 +35,26 @@
   printed, recolour a benign line as critical, change the window title, or write the clipboard.
   C0 control characters and DEL are now escaped in **every** displayed field, not just `message`:
   `hostname`, `app`, `msgid` and `pid` are parsed straight out of the datagram and are equally
-  attacker-controlled. An embedded newline in a message now renders on one line instead of
-  printing as a second, forged-looking entry. TAB and anything above `0x7F` are untouched, so
-  UTF-8 still displays, and the viewer's own colour codes are unaffected — those come from a
-  table, never from the record.
+  attacker-controlled. C1 (`U+0080`-`U+009F`) is escaped alongside C0, because `U+009B` and
+  `U+009D` are the 8-bit CSI and OSC and reach the same sequences without an ESC byte at all. An
+  embedded newline in a message now renders on one line instead of printing as a second,
+  forged-looking entry. TAB and everything above C1 are untouched, so UTF-8 still displays, and
+  the viewer's own colour codes are unaffected — those come from a table, never from the record.
 
 - **A datagram can no longer forge a second entry in the text sink.** The text sink wrote the
   payload byte for byte, so an embedded newline ended the record and started another one that the
   sender had written in full — including its own PRI, so the forged line could claim a facility and
   severity the datagram never had, and nothing reading the file afterwards could tell it from a
   genuine entry. C0 control characters and DEL are now escaped before the write: `\n`, `\r`, `\\`
-  for a literal backslash, and `\xNN` for the rest, which is the dialect the JSONL sink already
-  speaks. TAB stays literal and nothing above `0x7F` is touched, so UTF-8 text is unaffected. The
-  JSONL sink, the web viewer and the forwarding path already handled this correctly and are
-  unchanged.
+  for a literal backslash, `\xNN` for the rest, and `\uNNNN` for C1 (`U+0080`-`U+009F`), which
+  holds the 8-bit forms of CSI and OSC and so drives a terminal paging the file without an ESC
+  byte appearing anywhere in the datagram. C1 is matched as a decoded codepoint rather than a raw
+  byte, so the continuation bytes of ordinary text are untouched; TAB stays literal and everything
+  else above `0x7F` is written byte for byte, leaving UTF-8 unaffected. This is deliberately not
+  JSON's escaping — the JSONL sink writes ESC as `\u001B` and escapes TAB and the double quote —
+  but it is the same dialect the cli-viewer displays, so a line on screen reads the way a line in
+  the file does. The JSONL sink, the web viewer and the forwarding path already handled the
+  original problem correctly and are unchanged.
 
 - **A UDP flood no longer grows minilog until the OS kills it.** The receive path had no admission
   control: each datagram was copied and posted to the io_context, the worker that picked it up

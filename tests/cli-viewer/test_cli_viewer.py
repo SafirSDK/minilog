@@ -775,6 +775,22 @@ class TestEscapeControlChars(unittest.TestCase):
         path = "opened C:\\Users\\svc\\app.log"
         self.assertEqual(self.escape(path), path)
 
+    def test_c1_csi_is_escaped(self):
+        """U+009B is the 8-bit CSI: the same attack without an ESC byte."""
+        self.assertEqual(self.escape("\u009b2J"), "\\u009B2J")
+
+    def test_c1_osc_is_escaped(self):
+        self.assertEqual(self.escape("\u009d0;title\x07"), "\\u009D0;title\\x07")
+
+    def test_every_c1_is_escaped(self):
+        for code in range(0x80, 0xA0):
+            self.assertEqual(self.escape(chr(code)), f"\\u{code:04X}")
+
+    def test_codepoint_just_past_c1_is_untouched(self):
+        """U+00A0 is the first codepoint past C1; escaping it would start
+        eating ordinary Latin-1 text."""
+        self.assertEqual(self.escape("\u00a0\u00e9\u00a9"), "\u00a0\u00e9\u00a9")
+
     def test_utf8_is_untouched(self):
         self.assertEqual(self.escape("日本語 café ☃"), "日本語 café ☃")
 
@@ -849,6 +865,18 @@ class TestNoRawControlCharsReachStdout(unittest.TestCase):
 
         self.assertEqual(stdout.count("\n"), 1, "the record printed as more than one line")
         self.assertIn("benign\\n" + forged, stdout)
+
+    def test_c1_controls_do_not_reach_the_terminal(self):
+        """The 8-bit CSI and OSC drive a terminal exactly as ESC does, and reach
+        it without an ESC byte ever appearing in the datagram."""
+        stdout = self._show_all(
+            self._record(hostname="h\u009b2J", message="m\u009b1;31mFAKE\u009d0;t")
+        )
+
+        self.assertNotIn("\u009b", stdout)
+        self.assertNotIn("\u009d", stdout)
+        self.assertIn("\\u009B2J", stdout)
+        self.assertIn("\\u009D0;t", stdout)
 
     def test_other_control_chars_do_not_reach_the_terminal(self):
         stdout = self._show_all(self._record(message="a\x00b\rc\x07d\x7fe"))

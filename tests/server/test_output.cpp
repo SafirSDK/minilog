@@ -946,6 +946,69 @@ BOOST_AUTO_TEST_CASE(hex_escape_is_always_two_digits)
     BOOST_CHECK_EQUAL(escapeControlChars(std::string("\x1b") + "BAD"), "\\x1BBAD");
 }
 
+// ── C1 controls — the 8-bit forms of the same sequences ──────────────────────
+//
+// U+009B is CSI and U+009D is OSC, so a sender reaches the escape sequences the
+// C0 branch exists to stop without ever sending an ESC byte. They arrive as the
+// two-byte UTF-8 sequence 0xC2 0x80-0xC2 0x9F.
+
+namespace
+{
+// U+009B CSI, as it arrives on the wire.
+const std::string CSI = "\xc2\x9b";
+const std::string OSC = "\xc2\x9d"; // U+009D
+} // namespace
+
+BOOST_AUTO_TEST_CASE(c1_csi_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars(CSI + "2J"), "\\u009B2J");
+}
+
+BOOST_AUTO_TEST_CASE(c1_osc_escaped)
+{
+    BOOST_CHECK_EQUAL(escapeControlChars(OSC + "0;title"), "\\u009D0;title");
+}
+
+BOOST_AUTO_TEST_CASE(every_c1_escaped)
+{
+    for (int cp = 0x80; cp <= 0x9F; ++cp)
+    {
+        const std::string in = "\xc2" + std::string(1, static_cast<char>(cp));
+        BOOST_CHECK_EQUAL(escapeControlChars(in), std::format("\\u{:04X}", cp));
+    }
+}
+
+// U+00A0 is the first codepoint past C1 and must be left alone, or the escaping
+// starts eating ordinary Latin-1 text.
+BOOST_AUTO_TEST_CASE(codepoint_just_past_c1_unchanged)
+{
+    const std::string in = "\xc2\xa0"; // U+00A0 NO-BREAK SPACE
+    BOOST_CHECK_EQUAL(escapeControlChars(in), in);
+}
+
+// The whole point of matching the decoded codepoint rather than the raw byte:
+// 0x97 here is a continuation byte of U+65E5, not a C1 control.
+BOOST_AUTO_TEST_CASE(continuation_bytes_in_the_c1_range_unchanged)
+{
+    const std::string in = "\xe6\x97\xa5"; // U+65E5 日 — the 0x97 must survive
+    BOOST_CHECK_EQUAL(escapeControlChars(in), in);
+}
+
+// A truncated sequence must not read past the end of the input.
+BOOST_AUTO_TEST_CASE(trailing_lead_byte_unchanged)
+{
+    const std::string in = "text\xc2";
+    BOOST_CHECK_EQUAL(escapeControlChars(in), in);
+}
+
+// A bare 0x9B is not valid UTF-8 and is left as the raw byte it is: escaping
+// every byte in that range is what would mangle the continuation bytes above.
+BOOST_AUTO_TEST_CASE(bare_c1_byte_unchanged)
+{
+    const std::string in = "\x9b";
+    BOOST_CHECK_EQUAL(escapeControlChars(in), in);
+}
+
 // ── Non-ASCII — must pass through byte for byte ──────────────────────────────
 
 BOOST_AUTO_TEST_CASE(utf8_unchanged)

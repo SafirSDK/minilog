@@ -251,8 +251,8 @@ func parseFilter(r *http.Request) *Filter {
 // The read path materialises every matching line as [][]byte, copies it into a
 // []string and lets json.Encoder buffer the whole response before writing a
 // byte, so an unbounded count costs several times the chain size in memory:
-// count=1000000000 against a 73 MB sink returned an 83 MB body and took the
-// process from 5 MB to 438 MB. At the documented defaults — max_size = 100MB,
+// count=1000000000 against a 73 MB sink returned an 89 MB body and took the
+// process from 9 MB to 377 MB. At the documented defaults — max_size = 100MB,
 // max_files = 10, so a 1 GB chain — that is roughly 6 GB for a single GET, and
 // concurrent requests multiply it. The viewer normally runs on the collector's
 // host, so the process that gets OOM-killed may well be the syslog server.

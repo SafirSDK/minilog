@@ -314,22 +314,32 @@ Aliases: `kernel`=`kern`, `security`=`auth`, `system`=`daemon`, `cron`=`clock`, 
 Raw UDP payload bytes written verbatim, followed by a single `\n`. No decoding or reformatting,
 except that control characters are escaped so that one datagram is always exactly one line:
 
-| Byte | Written as |
-|------|------------|
+| Input | Written as |
+|-------|------------|
 | LF (`0x0A`) | `\n` |
 | CR (`0x0D`) | `\r` |
 | backslash (`0x5C`) | `\\` |
 | any other C0 (`0x00`–`0x1F`) and DEL (`0x7F`) | `\xNN`, always two uppercase hex digits |
+| C1 (`U+0080`–`U+009F`) | `\uNNNN`, always four uppercase hex digits |
 | TAB (`0x09`) | itself — a tab cannot start a new line |
 
-Everything above `0x7F` is written byte for byte, so UTF-8 text is never mangled.
+The two forms say what they encode: `\xNN` is one byte, `\uNNNN` is one codepoint. Everything
+else above `0x7F` is written byte for byte, so UTF-8 text is never mangled — C1 is matched as a
+decoded codepoint (the two-byte sequence `C2 80`–`C2 9F`), never as a raw byte, so the
+continuation bytes of ordinary text are untouched. C1 is escaped because `U+009B` and `U+009D`
+are the 8-bit forms of CSI and OSC: without it a sender can drive a terminal that pages or
+`cat`s the file, with no ESC byte anywhere in the datagram.
 
 Without this a sender could embed a newline in a datagram and write a second, entirely
 fabricated entry — PRI included, so it would appear to come from a facility the datagram never
-had — that nothing reading the file afterwards could distinguish from a genuine one. The
-escapes are the same ones the JSONL sink emits, and doubling the backslash keeps the transform
-reversible: `\n` in the file is always an escaped newline, and a literal backslash-n in the
-message is always written `\\n`.
+had — that nothing reading the file afterwards could distinguish from a genuine one. Doubling
+the backslash keeps the transform reversible: `\n` in the file is always an escaped newline,
+and a literal backslash-n in the message is always written `\\n`.
+
+**This is not JSON escaping.** The JSONL sink writes ESC as `\\u001B`, TAB as `\t`, and escapes
+the double quote; the text sink does none of those. The dialect above is the one the
+[cli-viewer](#cli-viewer) displays, so a line on screen reads the way a line in the file does —
+decode text-sink lines with these rules, not with a JSON string unescaper.
 
 ### JSONL format
 
@@ -464,12 +474,15 @@ python3 minilog-cli-viewer.py [options]
 | `[filters]` | `include` | — | One pattern per line; combined with `--include` CLI flags |
 
 **Control characters on screen.** Every displayed field comes from the datagram, so every
-displayed field is escaped before it is printed: `\n`, `\r`, and `\xNN` (two uppercase hex
-digits) for the rest of C0 and DEL. Without this, ESC would reach the terminal and be obeyed —
-clearing the screen, moving the cursor back over entries already printed, recolouring a benign
-line as critical — and an embedded newline would let one record print as two.
+displayed field is escaped before it is printed, using the same dialect as the
+[text sink](#text-file): `\n`, `\r`, `\xNN` for the rest of C0 and DEL, and `\uNNNN` for C1
+(`U+0080`–`U+009F`). Without this, ESC would reach the terminal and be obeyed — clearing the
+screen, moving the cursor back over entries already printed, recolouring a benign line as
+critical — and an embedded newline would let one record print as two. C1 is escaped for the
+same reason: `U+009B` and `U+009D` are the 8-bit CSI and OSC, so a sender reaches those same
+sequences without an ESC byte at all.
 
-TAB prints as itself, and nothing above `0x7F` is touched, so UTF-8 messages display normally.
+TAB prints as itself, and nothing above C1 is touched, so UTF-8 messages display normally.
 Unlike the [text sink](#text-file), a literal backslash is **not** doubled: nothing decodes
 what is on screen, and doubling it would obscure every Windows path in a message. The viewer's
 own colour codes are unaffected — they are chosen from a table, never taken from the record.

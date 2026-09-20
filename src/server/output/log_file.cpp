@@ -154,24 +154,47 @@ std::string sanitizeUtf8(std::string_view s)
     return out;
 }
 
-// Escape C0 control characters and DEL so that one datagram always occupies
-// exactly one line in the text sink. Without this a sender can embed a newline
-// and author a second entry that is indistinguishable from a genuine one —
-// including its own PRI, so it appears to come from a facility the datagram
-// never had.
+// Escape control characters so that one datagram always occupies exactly one
+// line in the text sink. Without this a sender can embed a newline and author a
+// second entry that is indistinguishable from a genuine one — including its own
+// PRI, so it appears to come from a facility the datagram never had. The same
+// escaping keeps a terminal from acting on the file when it is paged or cat'd.
 //
-// The escapes are the ones boost::json already emits for the JSONL sink, so
-// both sinks speak one dialect, and doubling the backslash makes the transform
-// reversible. \xNN is always exactly two hex digits: unlike C, a hex escape
-// here never swallows the text that follows it.
+// Doubling the backslash is what makes the transform reversible, and the two
+// escape forms say what they encode: \xNN is one byte, \uNNNN is one codepoint.
+// Both are fixed-width, so unlike C a hex escape never swallows the text that
+// follows it.
+//
+// This is not JSON's escaping and does not try to be — boost::json writes ESC
+// as \u001B, TAB as \t and quotes the double quote, none of which this does.
+// It is the dialect the cli-viewer displays, so a line on screen reads the way
+// a line in the file does.
 std::string escapeControlChars(std::string_view s)
 {
     std::string out;
     out.reserve(s.size());
 
-    for (const char ch : s)
+    for (std::size_t i = 0; i < s.size(); ++i)
     {
-        const auto c = static_cast<unsigned char>(ch);
+        const auto c = static_cast<unsigned char>(s[i]);
+
+        // C1 controls arrive as the two-byte sequence 0xC2 0x80-0xC2 0x9F, and
+        // U+009B and U+009D are the 8-bit forms of CSI and OSC — the sequences
+        // the C0 branch below exists to stop, reachable without an ESC byte at
+        // all. Matching the decoded codepoint rather than the raw byte is what
+        // keeps this from mangling other scripts: 0x80-0x9F is also the range
+        // the continuation bytes of ordinary text fall in, 0xE6 0x97 0xA5 for
+        // U+65E5 among them.
+        if (c == 0xC2 && i + 1 < s.size())
+        {
+            const auto next = static_cast<unsigned char>(s[i + 1]);
+            if (next >= 0x80 && next <= 0x9F)
+            {
+                out += std::format("\\u{:04X}", next);
+                ++i;
+                continue;
+            }
+        }
 
         if (c == '\\')
         {
@@ -191,7 +214,7 @@ std::string escapeControlChars(std::string_view s)
         }
         else
         {
-            out += ch;
+            out += s[i];
         }
     }
 

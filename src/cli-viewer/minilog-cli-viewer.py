@@ -285,14 +285,16 @@ def get_severity_color(severity: str | None) -> str:
         return ""
 
 
-# Anything that would drive the terminal rather than print on it. TAB is left
-# out deliberately: it cannot move the cursor off the current line, and escaping
-# it would only make columnar messages unreadable.
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+# Anything that would drive the terminal rather than print on it: C0, DEL, and
+# the C1 block, which holds the 8-bit forms of the same sequences — U+009B is
+# CSI and U+009D is OSC, so a sender reaches them without an ESC byte at all.
+# TAB is left out deliberately: it cannot move the cursor off the current line,
+# and escaping it would only make columnar messages unreadable.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f\x80-\x9f]")
 
 
 def escape_control_chars(value) -> str:
-    """Render a field so that it can only ever print, never act.
+    r"""Render a field so that it can only ever print, never act.
 
     Every field here comes from the datagram, so every field is escaped, not
     just `message`: `hostname`, `app`, `msgid` and `pid` are parsed straight out
@@ -304,10 +306,14 @@ def escape_control_chars(value) -> str:
     miniature: it would let one record print as two.
 
     The escapes are the ones the server's text sink uses, so a line on screen
-    reads the same way as a line in the file. A literal backslash is left alone,
-    unlike in the file: nothing decodes what is on screen, and doubling it would
-    tax every Windows path in every message for a distinction only forensics
-    would want. Nothing above 0x7F is touched, so UTF-8 still displays.
+    reads the same way as a line in the file: \n, \r, \xNN for a byte and
+    \uNNNN for a codepoint. A literal backslash is left alone, unlike in the
+    file: nothing decodes what is on screen, and doubling it would tax every
+    Windows path in every message for a distinction only forensics would want.
+
+    Only C0, DEL and C1 are escaped. Everything else above 0x7F is left alone,
+    so ordinary UTF-8 still displays — C1 is a narrow window well below any
+    printable script, not the "escape the high bytes" approach that mangles CJK.
     """
     text = value if isinstance(value, str) else str(value)
     if not _CONTROL_CHARS.search(text):
@@ -319,6 +325,8 @@ def escape_control_chars(value) -> str:
             return "\\n"
         if ch == "\r":
             return "\\r"
+        if ch >= "\x80":
+            return f"\\u{ord(ch):04X}"
         return f"\\x{ord(ch):02X}"
 
     return _CONTROL_CHARS.sub(replace, text)

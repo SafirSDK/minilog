@@ -281,6 +281,15 @@ class TestLogInjection(unittest.TestCase):
         self.assertNotIn("\r", log)
         self.assertIn("\\x1B[2J\\x00\\rdone", log)
 
+    def test_c1_controls_are_escaped(self):
+        """U+009B is the 8-bit CSI and U+009D the 8-bit OSC: the same terminal
+        control as ESC, reachable without an ESC byte in the datagram."""
+        log = self._run_and_read("<14>Mar 15 12:00:03 host app: \u009b2J\u009d0;t")
+
+        self.assertNotIn("\u009b", log)
+        self.assertNotIn("\u009d", log)
+        self.assertIn("\\u009B2J\\u009D0;t", log)
+
     def test_utf8_survives_escaping(self):
         log = self._run_and_read("<14>Mar 15 12:00:02 host app: 日本語 café")
 
