@@ -304,8 +304,8 @@ a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\
 |-----|---------|-------------|
 | `text_file` | — | Absolute path. Raw UDP payload bytes + `\n`, one line per message ([control characters escaped](#text-file)) |
 | `jsonl_file` | — | Absolute path. One JSON object per line (see [JSONL format](#jsonl-format)) |
-| `max_size` | `0` (unlimited) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB` |
-| `max_files` | `10` | Rotated files to keep. `0` = unlimited |
+| `max_size` | `0` (no rotation) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB`. `0` disables rotation; a value that overflows 64 bits is a config error rather than silently becoming `0` |
+| `max_files` | `10` | Rotated generations to keep, 0–1000. `0` = keep them all, up to that limit. Each generation costs a filesystem check on every rotation and, in the web viewer, on every request |
 | `facility` | `*` | Comma-separated facility names to accept. `*` = all |
 | `include_malformed` | `true` | Write unrecognised (UNKNOWN) datagrams |
 
@@ -406,6 +406,16 @@ One UTF-8 JSON object per line:
 | `message` | string | Message text. For RFC 5424, structured data is kept as a prefix of this field. |
 
 For `UNKNOWN` messages, only `rcv`, `src`, and `message` are populated; all other fields are `null`.
+
+**Field order is part of the format.** The fields appear in the order above, with `message` last,
+and `facility` and `severity` are always names from minilog's own tables. The web viewer's
+severity and facility filters rely on both: they locate `"severity":` by scanning the raw line
+rather than parsing it, because the filter runs over every line of a rotation chain that can be
+gigabytes, on every request. For files minilog wrote this is exact — the first `"severity":` in a
+line is the real field, since `message` comes last, and a table-driven value cannot contain a
+quote. Point the viewer at a JSONL file written by something else and neither holds: a `"severity":
+"error"` inside a message body would be matched instead, quietly returning lines that do not match
+the filter and hiding lines that do.
 
 ## Docker
 

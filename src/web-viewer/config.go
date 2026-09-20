@@ -140,18 +140,23 @@ func loadConfig(configPath string) (Config, error) {
 	}
 
 	const defaultMaxFiles = 10
-	// unlimitedMaxFiles is used when max_files = 0 (unlimited rotation) is set in
-	// the server config. The viewer probes this many generations; files that do not
-	// exist are simply skipped, so a large value is safe and effectively unlimited.
-	const unlimitedMaxFiles = 1000
+	// maxFilesLimit is both the ceiling on a configured max_files and what
+	// max_files = 0 ("keep every generation") maps to. Every generation costs an
+	// os.Stat while the chain is built, on every request, so an unbounded value
+	// is unbounded work per HTTP request — "max_files = 2000000000" is two
+	// billion stat calls to answer one GET. minilog's own loader rejects
+	// anything above this (kMaxFilesLimit in config.hpp); clamping here as well
+	// is what keeps a config the viewer is pointed at directly from costing the
+	// same.
+	const maxFilesLimit = 1000
 
 	var sinks []Sink
 	for _, s := range sections {
 		if s.jsonlFile != "" {
 			mf := defaultMaxFiles
 			if s.maxFilesSet {
-				if s.maxFiles == 0 {
-					mf = unlimitedMaxFiles
+				if s.maxFiles == 0 || s.maxFiles > maxFilesLimit {
+					mf = maxFilesLimit
 				} else {
 					mf = s.maxFiles
 				}

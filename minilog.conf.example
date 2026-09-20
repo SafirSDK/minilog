@@ -64,9 +64,15 @@ jsonl_file = /var/log/minilog/syslog.jsonl
 ; Rotate both files when either exceeds this size.
 ; Supported units: B, KB, MB, GB. Set to 0 to disable rotation.
 ; Rotated filenames: syslog.1.log, syslog.2.log, ...
+; A value too large for 64 bits is a config error — it used to wrap around to 0,
+; which means "never rotate", so asking for an enormous threshold quietly asked
+; for none at all.
 max_size = 100MB
 
-; Number of rotated files to keep per output section. 0 = keep all.
+; Number of rotated files to keep per output section, 0 to 1000.
+; 0 = keep them all, up to that limit. Each generation costs a filesystem check
+; on every rotation, and one per HTTP request in the web viewer, which is why
+; there is a limit at all.
 max_files = 10
 
 ; Comma-separated list of syslog facility names to accept, or * for all.

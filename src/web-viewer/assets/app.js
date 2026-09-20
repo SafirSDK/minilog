@@ -658,11 +658,14 @@ function makeFacChip(fac) {
 
 function addFacilityChip(fac) {
   if (!fac) return;
-  // Chip already exists in the panel
   const container = document.getElementById('fac-chips');
-  if (container.querySelector(`[data-fac="${fac}"]`)) return;
-  // Insert alphabetically after the "All" chip
+  // Compared in JS rather than interpolated into a selector. A facility value
+  // holding a quote or a bracket made querySelector throw a SyntaxError, which
+  // nothing caught, so chip updates stopped for the rest of the session. Values
+  // minilog writes are table-driven and safe; a foreign JSONL file's are not.
   const chips = [...container.querySelectorAll('[data-fac]')];
+  if (chips.some(c => c.dataset.fac === fac)) return;
+  // Insert alphabetically after the "All" chip
   const newChip = makeFacChip(fac);
   const after = chips.find(c => c.dataset.fac > fac);
   if (after) container.insertBefore(newChip, after);
@@ -974,7 +977,14 @@ function facLabel(val) {
 }
 
 function badge(sev) {
-  return `<span class="badge badge-${sev.toLowerCase()}">${escHtml(sev)}</span>`;
+  // Both interpolations are escaped. The text always was; the class attribute
+  // was not, so a sev containing a double quote would close the attribute and
+  // turn the rest into attributes of its own. minilog cannot produce one —
+  // severity comes from a fixed table of eight names — but the viewer renders
+  // whichever jsonl_file the config points at, sevLabel passes any string
+  // through, and this was the only unescaped interpolation in a file whose
+  // whole job is rendering untrusted text: the line a later edit would copy.
+  return `<span class="badge badge-${escHtml(sev.toLowerCase())}">${escHtml(sev)}</span>`;
 }
 
 function formatTime(iso) {

@@ -62,6 +62,9 @@ Fields: `rcv` (ISO8601 UTC), `src` (sender IP, no port), `proto` (`"RFC3164"`/`"
 `facility` and `severity` are string names (e.g. `"daemon"`, `"INFO"`), not numeric codes.
 `msg_time` is the raw timestamp string from the syslog message itself (verbatim, not normalised).
 Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
+**Field order is part of the format** and `message` is last: the web-viewer's severity/facility
+filters scan the raw line for `"severity":` rather than parsing it, which is exact only because
+of that ordering and because those values are table-driven (see `matchStringField` in `reader.go`).
 
 ## Viewers
 

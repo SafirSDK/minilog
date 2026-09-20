@@ -23,13 +23,22 @@
 namespace minilog
 {
 
+// Upper bound on [output.*] max_files.
+//
+// Every generation is probed with a filesystem existence check — by rotate() on
+// each rotation, and by the web viewer on each HTTP request as it builds its
+// file chain — so an unbounded value is an unbounded amount of work in two
+// places. 1000 is also the number the viewer already uses when max_files = 0
+// means "keep all", so both ends agree on how deep a chain can ever be.
+inline constexpr int kMaxFilesLimit = 1000;
+
 struct OutputConfig
 {
     std::string name;            // section name, e.g. "main"
     std::string textFile;        // empty = not configured
     std::string jsonlFile;       // empty = not configured
-    uint64_t maxSize = 0;        // bytes; 0 = unlimited
-    int maxFiles     = 10;       // 0 = unlimited
+    uint64_t maxSize = 0;        // bytes; 0 = no rotation (the documented default)
+    int maxFiles     = 10;       // 0 = keep every generation, up to kMaxFilesLimit
     std::vector<int> facilities; // empty = all (wildcard)
     bool includeMalformed = true;
 };

@@ -11,6 +11,7 @@ minilog is released under the MIT License.
 
 import argparse
 import configparser
+import contextlib
 import json
 import os
 import platform
@@ -513,7 +514,14 @@ def tail_file(
                 print(f"Including: {', '.join(config.include_patterns)}", file=sys.stderr)
             print("", file=sys.stderr)
 
-        with _open_shared(file_path) as f:
+        # Not a `with` block: the follow loop below re-opens the file on
+        # rotation and rebinds `f`. A context manager holds whatever __enter__
+        # returned, so on exit it would close the *original* handle — already
+        # closed by then — and leave the one actually in use to the garbage
+        # collector. ExitStack holds the current handle instead, so the cleanup
+        # matches the intent whichever generation is open when the loop ends.
+        with contextlib.ExitStack() as stack:
+            f = stack.enter_context(_open_shared(file_path))
             # Read initial lines from beginning
             if show_all:
                 # Show all matching lines and exit
@@ -563,11 +571,11 @@ def tail_file(
                             print(
                                 f"Log rotation detected, re-opening {file_path}...", file=sys.stderr
                             )
-                        f.close()
                         # Wait briefly in case the new file is still being created
+                        stack.close()
                         while not file_path.exists():
                             time.sleep(0.1)
-                        f = _open_shared(file_path)
+                        f = stack.enter_context(_open_shared(file_path))
                         current_id = _file_id(file_path)
                     else:
                         time.sleep(0.1)

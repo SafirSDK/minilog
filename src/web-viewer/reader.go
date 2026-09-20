@@ -71,6 +71,26 @@ func (f *Filter) Match(line []byte) bool {
 // lowercased) has a quoted string value that appears in the allowed set.
 // Handles both compact (`"severity":"info"`) and spaced (`"severity": "info"`) JSON.
 // The allowed values must already be lowercased.
+//
+// This is a substring scan, not a JSON parse, and that is a deliberate trade:
+// the filter runs over every line of a rotation chain that can be gigabytes, on
+// every request, and parsing each line would be several times the cost of
+// reading it.
+//
+// It is exact for files minilog writes. Two properties make it so, and both are
+// guaranteed by the writer rather than checked here:
+//
+//   - Field order is fixed (see the JSONL record format in AGENTS.md and the
+//     README), and `message` comes last. So the first `"severity":` in a line
+//     is the real field, never one quoted inside message text.
+//   - `facility` and `severity` values are table-driven names, so the value
+//     between the quotes cannot itself contain a quote.
+//
+// For a foreign JSONL file neither holds. A line whose message body contains
+// `"severity": "error"` earlier than the real field would be matched on the
+// wrong value — lines returned that do not match the filter, and lines hidden
+// that do. That is a quiet wrong-results failure rather than an error, and it
+// is the known cost of not parsing here.
 func matchStringField(lower []byte, name string, allowed []string) bool {
 	prefix := fmt.Sprintf(`"%s":`, name)
 	idx := bytes.Index(lower, []byte(prefix))

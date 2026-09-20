@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -194,8 +195,13 @@ std::vector<int> parseFacilities(const std::string& raw)
     return result;
 }
 
-// Parse "100MB", "50KB", "2GB", "512B" → bytes
-uint64_t parseSize(const std::string& raw)
+// Parse "100MB", "50KB", "2GB", "512B" → bytes.
+//
+// allowZero because max_size and max_queue_bytes disagree about what 0 means.
+// For max_size it is "never rotate", which rotateIfNeeded implements and three
+// separate places document. For max_queue_bytes there is deliberately no
+// "unlimited" setting, so 0 stays an error there.
+uint64_t parseSize(const std::string& raw, bool allowZero)
 {
     if (raw.empty())
     {
@@ -212,8 +218,19 @@ uint64_t parseSize(const std::string& raw)
         throw std::runtime_error("Invalid size (no numeric part): '" + raw + "'");
     }
 
-    const uint64_t num = std::stoull(raw.substr(0, i));
-    if (num == 0)
+    uint64_t num = 0;
+    try
+    {
+        num = std::stoull(raw.substr(0, i));
+    }
+    catch (const std::out_of_range&)
+    {
+        // stoull throws std::out_of_range, which is a std::logic_error — so the
+        // caller's catch for std::runtime_error missed it and the operator was
+        // told "failed to load config: stoull", naming neither section nor key.
+        throw std::runtime_error("Size out of range: '" + raw + "'");
+    }
+    if (num == 0 && !allowZero)
     {
         throw std::runtime_error("Size must be > 0: '" + raw + "'");
     }
@@ -240,6 +257,14 @@ uint64_t parseSize(const std::string& raw)
     else
     {
         throw std::runtime_error("Unknown size unit '" + unit + "' in: '" + raw + "'");
+    }
+
+    // "17179869184GB" is 2^64 bytes, which wrapped to 0 — and 0 means "never
+    // rotate", so a config asking for an enormous threshold silently became one
+    // asking for none at all, and the sink grew until the disk filled.
+    if (mult != 0 && num > std::numeric_limits<uint64_t>::max() / mult)
+    {
+        throw std::runtime_error("Size too large: '" + raw + "' overflows 64 bits");
     }
 
     return num * mult;
@@ -340,7 +365,8 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
     {
         try
         {
-            outCfg.maxSize = parseSize(sizeStr);
+            // 0 is accepted here: it is the documented way to disable rotation.
+            outCfg.maxSize = parseSize(sizeStr, /*allowZero=*/true);
         }
         catch (const std::runtime_error& e)
         {
@@ -348,10 +374,17 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
         }
     }
 
+    // The upper bound is not cosmetic. rotate() probes every generation with a
+    // filesystem existence check on each rotation, and the web viewer does the
+    // same per HTTP request while building its file chain, so "max_files =
+    // 2000000000" is two billion stat calls in both. The cap is the viewer's
+    // existing sentinel for max_files = 0, so the two ends agree on how deep a
+    // chain can ever be.
     outCfg.maxFiles = sec.get<int>("max_files", outCfg.maxFiles);
-    if (outCfg.maxFiles < 0)
+    if (outCfg.maxFiles < 0 || outCfg.maxFiles > kMaxFilesLimit)
     {
-        throw std::runtime_error("[output." + name + "] max_files must be >= 0");
+        throw std::runtime_error("[output." + name + "] max_files must be between 0 and " +
+                                 std::to_string(kMaxFilesLimit) + " (0 = keep all, up to that)");
     }
 
     outCfg.facilities       = parseFacilities(sec.get<std::string>("facility", "*"));
@@ -457,7 +490,7 @@ Config loadConfig(const std::string& path)
         {
             try
             {
-                cfg.maxQueueBytes = parseSize(raw);
+                cfg.maxQueueBytes = parseSize(raw, /*allowZero=*/false);
             }
             catch (const std::runtime_error& e)
             {

@@ -259,10 +259,66 @@ BOOST_AUTO_TEST_CASE(unknown_unit_throws)
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
-BOOST_AUTO_TEST_CASE(zero_size_throws)
+BOOST_AUTO_TEST_CASE(zero_size_means_no_rotation)
 {
-    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_size=0MB\n");
+    // 0 is the documented way to disable rotation — config.hpp, the README and
+    // minilog.conf.example all say so, and rotateIfNeeded implements exactly
+    // that. Only the parser used to disagree, so the documented setting was the
+    // one thing that would not load.
+    for (const auto* value : {"0", "0B", "0MB"})
+    {
+        TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_size=" + std::string(value) + "\n");
+        Config cfg;
+        BOOST_REQUIRE_NO_THROW(cfg = loadConfig(tmp.path));
+        BOOST_TEST(cfg.outputs[0].maxSize == 0u, "value: " << value);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(zero_max_queue_bytes_still_throws)
+{
+    // The other user of the same parser. There is deliberately no "unlimited"
+    // for the receive queue, so 0 has to stay an error there.
+    TempFile tmp("[server]\nmax_queue_bytes=0\n\n[output.m]\ntext_file=" ABS "/tmp/f\n");
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(size_overflow_throws_instead_of_wrapping_to_unlimited)
+{
+    // 2^34 GB is 2^64 bytes, which wrapped to 0 — and 0 means never rotate, so
+    // asking for an enormous threshold silently asked for none at all and the
+    // sink grew until the disk filled.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_size=17179869184GB\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for a max_size that overflows");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[output.m]") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("17179869184GB") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(size_out_of_range_names_the_section_and_key)
+{
+    // stoull throws std::out_of_range, a std::logic_error — so parseOutput's
+    // catch for std::runtime_error missed it and the operator got
+    // "failed to load config: stoull", naming neither section nor key.
+    TempFile tmp("[output.main]\ntext_file=" ABS "/tmp/f\n"
+                 "max_size=99999999999999999999999999MB\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for an out-of-range max_size");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[output.main]") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("stoull") == std::string::npos, "message: " << what);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(no_numeric_part_throws)
@@ -415,6 +471,26 @@ BOOST_AUTO_TEST_CASE(duplicate_output_section_names_throws)
     TempFile tmp("[output.main]\ntext_file=" ABS "/tmp/f1\n\n[output.main]\ntext_file=" ABS
                  "/tmp/f2\n");
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(max_files_above_cap_throws)
+{
+    // Every generation costs a filesystem existence check, on each rotation in
+    // the server and on each HTTP request in the viewer, so an unbounded value
+    // is unbounded work in two places.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_files=2000000000\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+
+    TempFile over("[output.m]\ntext_file=" ABS "/tmp/f\nmax_files=" +
+                  std::to_string(kMaxFilesLimit + 1) + "\n");
+    BOOST_CHECK_THROW(loadConfig(over.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(max_files_at_cap_accepted)
+{
+    TempFile tmp(
+        "[output.m]\ntext_file=" ABS "/tmp/f\nmax_files=" + std::to_string(kMaxFilesLimit) + "\n");
+    BOOST_TEST(loadConfig(tmp.path).outputs[0].maxFiles == kMaxFilesLimit);
 }
 
 BOOST_AUTO_TEST_CASE(max_files_negative_throws)

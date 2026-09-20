@@ -4,6 +4,42 @@
 
 ### Fixed
 
+- **`max_size = 0` now works as documented.** `config.hpp`, the README and `minilog.conf.example`
+  all describe `0` as "no rotation", and `rotateIfNeeded` implements exactly that — but the parser
+  rejected it, so the documented way to disable rotation was the one value that would not load.
+  `max_queue_bytes` still rejects `0`: there is deliberately no unlimited setting for the receive
+  queue.
+
+- **A `max_size` too large for 64 bits is rejected instead of meaning "never rotate".**
+  `17179869184GB` is 2^64 bytes, which wrapped to `0` — and `0` means no rotation, so a config
+  asking for an enormous threshold silently asked for none at all and the sink grew until the disk
+  filled. An out-of-range value also reports the section and key it came from; `std::stoull` throws
+  `std::out_of_range`, a `std::logic_error`, which slipped past the handler that adds them, so the
+  operator used to get `failed to load config: stoull` and nothing else.
+
+- **`max_files` is bounded at 1000.** Every generation costs a filesystem existence check — on each
+  rotation in the server, and on each HTTP request in the web viewer as it builds its file chain —
+  so `max_files = 2000000000` was two billion stat calls to answer one GET. The server rejects
+  anything higher and the viewer clamps, since it can be pointed at a config directly. 1000 is the
+  number the viewer already used for `max_files = 0`, so both ends agree on how deep a chain can be.
+
+- **The web viewer escapes the severity badge's class attribute.** The badge text was escaped and
+  the `class` interpolation next to it was not, so a severity containing a double quote would close
+  the attribute and turn the rest into attributes of its own. minilog cannot produce one — severity
+  comes from a table of eight fixed names — but the viewer renders whichever `jsonl_file` the config
+  points at, `sevLabel` passes any string through, and this was the only unescaped interpolation in
+  a file whose whole job is rendering untrusted text.
+
+- **A facility value with a quote or bracket no longer breaks the filter chips.** `addFacilityChip`
+  interpolated the value into a `querySelector`, where such a value throws an uncaught
+  `SyntaxError` — after which chip updates stopped for the rest of the session. The comparison is
+  done in JavaScript instead.
+
+- **The cli-viewer closes the file handle it is actually holding.** The follow loop re-opens the
+  file on rotation and rebinds it, but the enclosing `with` block still held the original, so on
+  exit it closed an already-closed handle and left the live one to the garbage collector. It uses
+  an `ExitStack` now, which tracks whichever generation is open.
+
 - **A `workers` typo is a config error instead of a crash.** Only the lower bound was checked, so
   `workers = 1000000` passed validation and `runServer` then looped spawning threads until
   creation failed; the `std::system_error` escaped through `runServer` and `main` to
@@ -197,6 +233,13 @@
   success; `net start` waits for the outcome.)
 
 ### Changed
+
+- **CI pins third-party actions to commit SHAs.** `ilammy/msvc-dev-cmd`, `softprops/action-gh-release`
+  and `codecov/codecov-action` were referenced by tag, which is a mutable pointer — the code those
+  jobs run could change with no change in the repository, and they hold `GITHUB_TOKEN` (release
+  upload) and `CODECOV_TOKEN` (coverage upload). Each is now a full SHA with the version in a
+  trailing comment, and the workflow says how to move one. `actions/*` are GitHub's own and stay on
+  tags.
 
 - **`text_file` and `jsonl_file` must now be absolute paths.** A relative path resolved against
   whatever working directory the reading process happened to have, and the three programs that

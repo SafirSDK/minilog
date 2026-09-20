@@ -1155,3 +1155,40 @@ func TestAssetsStayCompatibleWithTheContentSecurityPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestAssetsDoNotInterpolateUntrustedValuesUnescaped(t *testing.T) {
+	// app.js has no JavaScript test harness here, and adding a runner for two
+	// lines is not the trade. These are the two shapes that went wrong, kept as
+	// a standing check so a later edit cannot reintroduce either:
+	//
+	//   - a template literal interpolated into an HTML attribute without
+	//     escHtml. The badge's class was the only one, and the badge's text
+	//     right next to it was escaped — which is what made it the line an edit
+	//     would copy.
+	//   - a template literal interpolated into a CSS selector. A log-derived
+	//     value holding a quote or a bracket makes querySelector throw an
+	//     uncaught SyntaxError, and the feature stops working for the session.
+	body, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatalf("reading app.js: %v", err)
+	}
+	text := string(body)
+
+	// class="...${...}" where the interpolation does not start with escHtml(.
+	classAttr := regexp.MustCompile(`class="[^"` + "`" + `]*\$\{(?:(?:[^e}]|e[^s])[^}]*)?\}`)
+	for _, m := range classAttr.FindAllString(text, -1) {
+		t.Errorf("unescaped interpolation into a class attribute: %s", m)
+	}
+
+	// Interpolating into a selector is fine for a value this file controls: the
+	// column keys come from the COLUMNS table a few lines below the imports.
+	// Anything else in a selector is a value out of a log record, which is the
+	// case that throws.
+	safeInSelector := regexp.MustCompile(`^(col\.key|key)$`)
+	selector := regexp.MustCompile(`querySelector(?:All)?\(` + "`" + `[^` + "`" + `]*\$\{([^}]*)\}`)
+	for _, m := range selector.FindAllStringSubmatch(text, -1) {
+		if !safeInSelector.MatchString(strings.TrimSpace(m[1])) {
+			t.Errorf("log-derived value interpolated into a CSS selector: %s", m[0])
+		}
+	}
+}

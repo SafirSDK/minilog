@@ -254,6 +254,23 @@ func TestLoadConfig_MaxFilesZero_Unlimited(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_MaxFilesAboveTheLimitIsClamped(t *testing.T) {
+	// Every generation costs an os.Stat while the chain is built, on every
+	// request, so "max_files = 2000000000" is two billion stat calls to answer
+	// one GET. minilog's loader rejects it; the viewer can be pointed at a
+	// config directly, so it clamps.
+	dir := t.TempDir()
+	p := writeConfig(t, dir,
+		"[output.main]\njsonl_file = /var/log/syslog.jsonl\nmax_files = 2000000000\n")
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Sinks[0].MaxFiles != 1000 {
+		t.Errorf("MaxFiles: want 1000 (the limit), got %d", cfg.Sinks[0].MaxFiles)
+	}
+}
+
 func TestLoadConfig_SectionNoKeys_Excluded(t *testing.T) {
 	// An [output.x] section with no keys at all has no jsonl_file and must
 	// be excluded; if it is the only output section, loadConfig should error.
