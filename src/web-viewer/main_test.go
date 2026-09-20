@@ -40,15 +40,22 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-// serveConfig writes a config with a single sink and returns its path.
-func serveConfig(t *testing.T) string {
+// serveConfig writes a config with a single sink, listening on addr, and
+// returns its path. The listen address lives in the config file rather than in
+// a flag, so a test that wants a particular port has to write it there too.
+func serveConfig(t *testing.T, addr string) string {
 	t.Helper()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("serveConfig: %v", err)
+	}
 	dir := t.TempDir()
 	jsonl := filepath.Join(dir, "syslog.jsonl")
 	if err := os.WriteFile(jsonl, nil, 0o600); err != nil {
 		t.Fatalf("cannot create sink file: %v", err)
 	}
-	return writeConfig(t, dir, "[output.main]\njsonl_file = "+jsonl+"\n")
+	return writeConfig(t, dir, "[output.main]\njsonl_file = "+jsonl+"\n"+
+		"\n[web_viewer]\nhost = "+host+"\nport = "+port+"\n")
 }
 
 func TestServeSignalsReadyOnlyOnceListening(t *testing.T) {
@@ -57,7 +64,7 @@ func TestServeSignalsReadyOnlyOnceListening(t *testing.T) {
 	ready := make(chan struct{})
 	errCh := make(chan error, 1)
 
-	go func() { errCh <- serve(serveConfig(t), addr, stop, func() { close(ready) }) }()
+	go func() { errCh <- serve(serveConfig(t, addr), stop, func() { close(ready) }) }()
 
 	select {
 	case <-ready:
@@ -95,7 +102,7 @@ func TestServeSignalsReadyOnlyOnceListening(t *testing.T) {
 
 func TestServeUnreadableConfigFailsBeforeReady(t *testing.T) {
 	ready := false
-	err := serve(filepath.Join(t.TempDir(), "missing.conf"), freeAddr(t),
+	err := serve(filepath.Join(t.TempDir(), "missing.conf"),
 		make(chan struct{}), func() { ready = true })
 
 	if err == nil {
@@ -119,7 +126,7 @@ func TestServeUnbindableAddressFailsBeforeReady(t *testing.T) {
 
 	addr := ln.Addr().String()
 	ready := false
-	err = serve(serveConfig(t), addr, make(chan struct{}), func() { ready = true })
+	err = serve(serveConfig(t, addr), make(chan struct{}), func() { ready = true })
 
 	if err == nil {
 		t.Fatalf("serve bound %s, which is already in use", addr)

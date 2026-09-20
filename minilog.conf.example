@@ -85,6 +85,29 @@ include_malformed = true
 ;include_malformed = false
 
 ; ─────────────────────────────────────────────────────────────────────────────
+; Web viewer  [web_viewer]
+;
+; Where minilog-web-viewer listens. It is a deployment fact — a port somebody
+; has to open in a firewall — so it lives here with the rest of them, not in a
+; command-line flag. Changing it takes effect on the next restart of the viewer
+; (Windows: `sc stop minilog-web-viewer` then `sc start minilog-web-viewer`).
+;
+; Note for Windows: the installer's Start Menu and desktop shortcuts are built
+; from the port in this file at install time. Nothing can keep them in step with
+; an edit made afterwards, so update them by hand or re-run the installer.
+; ─────────────────────────────────────────────────────────────────────────────
+[web_viewer]
+
+; Address to bind the HTTP listener to. Leave empty for every interface, on both
+; IPv4 and IPv6; 127.0.0.1 restricts the viewer to the local machine. The viewer
+; has no authentication, so anyone who can reach this address can read every log
+; it exposes.
+host =
+
+; TCP port to listen on.
+port = 9514
+
+; ─────────────────────────────────────────────────────────────────────────────
 ; UDP forwarding
 ; ─────────────────────────────────────────────────────────────────────────────
 [forwarding]

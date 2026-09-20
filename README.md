@@ -304,6 +304,16 @@ a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\
 Rotated filenames insert a generation number before the extension:
 `syslog.log` → `syslog.1.log`, `syslog.2.log`, …
 
+### `[web_viewer]`
+
+Read by `minilog-web-viewer` only; minilog itself ignores the section. See
+[web-viewer](#web-viewer) for what it changes.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `host` | — (every interface) | Address to bind the HTTP listener to. Empty means all interfaces on both IPv4 and IPv6 — `0.0.0.0` would be IPv4 only |
+| `port` | `9514` | TCP port to listen on |
+
 ### `[forwarding]`
 
 | Key | Default | Description |
@@ -523,7 +533,6 @@ minilog-web-viewer [options]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--config PATH` | `<exe dir>/minilog.conf` | Path to `minilog.conf` |
-| `--addr ADDR` | `:9514` | HTTP listen address |
 | `--install` | — | Register as a Windows service (Windows only) |
 | `--stop` | — | Stop the Windows service and wait for its process to exit (Windows only) |
 | `--uninstall` | — | Remove the Windows service (Windows only) |
@@ -532,9 +541,19 @@ minilog-web-viewer [options]
 The server reads all `[output.*]` sections that have `jsonl_file` configured and exposes each as
 a named **sink**. Open `http://localhost:9514` in a browser to access the UI.
 
+**Listen address:** taken from `[web_viewer]` in `minilog.conf`, alongside every other deployment
+fact. There is no command-line flag for it, so changing the port is an edit and a restart rather
+than a re-registration of the Windows service.
+
+```ini
+[web_viewer]
+host =        ; empty = every interface, IPv4 and IPv6; 127.0.0.1 = local machine only
+port = 9514
+```
+
 **Security note:** The web viewer does not implement any authentication or access control.
-Anyone who can reach the listen address can read all exposed log data. Bind to `127.0.0.1:9514`
-(via `--addr 127.0.0.1:9514`) to restrict access to the local machine, or place the viewer
+Anyone who can reach the listen address can read all exposed log data. Set
+`[web_viewer] host = 127.0.0.1` to restrict access to the local machine, or place the viewer
 behind a reverse proxy that provides authentication. Do not expose it on an untrusted network
 without additional protection.
 
@@ -546,8 +565,11 @@ produce, and cutting it off would hand the client a truncated response indisting
 complete one.
 
 **Windows service:** `--install` registers the binary as an auto-start service named
-`minilog-web-viewer`. Pass `--config` and `--addr` at install time; those values are baked into
-the service entry. `--uninstall` stops and removes it, and `--stop` stops it without removing it —
+`minilog-web-viewer`. Pass `--config` at install time; that path is baked into the service entry,
+and the listen address then follows the config file it points at. The installer's Start Menu and
+desktop shortcuts are built from `[web_viewer] port` in the installed config, so they are correct
+on an upgrade as well as a fresh install — but nothing can keep them in step with an edit made
+afterwards. `--uninstall` stops and removes it, and `--stop` stops it without removing it —
 both wait for the process to exit, as described for the server above. `--install` over an existing
 registration updates it, preserving the start type and account, and `--uninstall` succeeds when
 there is nothing registered — the same as the server.

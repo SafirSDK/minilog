@@ -54,13 +54,19 @@ def find_viewer(explicit: str | None) -> str:
     )
 
 
-def write_config() -> str:
+def write_config(addr: str) -> str:
     """Generate demo/minilog.conf with absolute log paths, and return its path.
 
     minilog rejects a relative text_file / jsonl_file, so the demo config cannot
     be a checked-in file: the paths depend on where the repository was cloned.
     Generating it next to this script keeps the demo relocatable.
+
+    The listen address goes in here too — the viewer has no --addr flag; it
+    reads [web_viewer] out of minilog.conf like every other deployment fact.
     """
+    host, _, port = addr.rpartition(":")
+    if not port.isdigit():
+        sys.exit(f"error: --addr must end in ':<port>', got {addr!r}")
     logs_dir = os.path.join(SCRIPT_DIR, "logs")
     config_path = os.path.join(SCRIPT_DIR, "minilog.conf")
     sections = [
@@ -85,6 +91,7 @@ def write_config() -> str:
             f"facility   = {facility}",
             f"include_malformed = {malformed}",
         ]
+    lines += ["", "[web_viewer]", f"host = {host}", f"port = {port}"]
     with open(config_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return config_path
@@ -134,7 +141,7 @@ def main() -> None:
     args = parser.parse_args()
 
     viewer_bin = find_viewer(args.viewer)
-    config_path = write_config()
+    config_path = write_config(args.addr)
 
     # (Re-)generate the initial data set.
     print("Generating test data...", flush=True)
@@ -155,7 +162,7 @@ def main() -> None:
     print(f"Starting {BINARY_NAME}...", flush=True)
     try:
         subprocess.run(
-            [viewer_bin, "--config", config_path, "--addr", args.addr],
+            [viewer_bin, "--config", config_path],
             check=False,
         )
     except KeyboardInterrupt:

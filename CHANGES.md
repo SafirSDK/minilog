@@ -204,6 +204,21 @@
 
 ### New
 
+- **`[web_viewer] host` and `port`, replacing the web viewer's `--addr` flag.** The listen address
+  was the one deployment fact that did not live in `minilog.conf` — it was a command-line flag,
+  frozen into the Windows service registration at install time and supplied by the installer, so
+  changing the port meant re-registering the service and editing `minilog.conf` did nothing. It is
+  now read from the viewer's own section of the same file, and `--addr` is gone; the service entry
+  is just `--config <path>`. Defaults are unchanged: an absent section still means every interface
+  on port 9514. An absent or empty `host` means every interface on **both** IPv4 and IPv6 —
+  writing `0.0.0.0` there would be IPv4 only, which is why the default is empty rather than an
+  address. minilog itself ignores the section, so no server change was needed. The installer no
+  longer takes a `WebViewerAddr` define: it reads the port back out of the config it has just
+  installed to build the Start Menu and desktop shortcut URLs, which is what makes them right on
+  an upgrade, where the config on disk is the administrator's with whatever port they chose. A
+  shortcut still cannot follow an edit made after the install, and the shipped config says so
+  where the edit happens.
+
 - **`[server] max_queue_bytes`** bounds the received-but-unwritten log held in memory; see the
   entry under Fixed. Takes the same units as `max_size`, so `16MB` and `16777216` both work, and
   defaults to 16 MB. `0` is rejected rather than meaning "unlimited".

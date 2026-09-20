@@ -160,13 +160,13 @@ func serviceCommandLine(exePath string, args ...string) string {
 // account must not have that undone by an upgrade.  Everything the viewer
 // itself owns — the command line, the display name, the description — is
 // refreshed.
-func updateService(s *mgr.Service, exePath, configPath, addr string) error {
+func updateService(s *mgr.Service, exePath, configPath string) error {
 	cfg, err := s.Config()
 	if err != nil {
 		return fmt.Errorf("cannot read the configuration of service %q: %w", serviceName, err)
 	}
 
-	cfg.BinaryPathName = serviceCommandLine(exePath, "--config", configPath, "--addr", addr)
+	cfg.BinaryPathName = serviceCommandLine(exePath, "--config", configPath)
 	cfg.DisplayName = serviceDisplay
 	cfg.Description = serviceDesc
 
@@ -179,7 +179,7 @@ func updateService(s *mgr.Service, exePath, configPath, addr string) error {
 // installService registers the binary as a Windows NT auto-start service, or
 // updates the registration if the service already exists.  Running it against
 // an installation that is already registered is the upgrade case, not an error.
-func installService(exePath, configPath, addr string) error {
+func installService(exePath, configPath string) error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return fmt.Errorf("cannot connect to SCM: %w", err)
@@ -190,7 +190,7 @@ func installService(exePath, configPath, addr string) error {
 	s, err := m.OpenService(serviceName)
 	if err == nil {
 		defer s.Close()
-		if err := updateService(s, exePath, configPath, addr); err != nil {
+		if err := updateService(s, exePath, configPath); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
@@ -201,7 +201,7 @@ func installService(exePath, configPath, addr string) error {
 			DisplayName: serviceDisplay,
 			Description: serviceDesc,
 			StartType:   mgr.StartAutomatic,
-		}, "--config", configPath, "--addr", addr)
+		}, "--config", configPath)
 		if err != nil {
 			return fmt.Errorf("cannot create service: %w", err)
 		}

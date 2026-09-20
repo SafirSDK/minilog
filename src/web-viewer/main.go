@@ -44,7 +44,6 @@ func main() {
 	defaultConfig := filepath.Join(filepath.Dir(exe), "minilog.conf")
 
 	configPath := flag.String("config", defaultConfig, "path to minilog.conf")
-	addr := flag.String("addr", ":9514", "HTTP listen address")
 	doInstall := flag.Bool("install", false, "install as a Windows service (Windows only)")
 	doStop := flag.Bool("stop", false,
 		"stop the Windows service and wait for its process to exit (Windows only)")
@@ -80,7 +79,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "minilog-web-viewer: cannot resolve config path: %v\n", err)
 			os.Exit(1)
 		}
-		if err := installService(exePath, absConfig, *addr); err != nil {
+		if err := installService(exePath, absConfig); err != nil {
 			fmt.Fprintf(os.Stderr, "minilog-web-viewer: %v\n", err)
 			os.Exit(1)
 		}
@@ -90,8 +89,12 @@ func main() {
 	// ready is called once the config has loaded and the listen address is
 	// bound; the service wrapper uses it to delay reporting SERVICE_RUNNING
 	// until startup has actually succeeded.
+	//
+	// The listen address comes out of the config inside serve(), not out of
+	// main, so that an unusable one fails where every other startup failure
+	// does — inside the service main, where the SCM is told about it.
 	run := func(ready func()) error {
-		return serve(*configPath, *addr, globalStop, ready)
+		return serve(*configPath, globalStop, ready)
 	}
 
 	// Attempt to run as a Windows NT service. On Linux this is a no-op and
@@ -157,11 +160,12 @@ func newServer(handler http.Handler, readHeader, read, idle time.Duration) *http
 // succeeded.  Every failure before that point is returned as an error rather
 // than logged and swallowed, so that a service start reports failure instead of
 // reporting success and then stopping a moment later.
-func serve(configPath, addr string, stop <-chan struct{}, ready func()) error {
-	sinks, err := loadSinks(configPath)
+func serve(configPath string, stop <-chan struct{}, ready func()) error {
+	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("config error: %w", err)
 	}
+	sinks, addr := cfg.Sinks, cfg.Addr
 
 	mux := http.NewServeMux()
 	registerHandlers(mux, sinks)

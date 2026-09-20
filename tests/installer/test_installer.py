@@ -56,10 +56,18 @@ LOG_DIR        = DATA_DIR / "logs"
 LOG_FILE       = LOG_DIR / "syslog.log"
 SERVICE_NAME   = "minilog"
 WEB_SERVICE    = "minilog-web-viewer"
-# Derived from the port so the two cannot drift apart when the default changes.
+# The default in src/web-viewer/config.go, which is also what the installer's
+# shortcuts are built from when the config does not name one.
 WEB_VIEWER_PORT = 9514
-WEB_VIEWER_URL = f"http://localhost:{WEB_VIEWER_PORT}"
 CONFIG_BACKUP  = DATA_DIR / "minilog.conf.installer-test-backup"
+
+# The installer's Start Menu and desktop shortcuts. An admin install puts
+# {autoprograms} and {autodesktop} in the all-users locations.
+SHORTCUT_DIRS = [
+    Path(os.environ["ProgramData"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+    Path(os.environ["PUBLIC"]) / "Desktop",
+]
+SHORTCUT_GLOB = "minilog Web Viewer.*"
 
 # Placed after minilog's own entry so the removal has to cope with an entry in
 # the middle of the list, and so any damage to a neighbour is visible.
@@ -85,7 +93,9 @@ SETTLED_QUIET_SECONDS = 8
 
 # TEST-NET-1 (RFC 5737) — never assigned to a host, so binding it always fails.
 # More deterministic than contending for a live port, which Windows may allow.
-UNBINDABLE_ADDR = f"192.0.2.1:{WEB_VIEWER_PORT}"
+# TEST-NET-1 (RFC 5737): routable nowhere, so binding it always fails.
+UNBINDABLE_HOST = "192.0.2.1"
+UNBINDABLE_ADDR = f"{UNBINDABLE_HOST}:{WEB_VIEWER_PORT}"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -281,18 +291,58 @@ def net_start(name: str) -> subprocess.CompletedProcess:
     )
 
 
-def reinstall_web_viewer(addr: str) -> None:
-    """Re-register the web viewer service against a different listen address."""
-    for args in (["--uninstall"], ["--install", "--config", str(CONFIG_PATH), "--addr", addr]):
-        subprocess.run(
-            [str(WEB_VIEWER_EXE), *args],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        # Give the SCM a moment to finish the deletion; creating a service that
-        # is still marked for delete fails with ERROR_SERVICE_MARKED_FOR_DELETE.
+def set_web_viewer_address(host: str, port: int) -> None:
+    """Rewrite [web_viewer] in the installed config.
+
+    The listen address lives in minilog.conf rather than in the service
+    registration, so changing it is an edit and a restart. It used to mean
+    re-registering the service, which is what moving it into the config
+    removed. Everything outside the section is preserved verbatim, including
+    the sentinel the upgrade test appends.
+    """
+    kept: list[str] = []
+    in_section = False
+    for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_section = stripped.lower() == "[web_viewer]"
+        if not in_section:
+            kept.append(line)
+    body = "\n".join(kept).rstrip()
+    CONFIG_PATH.write_text(
+        f"{body}\n\n[web_viewer]\nhost = {host}\nport = {port}\n", encoding="utf-8"
+    )
+
+
+def web_viewer_responds(port: int = WEB_VIEWER_PORT) -> bool:
+    """True if the viewer answers /sinks with a JSON array on `port`."""
+    for _ in range(10):
+        try:
+            resp = urllib.request.urlopen(f"http://localhost:{port}/sinks", timeout=3)
+            if isinstance(json.loads(resp.read()), list):
+                return True
+        except Exception:
+            pass
         time.sleep(1)
+    return False
+
+
+def check_shortcuts_point_at(port: int) -> None:
+    """The Start Menu and desktop shortcuts must name `port`.
+
+    The installer has no define for the listen address any more: it reads the
+    port back out of the config it has just installed, which is the only way to
+    get this right on an upgrade, where the file on disk is the administrator's
+    with whatever port they chose.
+    """
+    want = f"http://localhost:{port}"
+    for directory in SHORTCUT_DIRS:
+        found = list(directory.glob(SHORTCUT_GLOB))
+        check(len(found) == 1, f"one web viewer shortcut in {directory} (found {found})")
+        if not found:
+            continue
+        content = found[0].read_text(encoding="utf-8", errors="replace")
+        check(want in content, f"{found[0].name} in {directory.name} points at {want}")
 
 
 def service_pid(name: str = SERVICE_NAME) -> int:
@@ -404,6 +454,7 @@ def test_clean_install(installer: Path) -> None:
     check(event_source_registered(SERVICE_NAME),
           f"Event Log source '{SERVICE_NAME}' registered")
     check_recovery_actions(SERVICE_NAME)
+    check_shortcuts_point_at(WEB_VIEWER_PORT)
 
     # Test that the viewer script is runnable
     if VIEWER_PATH.exists():
@@ -427,16 +478,7 @@ def test_clean_install(installer: Path) -> None:
 
     # Verify the web viewer responds to HTTP requests
     if service_state(WEB_SERVICE) == "RUNNING":
-        ok = False
-        for _ in range(10):
-            try:
-                resp = urllib.request.urlopen(f"{WEB_VIEWER_URL}/sinks", timeout=3)
-                data = json.loads(resp.read())
-                ok = isinstance(data, list)
-                break
-            except Exception:
-                time.sleep(1)
-        check(ok, "Web viewer /sinks endpoint returns a JSON array")
+        check(web_viewer_responds(), "Web viewer /sinks endpoint returns a JSON array")
 
 
 # ─── Test 2: --install records paths the SCM can actually use ─────────────────
@@ -605,8 +647,9 @@ def test_failed_start() -> None:
     finally:
         CONFIG_BACKUP.replace(CONFIG_PATH)
 
-    # An unbindable listen address must fail the same way as a bad config.
-    reinstall_web_viewer(UNBINDABLE_ADDR)
+    # An unbindable listen address must fail the same way as a bad config — and
+    # now that the address is a config value, editing the file is all it takes.
+    set_web_viewer_address(UNBINDABLE_HOST, WEB_VIEWER_PORT)
     try:
         check_failed_start(WEB_SERVICE)
 
@@ -617,7 +660,9 @@ def test_failed_start() -> None:
         check(wait_service_settled(WEB_SERVICE),
               f"'{WEB_SERVICE}' stays stopped while its address is unbindable")
     finally:
-        reinstall_web_viewer(f":{WEB_VIEWER_PORT}")
+        # An empty host is "every interface", which is what the shipped config
+        # says and what the removed --addr default did.
+        set_web_viewer_address("", WEB_VIEWER_PORT)
 
     # Leave both services as the upgrade test expects to find them.
     sc("start", SERVICE_NAME)
@@ -791,8 +836,7 @@ def test_reregister() -> None:
 
     # Leave both services as the upgrade test expects to find them.
     check(install_server(str(CONFIG_PATH)).returncode == 0, f"'{SERVICE_NAME}' re-registered")
-    check(service_cmd(WEB_VIEWER_EXE, "--install", "--config", str(CONFIG_PATH),
-                      "--addr", f":{WEB_VIEWER_PORT}").returncode == 0,
+    check(service_cmd(WEB_VIEWER_EXE, "--install", "--config", str(CONFIG_PATH)).returncode == 0,
           f"'{WEB_SERVICE}' re-registered")
     sc("start", SERVICE_NAME)
     sc("start", WEB_SERVICE)
@@ -809,12 +853,28 @@ def test_upgrade(installer: Path) -> None:
     with CONFIG_PATH.open("a", encoding="utf-8") as f:
         f.write(f"\n{sentinel}\n")
 
+    # The config is installed onlyifdoesntexist, so on an upgrade the port the
+    # viewer listens on is whatever this file says — and the shortcut has to
+    # agree with it, which is why the installer reads it back out rather than
+    # writing a value of its own in.
+    moved_port = WEB_VIEWER_PORT + 1
+    set_web_viewer_address("", moved_port)
+
     run_installer(installer)
     check(wait_service_running(), "Service running after upgrade")
     check(wait_service_running(WEB_SERVICE), "Web viewer service running after upgrade")
 
     content = CONFIG_PATH.read_text(encoding="utf-8")
     check(sentinel in content, "Config not overwritten on upgrade")
+    check_shortcuts_point_at(moved_port)
+    check(web_viewer_responds(moved_port),
+          f"'{WEB_SERVICE}' listens on the port the upgraded config names")
+
+    # Put the port back for the tests that follow.
+    set_web_viewer_address("", WEB_VIEWER_PORT)
+    check(stop_service(WEB_SERVICE), f"'{WEB_SERVICE}' stopped to restore the port")
+    sc("start", WEB_SERVICE)
+    check(wait_service_running(WEB_SERVICE), f"'{WEB_SERVICE}' running on the default port again")
 
 
 # ─── Test 9: an upgrade that drops the web viewer component ───────────────────

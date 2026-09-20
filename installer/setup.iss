@@ -12,7 +12,11 @@
 ;   ConfigDir      — directory containing the default minilog.conf
 ;   AppVersion     — version string, e.g. "0.1.0"
 ;   OutputDir      — where to write the installer .exe (default: SourceDir)
-;   WebViewerAddr  — listen address for the web viewer (default: :9514)
+;
+; The web viewer's listen address is not a define: it comes from [web_viewer] in
+; the installed minilog.conf, which is also where the Start Menu and desktop
+; shortcut URLs are read from.  A packager wanting a different port supplies a
+; config with /DConfigDir, and the service and the shortcuts both follow it.
 
 #ifndef SourceDir
   #define SourceDir "..\build\windows-release"
@@ -28,9 +32,6 @@
 #endif
 #ifndef OutputDir
   #define OutputDir "{#SourceDir}"
-#endif
-#ifndef WebViewerAddr
-  #define WebViewerAddr ":9514"
 #endif
 
 [Setup]
@@ -99,10 +100,10 @@ Source: "..\src\cli-viewer\minilog-cli-viewer.conf.example"; \
 
 [Icons]
 ; Web viewer shortcuts — open the viewer URL in the default browser.
-Name: "{autoprograms}\minilog Web Viewer"; Filename: "http://localhost{#WebViewerAddr}"; \
+Name: "{autoprograms}\minilog Web Viewer"; Filename: "{code:WebViewerURL}"; \
     IconFilename: "{app}\minilog-web-viewer.exe"; IconIndex: 0; \
     Components: webviewer\shortcuts
-Name: "{autodesktop}\minilog Web Viewer"; Filename: "http://localhost{#WebViewerAddr}"; \
+Name: "{autodesktop}\minilog Web Viewer"; Filename: "{code:WebViewerURL}"; \
     IconFilename: "{app}\minilog-web-viewer.exe"; IconIndex: 0; \
     Components: webviewer\shortcuts
 
@@ -127,7 +128,7 @@ Filename: "{sys}\sc.exe"; Parameters: "start minilog"; \
 
 ; Register the web viewer service (only if the component was selected).
 Filename: "{app}\minilog-web-viewer.exe"; \
-    Parameters: "--install --config ""{commonappdata}\minilog\minilog.conf"" --addr ""{#WebViewerAddr}"""; \
+    Parameters: "--install --config ""{commonappdata}\minilog\minilog.conf"""; \
     Flags: runhidden waituntilterminated; \
     Components: webviewer; \
     StatusMsg: "Registering web viewer service..."
@@ -152,6 +153,37 @@ Filename: "{app}\minilog.exe"; Parameters: "--uninstall"; \
 [Code]
 const
   EnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  DefaultWebViewerPort = '9514';
+
+// URL for the web viewer shortcuts, taken from the config that has just been
+// installed.
+//
+// The port has to be read back out of the file rather than written into it from
+// a define: the config is installed onlyifdoesntexist, so on an upgrade the file
+// on disk is the administrator's, with whatever port they chose, and that is the
+// one the service will listen on.  Reading it here is what keeps the shortcut
+// pointing at the right place on an upgrade as well as a fresh install.
+//
+// Nothing can keep a shortcut in step with an edit made after the install; the
+// comment on [web_viewer] in minilog.conf says so where the edit happens.
+function WebViewerURL(Param: string): string;
+var
+  Port: string;
+  I: Integer;
+begin
+  Port := Trim(GetIniString('web_viewer', 'port', DefaultWebViewerPort,
+                            ExpandConstant('{commonappdata}\minilog\minilog.conf')));
+  // Keep the leading digits only.  A value runs to the end of the line in this
+  // file format, so "9514 ; the web viewer" is what somebody who assumed inline
+  // comments would leave behind, and a shortcut is not the place to fail over it.
+  I := 1;
+  while (I <= Length(Port)) and (Port[I] >= '0') and (Port[I] <= '9') do
+    I := I + 1;
+  Port := Copy(Port, 1, I - 1);
+  if Port = '' then
+    Port := DefaultWebViewerPort;
+  Result := 'http://localhost:' + Port;
+end;
 
 // Check if a path needs to be added to the system PATH.
 function NeedsAddPath(Param: string): boolean;

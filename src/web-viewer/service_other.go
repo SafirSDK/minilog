@@ -20,7 +20,7 @@ func tryRunAsService(_ func(ready func()) error) (bool, error) {
 }
 
 // installService is a no-op on non-Windows platforms.
-func installService(_, _, _ string) error {
+func installService(_, _ string) error {
 	log.Println("--install is only supported on Windows")
 	return nil
 }

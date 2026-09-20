@@ -83,9 +83,11 @@ Malformed messages (`proto="UNKNOWN"`): only `rcv`, `src`, `message` populated.
 - Entry point: `main.go`; build with `go build ./src/web-viewer`.
 - Serves an embedded SPA (`assets/`) over HTTP (default `:9514`).
 - Reads `minilog.conf` to discover all `[output.*]` sections with `jsonl_file`; each becomes a
-  named **sink** available in the browser's sink selector.
+  named **sink** available in the browser's sink selector. The listen address comes from the
+  viewer's own `[web_viewer]` section of the same file — there is no `--addr` flag, and the
+  installer reads the port back out of the installed config to build its shortcut URLs.
 - Key packages/files:
-  - `config.go` — INI parser, `Sink` struct, `loadSinks()`
+  - `config.go` — INI parser, `Sink` / `Config` structs, `loadConfig()`, `listenAddr()`
   - `reader.go` — `FileChain` (logical byte-offset abstraction over rotation chain),
     `ReadForward()`, `ReadBackward()`, `Search()`, `Filter` struct
   - `handlers.go` — HTTP routes: `GET /sinks`, `GET /lines`, `GET /search`
