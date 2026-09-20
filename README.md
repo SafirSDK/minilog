@@ -25,7 +25,9 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 ## Limitations
 
 - **UDP only** — no TCP, TLS, or RELP; message delivery is best-effort
-- **IPv4 only** — the server binds a UDP v4 socket; IPv6 is not supported
+- **Receiving is IPv4 only** — the receive socket is opened from `[server] host`, which is
+  documented and tested as an IPv4 address; forwarding to an IPv6 destination does work, since
+  that socket is opened from the resolved endpoint
 - **No multicast or promiscuous capture** — minilog receives datagrams addressed to the host it runs on; it does not join multicast groups or sniff traffic addressed elsewhere (neither is part of the syslog RFCs)
 - **RFC 5424 structured data is not parsed** — it is just passed along to the output files
 - **Rotated files are not compressed** — generation files are plain text/JSONL; no gzip
@@ -319,10 +321,21 @@ Read by `minilog-web-viewer` only; minilog itself ignores the section. See
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `false` | Enable UDP forwarding |
-| `host` | — | Destination IP address (names are not resolved) |
+| `host` | — | Destination hostname or IP address (IPv4 or IPv6). Resolved once at startup; see below |
 | `port` | `514` | Destination UDP port |
 | `facility` | `*` | Facilities to forward |
 | `max_message_size` | `2048` | Truncate messages longer than this (bytes); appends `... [TRUNCATED: N bytes]` |
+
+The destination is resolved once, when minilog starts, and the address found is used for the
+lifetime of the process — re-resolving per message would put a name lookup on the hot path, and a
+collector that moves is rare enough to be worth a restart. A name that does **not** resolve at
+startup is not a startup failure: minilog runs with forwarding off, reports it once, and retries
+in the background with a growing delay until it succeeds, reporting how many messages were
+dropped in the meantime. That is deliberate — a Windows `AUTO_START` service is routinely running
+before DNS is, and losing the collector over an unreachable forwarding destination would be worse
+than losing forwarding. A value that cannot be a host at all — brackets, a space, a scheme, or a
+port appended (`syslog.example.com:514`, `10.0.0.5:514`) — is still a config error at startup,
+because as a name it would never resolve and would be retried silently forever.
 
 ### Facility names
 

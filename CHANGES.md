@@ -204,6 +204,27 @@
 
 ### New
 
+- **`[forwarding] host` accepts a hostname.** It took an IP literal only —
+  `boost::asio::ip::make_address` does not resolve names — while the shipped example config
+  described the field as "hostname or IP address". Forwarding to a collector by name is the normal
+  deployment shape; hard-coding its address on every syslog host is what people are trying to
+  avoid. The destination is now resolved once, when minilog starts, and the address found is used
+  for the lifetime of the process: re-resolving per message would put a name lookup on the hot
+  path, and a collector that moves is rare enough to be worth a restart. A name that does not
+  resolve at startup is **not** a startup failure — minilog runs with forwarding off, reports it
+  once, and retries in the background with a growing delay (1 s, doubling to a minute), reporting
+  how many messages were dropped when it finally succeeds. A Windows `AUTO_START` service is
+  routinely running before DNS is, and losing the collector over an unreachable forwarding
+  destination would be worse than losing forwarding. Values that cannot be a host at all —
+  brackets, a space, a scheme, or a port appended — are still config errors at startup, because as
+  names they would never resolve and would be retried silently forever; `10.0.0.999` is among
+  them, since a hostname cannot have an all-numeric top-level label.
+
+- **IPv6 forwarding destinations now work.** The forwarding socket was opened as
+  `udp::v4()` regardless of the destination, so an IPv6 host passed config validation and then had
+  nothing to send through. It is opened from the resolved endpoint's protocol instead. Receiving
+  is unchanged and still IPv4.
+
 - **`--config` and `--viewer-config` for the cli-viewer.** It was the only component that could
   not be told where its configuration lives: `minilog.exe` takes a path as an argument and
   `minilog-web-viewer` has `--config`, but the cli-viewer had a fixed search order and nothing

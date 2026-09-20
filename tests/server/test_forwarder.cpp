@@ -58,6 +58,33 @@ struct Receiver
     }
 };
 
+// Like Receiver, but bound to a given protocol and address, so a test can
+// listen wherever the name it uses resolves to.
+struct ReceiverOn
+{
+    boost::asio::io_context ioc;
+    boost::asio::ip::udp::socket sock;
+
+    explicit ReceiverOn(const boost::asio::ip::udp::endpoint& bindTo) : sock(ioc, bindTo)
+    {
+        sock.non_blocking(true);
+    }
+
+    uint16_t port() const { return sock.local_endpoint().port(); }
+
+    std::string receive()
+    {
+        std::vector<char> buf(65507);
+        boost::system::error_code ec;
+        const std::size_t n = sock.receive(boost::asio::buffer(buf), 0, ec);
+        if (ec)
+        {
+            return {};
+        }
+        return std::string(buf.data(), n);
+    }
+};
+
 ForwardingConfig makeConfig(uint16_t port,
                             bool enabled                = true,
                             std::vector<int> facilities = {},
@@ -115,6 +142,125 @@ BOOST_AUTO_TEST_CASE(enabled_sends_raw_payload)
     drain(ioc);
 
     BOOST_CHECK_EQUAL(rx.receive(), "hello world");
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Destination resolution ───────────────────────────────────────────────────
+//
+// The destination may be a name. It is resolved once, at construction; a name
+// that does not resolve then is reported and retried in the background rather
+// than failing the process, because a Windows auto-start service routinely runs
+// before DNS does.
+
+BOOST_AUTO_TEST_SUITE(destination_resolution)
+
+BOOST_AUTO_TEST_CASE(hostname_is_resolved_and_used)
+{
+    // Bind wherever "localhost" resolves to first, which is the same address the
+    // Forwarder will pick: this asserts that the name was resolved and used, not
+    // which family the host happens to prefer.
+    boost::asio::io_context resolverIoc;
+    boost::asio::ip::udp::resolver resolver(resolverIoc);
+    boost::system::error_code ec;
+    const auto results = resolver.resolve("localhost", "0", ec);
+    BOOST_REQUIRE_MESSAGE(!ec && !results.empty(), "localhost does not resolve on this host");
+
+    ReceiverOn rx(boost::asio::ip::udp::endpoint(results.begin()->endpoint().protocol(), 0));
+
+    boost::asio::io_context ioc;
+    ForwardingConfig cfg = makeConfig(rx.port());
+    cfg.host             = "localhost";
+    Forwarder fwd(ioc, cfg);
+
+    fwd.forward(makeMsg("by name"));
+    drain(ioc);
+
+    BOOST_CHECK_EQUAL(rx.receive(), "by name");
+}
+
+BOOST_AUTO_TEST_CASE(ipv6_destination_is_sent_to)
+{
+    // The socket's protocol comes from the resolved endpoint. It used to be
+    // hardcoded to v4, so a v6 destination parsed in the config and then could
+    // not be sent to at all.
+    boost::asio::io_context probeIoc;
+    boost::asio::ip::udp::socket probe(probeIoc);
+    boost::system::error_code ec;
+    probe.open(boost::asio::ip::udp::v6(), ec);
+    if (ec)
+    {
+        BOOST_TEST_MESSAGE("no IPv6 on this host; skipping");
+        return;
+    }
+    probe.close();
+
+    ReceiverOn rx(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::loopback(), 0));
+
+    boost::asio::io_context ioc;
+    ForwardingConfig cfg = makeConfig(rx.port());
+    cfg.host             = "::1";
+    Forwarder fwd(ioc, cfg);
+
+    fwd.forward(makeMsg("over v6"));
+    drain(ioc);
+
+    BOOST_CHECK_EQUAL(rx.receive(), "over v6");
+}
+
+BOOST_AUTO_TEST_CASE(unresolvable_host_drops_messages_without_failing)
+{
+    // .invalid never resolves (RFC 2606). Constructing the Forwarder must not
+    // throw, forwarding must be off rather than sending somewhere else, and the
+    // process must carry on — the whole point of retrying instead of failing.
+    Receiver rx;
+    boost::asio::io_context ioc;
+    ForwardingConfig cfg = makeConfig(rx.port());
+    cfg.host             = "collector.invalid";
+
+    std::optional<Forwarder> fwd;
+    BOOST_REQUIRE_NO_THROW(fwd.emplace(ioc, cfg));
+
+    fwd->forward(makeMsg("nowhere to go"));
+    drain(ioc);
+
+    BOOST_CHECK(rx.receive().empty());
+
+    // The retry timer would otherwise keep the io_context alive.
+    fwd->stop();
+    drain(ioc);
+}
+
+BOOST_AUTO_TEST_CASE(stop_lets_the_io_context_run_out_of_work)
+{
+    // An outstanding retry timer is work, and io_context::run() does not return
+    // while there is work — minilog would hang on shutdown waiting for a name
+    // that is not coming.
+    Receiver rx;
+    boost::asio::io_context ioc;
+    ForwardingConfig cfg = makeConfig(rx.port());
+    cfg.host             = "collector.invalid";
+    Forwarder fwd(ioc, cfg);
+
+    fwd.stop();
+
+    // No run_for: run() itself must return, which it only does once the timer
+    // has been cancelled.
+    ioc.run();
+    BOOST_CHECK(ioc.stopped());
+}
+
+BOOST_AUTO_TEST_CASE(disabled_forwarder_does_not_resolve)
+{
+    // enabled = false must not look anything up, so a stale host under it costs
+    // nothing — which is also why loadConfig does not validate it.
+    boost::asio::io_context ioc;
+    ForwardingConfig cfg = makeConfig(9999, /*enabled=*/false);
+    cfg.host             = "collector.invalid";
+    BOOST_REQUIRE_NO_THROW(Forwarder(ioc, cfg));
+
+    ioc.run();
+    BOOST_CHECK(ioc.stopped());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

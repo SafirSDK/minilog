@@ -115,8 +115,18 @@ port = 9514
 ; Set to true to forward received messages to another syslog endpoint.
 enabled = false
 
-; Destination IP address. Names are not resolved — an unparseable value is a
-; config error at startup.
+; Destination hostname or IP address (IPv4 or IPv6). A name is resolved once,
+; when minilog starts, and the address found is used for the lifetime of the
+; process — so a collector that moves needs a restart.
+;
+; A name that does not resolve at startup is not a startup failure: minilog runs
+; with forwarding off, reports it once, and retries in the background until it
+; succeeds. That is deliberate, because a Windows service set to start
+; automatically is routinely running before DNS is.
+;
+; The port goes in the 'port' key below. A value such as '10.0.0.5:514' or
+; 'syslog.example.com:514' is a config error rather than a name that would never
+; resolve.
 host = 10.0.0.5
 
 ; Destination UDP port.

@@ -56,9 +56,10 @@ const std::unordered_map<std::string, int> kFacilityNames = {
 //
 // Names are not resolved: make_address takes literals only. Both IPv4 and IPv6
 // literals are accepted, since #24 settled that an IPv6 [server] host keeps
-// working rather than being rejected. Note that an IPv6 [forwarding] host parses
-// here but cannot actually be sent to — the Forwarder opens a v4 socket — which
-// is tracked separately in #18; validation is not the place to paper over it.
+// working rather than being rejected.
+//
+// This is the rule for [server] host, which names an interface to bind. The
+// forwarding destination is a different question and has its own check below.
 void requireAddress(const std::string& label, const std::string& value)
 {
     boost::system::error_code ec;
@@ -79,6 +80,53 @@ void requireAddress(const std::string& label, const std::string& value)
     {
         throw std::runtime_error("Invalid " + label + ": '" + value +
                                  "' is not an IP address (names are not resolved)");
+    }
+}
+
+// A forwarding destination may be a hostname as well as an IP literal: naming
+// the collector is the normal deployment shape, and hard-coding its address on
+// every syslog host is what people are trying to avoid. The Forwarder resolves
+// it, so validation here only has to rule out what cannot be a host at all.
+//
+// An unresolvable name is deliberately *not* a config error — a service that
+// starts before DNS is up would otherwise fail its start — so anything rejected
+// here is rejected on shape alone. The cases that matter:
+//
+//   - a port appended ("10.0.0.5:514", "[::1]:514"). Asio's Windows parser
+//     accepts and silently discards the port, and as a name it would simply
+//     never resolve, so the typo would be reported once and then retried
+//     forever. Rejecting it here is the only place it is loud.
+//   - brackets, which are a URL's IPv6 syntax rather than a host
+//   - a colon in anything that is not a valid IPv6 literal, which is the same
+//     port-suffix mistake in a different shape
+//   - whitespace or a slash, which say the value is not a host name at all
+//   - digits and dots that are not a valid address ("10.0.0.999"). A hostname
+//     cannot have an all-numeric top-level label (RFC 1123 2.1), so this is a
+//     mistyped address rather than a name, and it is worth saying so.
+void requireDestinationHost(const std::string& label, const std::string& value)
+{
+    boost::system::error_code ec;
+    boost::asio::ip::make_address(value, ec);
+
+    const bool bracketed =
+        value.find('[') != std::string::npos || value.find(']') != std::string::npos;
+    const bool looksLikeUrlOrPort =
+        value.find(':') != std::string::npos || value.find('/') != std::string::npos;
+    const bool hasSpace = std::any_of(
+        value.begin(), value.end(), [](unsigned char c) { return std::isspace(c) != 0; });
+
+    const bool digitsAndDots =
+        std::all_of(value.begin(),
+                    value.end(),
+                    [](unsigned char c) { return std::isdigit(c) != 0 || c == '.'; });
+
+    // An IPv6 literal contains colons legitimately, so the colon and digits
+    // rules only apply to values that did not parse as an address at all.
+    if (bracketed || hasSpace || (ec && (looksLikeUrlOrPort || digitsAndDots)))
+    {
+        throw std::runtime_error("Invalid " + label + ": '" + value +
+                                 "' is neither an IP address nor a hostname (the port belongs in "
+                                 "the 'port' key, not here)");
     }
 }
 
@@ -411,7 +459,7 @@ Config loadConfig(const std::string& path)
         }
         // Only when enabled: a stale host under enabled = false harms nothing and
         // rejecting it would break configs that work today.
-        requireAddress("[forwarding] host", cfg.forwarding.host);
+        requireDestinationHost("[forwarding] host", cfg.forwarding.host);
     }
 
     return cfg;

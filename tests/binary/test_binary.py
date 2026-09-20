@@ -413,12 +413,17 @@ class TestMultiWorker(unittest.TestCase):
 
 
 class TestInvalidAddresses(unittest.TestCase):
-    """Neither host field is resolvable, and both used to fail unreadably.
+    """Both host fields used to fail unreadably.
 
     An unparseable [forwarding] host aborted the process (SIGABRT, no message
     naming the key), and an unparseable [server] host exited non-zero with
-    nothing on stderr at all. Both must now be ordinary config errors. Asserting
+    nothing on stderr at all. Both must be ordinary config errors now. Asserting
     on stderr covers it on every platform: an abort never gets that far.
+
+    The two fields do not have the same rule. [server] host binds an interface
+    and must be an IP literal; [forwarding] host names a destination, so a
+    hostname is accepted and resolved, and one that does not resolve is reported
+    and retried rather than being a startup failure.
     """
 
     def _run_with_config(self, d: Path, body: str) -> subprocess.CompletedProcess:
@@ -428,27 +433,88 @@ class TestInvalidAddresses(unittest.TestCase):
             [BINARY, str(conf)], capture_output=True, text=True, timeout=10
         )
 
-    def test_hostname_as_forwarding_host_is_a_config_error(self):
+    @staticmethod
+    def _forwarding_config(d: Path, port: int, host: str) -> str:
+        return (
+            "[server]\n"
+            "host = 127.0.0.1\n"
+            f"udp_port = {port}\n"
+            "\n"
+            "[output.main]\n"
+            f"text_file = {d / 'syslog.log'}\n"
+            "\n"
+            "[forwarding]\n"
+            "enabled = true\n"
+            f"host = {host}\n"
+            "port = 514\n"
+        )
+
+    def test_hostname_with_port_as_forwarding_host_is_a_config_error(self):
+        # A name is fine; a name with the port appended is the mistake worth
+        # being loud about, because as a name it would simply never resolve and
+        # would be retried in the background forever.
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             r = self._run_with_config(
-                d,
-                "[server]\n"
-                "host = 127.0.0.1\n"
-                f"udp_port = {free_port()}\n"
-                "\n"
-                "[output.main]\n"
-                f"text_file = {d / 'syslog.log'}\n"
-                "\n"
-                "[forwarding]\n"
-                "enabled = true\n"
-                "host = syslog.example.com\n"
-                "port = 514\n",
+                d, self._forwarding_config(d, free_port(), "syslog.example.com:514")
             )
 
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("[forwarding] host", r.stderr)
-            self.assertIn("syslog.example.com", r.stderr)
+            self.assertIn("syslog.example.com:514", r.stderr)
+
+    def test_unresolvable_forwarding_host_starts_and_reports(self):
+        # .invalid never resolves (RFC 2606). minilog must still start: a
+        # Windows auto-start service routinely runs before DNS does, and losing
+        # the whole collector over a forwarding destination would be worse than
+        # losing forwarding.
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            port = free_port()
+            conf = d / "minilog.conf"
+            conf.write_text(self._forwarding_config(d, port, "collector.invalid"))
+
+            proc = subprocess.Popen(
+                [BINARY, str(conf)],
+                stderr=subprocess.PIPE,
+                text=True,
+                **_POPEN_FLAGS,
+            )
+            try:
+                self.assertTrue(wait_for_port(port), "server did not bind")
+
+                send_udp("<14>hello", port)
+                time.sleep(0.3)
+                self.assertIn("hello", (d / "syslog.log").read_text())
+            finally:
+                terminate(proc)
+                stderr = proc.communicate(timeout=10)[1]
+
+            self.assertEqual(proc.returncode, 0, f"stderr: {stderr}")
+            self.assertIn("collector.invalid", stderr)
+            self.assertIn("cannot resolve", stderr)
+
+    def test_resolvable_hostname_as_forwarding_host_is_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            port = free_port()
+            conf = d / "minilog.conf"
+            conf.write_text(self._forwarding_config(d, port, "localhost"))
+
+            proc = subprocess.Popen(
+                [BINARY, str(conf)],
+                stderr=subprocess.PIPE,
+                text=True,
+                **_POPEN_FLAGS,
+            )
+            try:
+                self.assertTrue(wait_for_port(port), "server did not bind")
+            finally:
+                terminate(proc)
+                stderr = proc.communicate(timeout=10)[1]
+
+            self.assertEqual(proc.returncode, 0, f"stderr: {stderr}")
+            self.assertNotIn("cannot resolve", stderr)
 
     def test_hostname_as_server_host_is_a_config_error(self):
         with tempfile.TemporaryDirectory() as d:

@@ -73,10 +73,12 @@ int runServer(const std::string& configPath)
         return EXIT_FAILURE;
     }
 
-    // The only constructor on this path that can throw: it resolves the
-    // forwarding endpoint. loadConfig already rejects an unparseable host, so
-    // reaching the catch means something else went wrong — which must still be a
-    // reported startup failure rather than an abort.
+    // The only constructor on this path that can throw. It resolves the
+    // forwarding destination, but a name that does not resolve is reported and
+    // retried rather than thrown — a service started before DNS is up must not
+    // fail its start over it — so reaching the catch means something else went
+    // wrong, which must still be a reported startup failure rather than an
+    // abort.
     std::unique_ptr<minilog::Forwarder> forwarder;
     try
     {
@@ -95,11 +97,18 @@ int runServer(const std::string& configPath)
     minilog::UdpServer server(ioc, cfg, outputMgr, forwarder.get());
 
     // Install shutdown handler before start() so no signal is missed.
+    // The forwarder is stopped too: an unresolved destination leaves a retry
+    // timer outstanding, and io_context::run() does not return while it is
+    // pending — minilog would take the whole retry delay to exit, or never.
     minilog::setupShutdown(ioc,
-                           [&server, &outputMgr]()
+                           [&server, &outputMgr, &forwarder]()
                            {
                                server.stop();
                                outputMgr.close();
+                               if (forwarder)
+                               {
+                                   forwarder->stop();
+                               }
                            });
 
     try

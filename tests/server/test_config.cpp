@@ -837,28 +837,67 @@ BOOST_AUTO_TEST_CASE(forwarding_facility_filter)
     BOOST_TEST(facs[1] == 17);
 }
 
-// Both host fields reach boost::asio::make_address later — in the Forwarder
-// constructor and UdpServer::start(). Unvalidated, an unparseable value aborted
-// the process (forwarding) or exited silently (server); loadConfig has to be the
-// thing that rejects it, so the message names the key and the value.
+// Both host fields used to reach boost::asio::make_address unvalidated, where an
+// unparseable value aborted the process (forwarding) or exited silently
+// (server). They are validated here now — but by different rules. [server] host
+// binds an interface and must be an IP literal; [forwarding] host names a
+// destination, so a hostname is exactly what a deployment usually wants, and the
+// check only rules out what cannot be a host at all.
 
-BOOST_AUTO_TEST_CASE(forwarding_hostname_throws_naming_key_and_value)
+BOOST_AUTO_TEST_CASE(forwarding_hostname_accepted)
 {
-    // The documented example used to invite exactly this: make_address does not
-    // resolve names, so a hostname was a core dump.
+    // Naming the collector is the normal deployment shape. The Forwarder
+    // resolves it; whether it resolves today is not a question loadConfig can
+    // answer, and refusing to start over it would make a service that comes up
+    // before DNS does unstartable.
     TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
                  "[forwarding]\nenabled=true\nhost=syslog.example.com\n");
-    try
-    {
-        loadConfig(tmp.path);
-        BOOST_FAIL("expected std::runtime_error for a non-address forwarding host");
-    }
-    catch (const std::runtime_error& e)
-    {
-        const std::string what = e.what();
-        BOOST_TEST(what.find("[forwarding] host") != std::string::npos, "message: " << what);
-        BOOST_TEST(what.find("syslog.example.com") != std::string::npos, "message: " << what);
-    }
+    Config cfg;
+    BOOST_REQUIRE_NO_THROW(cfg = loadConfig(tmp.path));
+    BOOST_TEST(cfg.forwarding.host == "syslog.example.com");
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_unresolvable_name_is_not_a_config_error)
+{
+    // .invalid is reserved so that it never resolves (RFC 2606), and it is still
+    // not loadConfig's business: the failure is reported at startup and retried,
+    // which is what makes DNS arriving late survivable.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=collector.invalid\n");
+    BOOST_CHECK_NO_THROW(loadConfig(tmp.path));
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_host_with_underscore_accepted)
+{
+    // Not a legal hostname by RFC 1123, but common in practice and resolvable
+    // through hosts files. Nothing here has to have an opinion about it.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=log_collector\n");
+    BOOST_CHECK_NO_THROW(loadConfig(tmp.path));
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_host_with_scheme_throws)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=udp://syslog.example.com\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_host_with_space_throws)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=syslog example com\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_hostname_with_port_throws)
+{
+    // The same mistake as the address-with-port case below, but on a name, where
+    // there is no parser to catch it: left alone it would be a name that never
+    // resolves, reported once and then retried forever.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nenabled=true\nhost=syslog.example.com:514\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_CASE(forwarding_address_with_port_throws)
@@ -872,6 +911,10 @@ BOOST_AUTO_TEST_CASE(forwarding_address_with_port_throws)
 
 BOOST_AUTO_TEST_CASE(forwarding_malformed_address_throws)
 {
+    // Digits and dots only, and not a valid address. A hostname cannot have an
+    // all-numeric top-level label, so this is a mistyped address rather than a
+    // name — which is what lets it be rejected loudly instead of retried forever
+    // as a name that will never resolve.
     TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
                  "[forwarding]\nenabled=true\nhost=10.0.0.999\n");
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
