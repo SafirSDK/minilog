@@ -1,6 +1,6 @@
 # Roadmap — v1.4.0
 
-Working order for the 27 issues (#10–#36) to be closed before the v1.4.0
+Working order for the 28 issues (#10–#37) to be closed before the v1.4.0
 release. Current version is 1.3.0.
 
 **This file is temporary.** Delete it as part of preparing the v1.4.0 release —
@@ -96,6 +96,22 @@ depends on batches that come first: #10 settles behaviour under load, and
 #31/#32 settle how much config surface is acceptable — which decides whether a
 retry interval can be configurable. Starting from the options recorded on the
 issue rather than from scratch.
+
+## Batch 8 — #37, last of all
+
+Came out of reviewing batch 4 rather than the original sweep. #12 clamped
+`count`/`limit` to 5000 lines, which bounds how many lines a request returns but
+not how many bytes: a sender who can reach the UDP port controls line size, so a
+fed sink still reaches the multi-gigabyte response #12 set out to remove.
+
+After #36 rather than with the rest of the security work, for two reasons. It
+needs the collector fed first, so it is a step further out than #12, which
+needed only a URL. And the fix is a byte budget in the read path, which wants
+the same judgement about what a client sees when a page ends early that #36's
+recovery question raises about partial state — worth having settled first.
+
+#12 parked the streaming refactor deliberately; start from that decision, not
+from scratch.
 
 ---
 
