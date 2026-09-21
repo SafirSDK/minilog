@@ -286,13 +286,15 @@ class TestCheckMode(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("cannot bind UDP", r.stdout)
 
-    def test_a_running_minilog_does_not_make_check_report_its_own_socket(self):
+    def test_check_against_a_running_minilog_reports_the_port_as_taken(self):
         """The bind test is the one check that a healthy machine can fail.
 
-        On Windows the running service is recognised through the SCM and the
-        finding is a warning; elsewhere there is no service manager to ask, so
-        this only pins down that --check stays a read-only observer of a live
-        server and still names the port it could not test.
+        Only a minilog running *as a service* is excused, and that path needs a
+        Windows SCM (covered by tests/server/test_preflight.cpp).  A minilog
+        started by hand -- what this test can arrange on either platform -- is
+        indistinguishable from any other process holding the port, so the report
+        is a hard error.  What is pinned here is that --check says so, and that
+        it stays a read-only observer: the live server keeps logging after it.
         """
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -309,6 +311,8 @@ class TestCheckMode(unittest.TestCase):
                     timeout=10,
                 )
                 self.assertIn(str(port), r.stdout)
+                self.assertIn("cannot bind UDP", r.stdout)
+                self.assertNotEqual(r.returncode, 0)
 
                 send_udp("<34>Oct 11 22:14:15 mymachine su[1]: still alive", port)
                 self.assertTrue(wait_for_text(d / "syslog.log", "still alive"))
@@ -752,6 +756,9 @@ class TestSinkPathsCheckedAtStartup(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0, "server started with an unusable sink path")
             self.assertIn("failed to open", r.stderr)
             self.assertIn(str(missing), r.stderr)
+            # A sink that fails at startup is not retried -- the process exits
+            # before anything could -- so the message must not promise one.
+            self.assertNotIn("retrying", r.stderr)
 
     def test_usable_log_path_still_starts(self):
         with tempfile.TemporaryDirectory() as d:

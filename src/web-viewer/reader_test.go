@@ -622,6 +622,22 @@ func TestReadBackward_UnterminatedMiddleFile_AgreesWithForward(t *testing.T) {
 			t.Errorf("offset %d: forward %d, backward %d", i, forwardOffsets[i], backwardOffsets[i])
 		}
 	}
+
+	// The cursor itself, not just the offsets of records already returned: a page
+	// that stops on the unterminated record hands one back, and scrolling upward
+	// from it has to land on that record's start. One byte late and the backward
+	// read starts inside the next generation's first record instead.
+	_, _, _, cursor, err := fc.ReadForward(0, 2, noFilter())
+	if err != nil {
+		t.Fatalf("ReadForward(0, 2) error: %v", err)
+	}
+	above, _, _, _, err := fc.ReadBackward(cursor, 100, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward(%d) error: %v", cursor, err)
+	}
+	if want := lineTexts(forward[:2]); strings.Join(lineTexts(above), "\n") != strings.Join(want, "\n") {
+		t.Errorf("scrolling up from cursor %d gave %v, want %v", cursor, lineTexts(above), want)
+	}
 }
 
 // Search derives its offsets the same way a forward read does, and they are what
@@ -641,9 +657,17 @@ func TestSearch_UnterminatedMiddleFile_OffsetsLandOnRecordStarts(t *testing.T) {
 	if total != 2 {
 		t.Fatalf("want 2 matches, got %d", total)
 	}
+	if len(offsets) != 2 {
+		t.Fatalf("want 2 offsets, got %v", offsets)
+	}
+	// Search resets its position per file, so the older generation's missing
+	// terminator must not shift the newer generation's match.
+	if want := int64(len(makeLine("needle-old", "info", "daemon"))); offsets[1] != want {
+		t.Errorf("second match at %d, want %d (start of the next generation)", offsets[1], want)
+	}
 
 	for i, off := range offsets {
-		got, _, _, _, rerr := fc.ReadForward(off, 1, noFilter())
+		got, _, _, next, rerr := fc.ReadForward(off, 1, noFilter())
 		if rerr != nil {
 			t.Fatalf("match %d: ReadForward error: %v", i, rerr)
 		}
@@ -652,6 +676,12 @@ func TestSearch_UnterminatedMiddleFile_OffsetsLandOnRecordStarts(t *testing.T) {
 		}
 		if !strings.HasPrefix(string(got[0]), "{") {
 			t.Errorf("match %d at offset %d starts mid-record: %q", i, off, string(got[0]))
+		}
+		// Jumping to a match is a page like any other, so the cursor it leaves
+		// has to be a record start too.
+		if next != offsets[i]+int64(len(got[0])) && next != fc.TailOffset() {
+			t.Errorf("match %d: cursor %d is neither the next record nor the chain end %d",
+				i, next, fc.TailOffset())
 		}
 	}
 }

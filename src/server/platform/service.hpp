@@ -96,8 +96,8 @@ enum class ServiceState
 {
     NotApplicable, // this platform has no service manager (Linux)
     NotInstalled,  // no minilog service is registered
-    Running,       // registered and running, so it holds the UDP port
-    NotRunning,    // registered but stopped, starting or stopping
+    Running,       // registered and not stopped, so it may hold the UDP port
+    NotRunning,    // registered and stopped
     Unknown        // the service manager could not be asked (usually no rights)
 };
 

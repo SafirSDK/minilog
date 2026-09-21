@@ -281,7 +281,9 @@ LogFile::~LogFile() = default;
 
 bool LogFile::openAtStartup()
 {
+    m_startingUp = true;
     openFiles();
+    m_startingUp = false;
     return !m_closed;
 }
 
@@ -335,6 +337,20 @@ void LogFile::close()
 
 void LogFile::failSink(const std::string& reason)
 {
+    if (m_startingUp)
+    {
+        // A sink that cannot be opened at startup is not retried: the caller
+        // turns this into EXIT_FAILURE without ever running the io_context, so
+        // there is nothing left alive to retry on. Promising one would leave an
+        // operator — reading this out of the Windows Event Log, where it is the
+        // only trace the process leaves — waiting for a recovery that is not
+        // coming. Nor is the reporting policy engaged: there is no second report.
+        osLogError("minilog: " + reason + "; sink '" + m_cfg.name + "' cannot be opened");
+        m_closed = true;
+        closeFiles();
+        return;
+    }
+
     const auto decision = m_recovery.onFailure(reason, std::chrono::steady_clock::now());
 
     if (decision.report)

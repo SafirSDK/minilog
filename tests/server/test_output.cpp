@@ -28,6 +28,7 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -1298,6 +1299,28 @@ BOOST_AUTO_TEST_CASE(closing_a_sink_during_an_outage_stops_the_retry)
     fs::create_directories(subdir);
     BOOST_CHECK(runUntilIdle(std::chrono::milliseconds{300}));
     writeSync(lf, messageWith("after close"));
+    BOOST_CHECK(!fs::exists(cfg.jsonlFile));
+}
+
+BOOST_AUTO_TEST_CASE(closing_a_sink_after_its_retry_came_due_does_not_reopen_it)
+{
+    // The other half of the shutdown protection: cancel() only reaches a wait
+    // that is still pending, so this lets the interval elapse while nothing is
+    // running the io_context. The handler is then already queued when close()
+    // arrives and runs with no error, and the shutdown flag is the only thing
+    // left that stops it reopening a sink that was closed on purpose.
+    const auto subdir = dir / "closed_after_retry_due";
+    auto cfg          = sinkConfig(subdir / "syslog.jsonl", 0);
+    cfg.name          = "main";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, messageWith("dropped"));
+
+    std::this_thread::sleep_for(kTestRetry * 3);
+    fs::create_directories(subdir); // the fault has cleared in the meantime
+
+    lf.close();
+    BOOST_CHECK(runUntilIdle(std::chrono::milliseconds{300}));
     BOOST_CHECK(!fs::exists(cfg.jsonlFile));
 }
 

@@ -132,6 +132,12 @@ public:
     // Record that the files opened again, and describe the outage that ended.
     // Every outage was reported when it began, so every recovery gets a line;
     // there is no silent-streak case to suppress the way ReceiveBackoff has.
+    //
+    // This resets the reporting state, so a fault that clears and returns inside
+    // one report interval is reported afresh rather than suppressed. That is
+    // deliberate: each recovery genuinely ends an outage, and the pair of lines
+    // is what tells an operator the storage is flapping rather than simply down.
+    // The retry interval bounds how often that can happen.
     // Returns a zeroed Outage if the sink was not closed, which LogFile never
     // does — the call sites are the retry path only.
     Outage onRecovered(std::chrono::steady_clock::time_point now)

@@ -84,7 +84,9 @@ private:
     //
     // Not permanent: scheduleRetry() arranges an attempt to open the files again,
     // and the reporting is rate-limited so that a fault which never clears cannot
-    // fill the system log. See SinkRecovery for why the retry is on a timer.
+    // fill the system log. See SinkRecovery for why the retry is on a timer. The
+    // exception is a failure during openAtStartup(), which is reported and not
+    // retried, because the process is about to exit.
     void failSink(const std::string& reason);
 
     // Arm the retry timer for a sink that has just been closed.
@@ -112,6 +114,9 @@ private:
     // reopened by a retry, and cancel() alone does not cover a handler that was
     // already queued when the close arrived.
     bool m_shuttingDown = false;
+    // Set only for the duration of openAtStartup(): a failure there is fatal to
+    // the process, so it is reported without arming — or promising — a retry.
+    bool m_startingUp = false;
     std::ofstream m_textStream;
     std::ofstream m_jsonlStream;
     uint64_t m_textSize  = 0;

@@ -45,6 +45,9 @@
   duration when they open. The interval is fixed rather than configurable: this release spent its
   effort removing config surface, and no deployment has a reason to prefer a different number.
 
+  A sink that cannot be opened at *startup* is unchanged: that still fails the start, and it is now
+  reported without mentioning a retry, because the process exits before anything could make one.
+
   The retry is on a timer rather than on the next message routed to the sink. Sinks are selected by
   facility, so a write-triggered retry would leave the quiet sink — the one whose silence is least
   likely to be noticed — closed indefinitely. Messages that arrive while a sink is closed are still

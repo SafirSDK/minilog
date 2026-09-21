@@ -279,6 +279,69 @@ BOOST_AUTO_TEST_CASE(a_log_path_that_is_a_directory_is_reported_as_such)
     BOOST_TEST(mentions(report, Finding::Level::Error, "is a directory, not a log file"));
 }
 
+BOOST_AUTO_TEST_CASE(a_log_directory_that_is_really_a_file_is_reported_as_such)
+{
+    const auto logDir = dir / "occupied";
+    std::ofstream(logDir) << "not a directory\n";
+    Options opts;
+    opts.logDir       = logDir.string();
+    const auto report = preflight(writeConfig(opts), ServiceState::NotInstalled);
+
+    BOOST_TEST(report.failed());
+    BOOST_TEST(mentions(report, Finding::Level::Error, "is not a directory"));
+}
+
+// The no-side-effects promise matters most on the Windows deployment target, so
+// this stays outside the POSIX-only block below.
+BOOST_AUTO_TEST_CASE(an_existing_writable_log_file_is_left_exactly_as_it_was)
+{
+    const auto configPath = writeConfig();
+    const auto logFile    = dir / "syslog.log";
+    {
+        std::ofstream f(logFile);
+        f << "existing content\n";
+    }
+
+    const auto report = preflight(configPath, ServiceState::NotInstalled);
+    BOOST_TEST(allFindings(report) == "");
+
+    std::ifstream f(logFile);
+    std::string content;
+    std::getline(f, content);
+    BOOST_TEST(content == "existing content");
+    BOOST_TEST(fs::file_size(logFile) == 17U);
+}
+
+BOOST_AUTO_TEST_CASE(a_log_path_whose_parent_cannot_be_searched_is_not_called_missing)
+{
+    // A path that cannot be reached is not a path that is absent: one needs an
+    // ACL fixed, the other needs a directory created. Only a POSIX case here —
+    // there is no portable way to make a directory unsearchable.
+#ifndef _WIN32
+    if (!canDenyAccess())
+    {
+        return;
+    }
+
+    const auto parent = dir / "sealed";
+    const auto logDir = parent / "logs";
+    fs::create_directories(logDir);
+    Options opts;
+    opts.logDir           = logDir.string();
+    const auto configPath = writeConfig(opts);
+    fs::permissions(parent, fs::perms::none);
+
+    const auto report = preflight(configPath, ServiceState::NotInstalled);
+    // Restored here as well as in the fixture, so the rest of the case can read
+    // the tree even if an assertion below aborts it.
+    fs::permissions(parent, fs::perms::owner_all);
+
+    BOOST_TEST(report.failed());
+    BOOST_TEST(mentions(report, Finding::Level::Error, "cannot inspect log directory"));
+    BOOST_TEST(!mentions(report, Finding::Level::Error, "does not exist"));
+#endif
+}
+
 #ifndef _WIN32
 
 BOOST_AUTO_TEST_CASE(an_unwritable_log_directory_says_it_is_not_writable)
@@ -323,25 +386,6 @@ BOOST_AUTO_TEST_CASE(an_existing_log_file_that_cannot_be_appended_to_is_an_error
     const auto report = preflight(configPath, ServiceState::NotInstalled);
     BOOST_TEST(report.failed());
     BOOST_TEST(mentions(report, Finding::Level::Error, "cannot be opened for appending"));
-}
-
-BOOST_AUTO_TEST_CASE(an_existing_writable_log_file_is_left_exactly_as_it_was)
-{
-    const auto configPath = writeConfig();
-    const auto logFile    = dir / "syslog.log";
-    {
-        std::ofstream f(logFile);
-        f << "existing content\n";
-    }
-
-    const auto report = preflight(configPath, ServiceState::NotInstalled);
-    BOOST_TEST(allFindings(report) == "");
-
-    std::ifstream f(logFile);
-    std::string content;
-    std::getline(f, content);
-    BOOST_TEST(content == "existing content");
-    BOOST_TEST(fs::file_size(logFile) == 17U);
 }
 
 #endif // !_WIN32
@@ -418,6 +462,25 @@ BOOST_AUTO_TEST_CASE(a_stopped_service_does_not_excuse_a_taken_port)
     const auto report = preflight(writeConfig(opts), ServiceState::NotRunning);
 
     BOOST_TEST(report.failed());
+    BOOST_TEST(!mentions(report, Finding::Level::Error, "service manager could not be asked"));
+}
+
+// The state every Linux run really uses. It stays an error — nothing there can
+// attribute the socket to minilog, and a check that assumed it could would pass
+// a machine with a genuine port clash — but it says what it could not check.
+BOOST_AUTO_TEST_CASE(a_platform_with_no_service_manager_says_so_and_still_fails)
+{
+    boost::asio::io_context ioc;
+    boost::asio::ip::udp::socket holder(
+        ioc, {boost::asio::ip::make_address("127.0.0.1"), static_cast<unsigned short>(0)});
+
+    Options opts;
+    opts.udpPort      = holder.local_endpoint().port();
+    const auto report = preflight(writeConfig(opts), ServiceState::NotApplicable);
+
+    BOOST_TEST(report.failed());
+    BOOST_TEST(mentions(report, Finding::Level::Error, "cannot bind UDP 127.0.0.1:"));
+    BOOST_TEST(mentions(report, Finding::Level::Error, "this platform has no service manager"));
     BOOST_TEST(!mentions(report, Finding::Level::Error, "service manager could not be asked"));
 }
 

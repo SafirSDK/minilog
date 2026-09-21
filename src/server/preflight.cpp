@@ -176,13 +176,25 @@ classifyBindFailure(const std::string& endpoint, const std::string& reason, Serv
         message += " — the service manager could not be asked whether an already running minilog "
                    "holds it";
     }
+    else if (service == ServiceState::NotApplicable)
+    {
+        // Linux, where there is no service manager to attribute the socket to.
+        // Still an error: unlike the Running case, nothing here establishes that
+        // the holder is minilog, and a check that guessed would report a genuine
+        // port clash as expected. Saying what was not checked is the honest part.
+        message += " — this platform has no service manager, so a minilog already running on this "
+                   "machine would look the same as anything else holding the port";
+    }
     return {Finding::Level::Error, std::move(message)};
 }
 
-// Bind the configured listen endpoint with the same socket options the server
-// uses, then drop it again. This is the only check that can be made wrong by
-// something outside minilog's control, so it is also the one that most needs to
-// be read alongside the service state.
+// Bind the configured listen endpoint with the same options the server sets that
+// can affect a bind, then drop it again. The server also sets a receive buffer
+// size, which cannot change whether a bind succeeds and so is not replicated.
+//
+// This is the only check that can be made wrong by something outside minilog's
+// control, so it is also the one that most needs to be read alongside the
+// service state.
 //
 // It proves that minilog can take the port on this host. It proves nothing about
 // whether remote senders can reach it: that needs a datagram from a real sender,
@@ -210,9 +222,10 @@ void checkBind(const Config& cfg, ServiceState service, std::vector<Finding>& ou
         const udp::endpoint ep(address, cfg.udpPort);
         socket.open(ep.protocol());
 #ifdef _WIN32
-        // Without this the bind would succeed even with minilog running, because
-        // Windows shares UDP ports by default — and a --check that passes where
-        // the server would fail is worse than no check at all.
+        // The server sets this, so the check must too: the option refuses to
+        // share the port with a later binder that asks for SO_REUSEADDR, which
+        // is a bind the check would otherwise make and the server would not. A
+        // --check that passes where the server fails is worse than no check.
         const BOOL exclusive = TRUE;
         setsockopt(socket.native_handle(),
                    SOL_SOCKET,

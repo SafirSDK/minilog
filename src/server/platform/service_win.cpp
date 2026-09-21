@@ -604,22 +604,27 @@ ServiceState queryServiceState()
         return ServiceState::Unknown;
     }
 
-    const ScopedServiceHandle svc(OpenServiceA(scm.get(), SERVICE_NAME, SERVICE_QUERY_STATUS));
+    const SC_HANDLE rawSvc = OpenServiceA(scm.get(), SERVICE_NAME, SERVICE_QUERY_STATUS);
+    // Read before anything else can overwrite it; the RAII wrapper below is
+    // trivial today, but a GetLastError() after a constructor is a trap.
+    const DWORD openError = GetLastError();
+    const ScopedServiceHandle svc(rawSvc);
     if (!svc)
     {
-        return GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST ? ServiceState::NotInstalled
-                                                              : ServiceState::Unknown;
+        return openError == ERROR_SERVICE_DOES_NOT_EXIST ? ServiceState::NotInstalled
+                                                         : ServiceState::Unknown;
     }
 
     try
     {
-        // START_PENDING counts as running: the process is up and has bound the
-        // socket well before it reports RUNNING to the SCM.
+        // The question being asked is "could minilog be holding the port", so
+        // every state except STOPPED is Running. START_PENDING is: the process is
+        // up and has bound the socket well before it reports RUNNING to the SCM.
+        // STOP_PENDING is too: the socket is only released when the process
+        // exits, so a --check during a restart must not call that a hard fault.
         const auto status = queryServiceStatus(svc.get());
-        return (status.dwCurrentState == SERVICE_RUNNING ||
-                status.dwCurrentState == SERVICE_START_PENDING)
-                   ? ServiceState::Running
-                   : ServiceState::NotRunning;
+        return status.dwCurrentState == SERVICE_STOPPED ? ServiceState::NotRunning
+                                                        : ServiceState::Running;
     }
     catch (const std::exception&)
     {

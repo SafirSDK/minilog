@@ -62,6 +62,10 @@ split as `ReceiveBackoff` and `AdmissionControl`. `LogFile::close()` sets a shut
 cancelling the timer: a pending retry keeps `io_context::run()` from returning, and `cancel()` alone
 does not stop a handler that was already queued.
 
+A failure inside `openAtStartup()` is the one that is **not** retried or rate-limited: `main()` turns
+it into `EXIT_FAILURE` without ever running the `io_context`, so there is nothing alive to retry on
+and the message must not promise one.
+
 ### Preflight (`--check`)
 `preflight.hpp/.cpp` validates a config and the host without starting anything. `preflight()`
 returns a `PreflightReport` (requirements + findings) and does the looking; `printPreflight()` does
@@ -71,7 +75,9 @@ run. Directory writability is tested with a probe file that is deleted again, ne
 configured log file (that would leave an empty `syslog.log` behind). `ServiceState` /
 `queryServiceState()` in `platform/service.hpp` exist for this one decision: a failed bind while the
 minilog service is running is a warning, not an error. It is passed into `preflight()` rather than
-queried inside it, so the classification is testable on a host with no SCM.
+queried inside it, so the classification is testable on a host with no SCM. Only a *service* is
+excused: on Linux (`NotApplicable`) a taken port stays an error, because nothing there can attribute
+the socket to minilog — the message says that rather than guessing.
 
 ### RFC5424 structured data
 Kept verbatim as a prefix of `message` — **not** parsed into a separate JSONL field.
@@ -127,7 +133,9 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   rotation then moves that file into the middle of the chain. `ReadForward` charges `len(line)+1`
   for the newline the scanner strips, so it clamps its cursor to the file's snapshotted size;
   without that the next page starts one byte into the following generation. `ReadBackward` and
-  `Search` walk from the `'\n'` bytes that are really there and need no equivalent.
+  `Search` walk from the `'\n'` bytes that are really there and need no equivalent. The active file
+  is the case this does not make whole: a record half written when the request snapshotted the file
+  is returned truncated, and its remainder becomes the first line of a later page.
 - Two ceilings bound one `/lines` request, neither configurable and neither reported in the
   response: `maxLines` (5000, `handlers.go`) on lines returned, and `maxResponseBytes` (8 MB,
   `reader.go`) on their total size. Both leave the paging cursor just past what was returned, so a
