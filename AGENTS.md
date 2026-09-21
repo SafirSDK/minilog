@@ -102,6 +102,10 @@ of that ordering and because those values are table-driven (see `matchStringFiel
     to the `minilog-web-viewer` Event Log source registered by `--install`
 - `FileChain` is rebuilt per request (snapshots the filesystem); supports forward paging,
   backward paging (for infinite-scroll upward), and full-chain search across all rotated generations.
+- Two ceilings bound one request, neither configurable and neither reported in the response:
+  `maxLines` (5000, `handlers.go`) on lines returned, and `maxResponseBytes` (8 MB, `reader.go`) on
+  their total size. Both leave the paging cursor just past what was returned, so a client continues
+  from there; a line is never truncated to fit.
 - Filter params on `/lines` and `/search`: `sev` (severity names), `fac` (facility names),
   `inc` (include substrings), `exc` (exclude substrings).
 - Tests: `*_test.go` files in `src/web-viewer/`; run with `go test ./src/web-viewer/`.

@@ -29,6 +29,27 @@
 
 ### Fixed
 
+- **The web viewer bounds a response by bytes, not only by lines.** Clamping `count` and `limit`
+  to 5000 bounds how many lines one request returns, which is a memory bound only while lines are
+  of typical size — and a syslog sender picks the size. A 65507-byte datagram of control bytes
+  escapes to roughly 400 KB of JSONL, comfortably inside the 1 MB a read path accepts for a single
+  line, so 5000 of them is about 2 GB materialised as `[][]byte`, copied again into `[]string` and
+  buffered whole by `json.Encoder` before a byte reaches the socket. That is the multi-gigabyte
+  single request the clamp was meant to remove, reachable by feeding the sink first. It needs no
+  attacker either: an application logging a stack trace, a serialised payload or a base64 blob
+  produces large records honestly.
+
+  `ReadForward`, `ReadBackward` and `Search` now stop collecting once the lines gathered reach
+  8 MB and return what they have. Measured against a 160 MB sink of 400 KB records,
+  `GET /lines?sink=main&count=5000` went from a 152 MB body and a peak RSS of 728 MB to a 7.6 MB
+  body and 51 MB. A long line is still returned whole — a page ends between records, never inside
+  one, so nothing arrives as unparseable JSON. Reaching the budget is not signalled separately:
+  every path leaves its cursor just past the last line collected, so a client following
+  `next_offset` forward or `first_offset` back continues from there exactly as it does when the
+  line count runs out, and following the cursor still walks the whole chain. On `/search` the
+  budget bounds the results returned and not `total_matches`, which still counts every match in
+  the chain, as it already did for `limit`.
+
 - **Resolving the forwarding destination no longer holds up startup.** `Forwarder`'s constructor
   called `getaddrinfo` synchronously, before the UDP socket binds and before the Windows service
   reports itself running — all inside a single 10-second `SERVICE_START_PENDING` wait hint whose

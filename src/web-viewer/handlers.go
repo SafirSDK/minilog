@@ -302,6 +302,10 @@ func parseFilter(r *http.Request) *Filter {
 // No attacker is needed: a bookmarked URL, a typo or a crawler will do it.
 // There is deliberately no config knob, because assets/app.js never asks for
 // more than BATCH (200) and no legitimate client comes near this.
+//
+// It bounds lines, not bytes, and a syslog sender chooses how long a line is —
+// so maxResponseBytes in reader.go is the other half of the bound, and the one
+// that makes it hold for a sink that has been fed oversized records.
 const maxLines = 5000
 
 // parseLineCount parses a caller-supplied line count. Non-numeric and

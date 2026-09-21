@@ -204,6 +204,36 @@ func (fc *FileChain) fileAt(logicalOffset int64) (fileIdx int, physOffset int64)
 // \u00NN still fits.
 const maxLineBytes = 1024 * 1024
 
+// maxResponseBytes bounds the total size of the lines one read collects.
+// ReadForward, ReadBackward and Search all stop collecting once the lines
+// gathered would exceed it.
+//
+// maxLines bounds how many lines a request returns, which is only a memory
+// bound if lines are of typical size — and a syslog sender chooses the size. A
+// 65507-byte datagram of control bytes escapes to roughly 400 KB of JSONL
+// (boost::json writes \u00XX, six bytes out for one in), comfortably under
+// maxLineBytes, so maxLines of those is about 2 GB materialised as [][]byte,
+// copied again into []string and buffered whole by json.Encoder before a byte
+// reaches the socket. This is what makes the bound real rather than
+// typical-case.
+//
+// 8 MB is above anything a legitimate caller asks for: the browser UI requests
+// 200 lines a page, so it meets the budget only on a sink whose records average
+// over 40 KB, and an explicit count of maxLines typical records is a couple of
+// megabytes. So the budget costs nothing on honest traffic while taking the
+// worst case from gigabytes to megabytes.
+//
+// A line that would take the page over the budget on its own is still returned
+// whole when it is the first one collected. That keeps an honest long line from
+// being truncated mid-record, and keeps a read from returning nothing with its
+// cursor unmoved, which would stall the caller on that line forever. The true
+// ceiling is therefore maxResponseBytes + maxLineBytes.
+//
+// A read cut short by the budget is not signalled separately: every path leaves
+// its cursor just past the last line collected, so the next request continues
+// from there exactly as it does when the line count runs out.
+const maxResponseBytes = 8 * 1024 * 1024
+
 // ReadForward reads up to count lines forward from logicalOffset, applying
 // filter f. It crosses file boundaries transparently.
 //
@@ -222,7 +252,12 @@ func (fc *FileChain) ReadForward(logicalOffset int64, count int, f *Filter) (
 	fileIdx, physOffset := fc.fileAt(logicalOffset)
 	nextOffset = logicalOffset
 
-	for fileIdx < len(fc.files) && len(lines) < count {
+	// Size of the lines collected so far, and whether the budget ended the read;
+	// see maxResponseBytes.
+	collectedBytes := 0
+	budgetHit := false
+
+	for fileIdx < len(fc.files) && len(lines) < count && !budgetHit {
 		cf := fc.files[fileIdx]
 
 		fh, ferr := os.Open(cf.path)
@@ -253,6 +288,14 @@ func (fc *FileChain) ReadForward(logicalOffset int64, count int, f *Filter) (
 			lineLen := int64(len(raw)) + 1 // +1 for the '\n' scanner strips
 
 			if len(raw) > 0 && f.Match(raw) {
+				// Stop before a line that would take the page over the byte
+				// budget, without advancing nextOffset past it, so the next
+				// request starts with that line rather than skipping it. The
+				// first match is always taken, whatever its size.
+				if len(lines) > 0 && collectedBytes+len(raw) > maxResponseBytes {
+					budgetHit = true
+					break
+				}
 				if len(lines) == 0 {
 					firstOffset = currentLogical
 				}
@@ -260,6 +303,7 @@ func (fc *FileChain) ReadForward(logicalOffset int64, count int, f *Filter) (
 				copy(cp, raw)
 				lines = append(lines, cp)
 				offsets = append(offsets, currentLogical)
+				collectedBytes += len(raw)
 			}
 			currentLogical += lineLen
 			nextOffset = currentLogical
@@ -332,9 +376,12 @@ func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter, sin
 		offset int64
 	}
 	var collected []entry
+	// Size of the lines collected so far; see maxResponseBytes.
+	collectedBytes := 0
 
-	// Set once a line starting before `since` is reached. Offsets only shrink
-	// as the walk goes back, so nothing further back can qualify either.
+	// Set once a line starting before `since` is reached, or once the byte
+	// budget is full. Offsets only shrink as the walk goes back, so nothing
+	// further back can qualify either.
 	stop := false
 
 	fileIdx, physOffset := fc.fileAt(logicalOffset)
@@ -386,9 +433,18 @@ func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter, sin
 
 			raw = bytes.TrimRight(raw, "\r")
 			if len(raw) > 0 && f.Match(raw) {
+				// Stop before a line that would take the page over the byte
+				// budget; the newest match is always taken, whatever its size.
+				// The walk runs newest-first, so the budget drops the older end
+				// of the requested window and firstOffset still marks where
+				// paging further back resumes.
+				if len(collected) > 0 && collectedBytes+len(raw) > maxResponseBytes {
+					return false
+				}
 				cp := make([]byte, len(raw))
 				copy(cp, raw)
 				collected = append(collected, entry{line: cp, offset: lineStart})
+				collectedBytes += len(raw)
 			}
 			return true
 		}
@@ -480,6 +536,11 @@ type SearchResult struct {
 func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (results []SearchResult, totalMatches int, err error) {
 	qLower := []byte(strings.ToLower(q))
 
+	// Size of the results collected so far, and whether the budget has closed
+	// collection; see maxResponseBytes.
+	resultBytes := 0
+	budgetFull := false
+
 	for _, cf := range fc.files {
 		fh, ferr := os.Open(cf.path)
 		if ferr != nil {
@@ -515,10 +576,22 @@ func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (result
 			}
 
 			totalMatches++
-			if len(results) < limit {
-				cp := make([]byte, len(raw))
-				copy(cp, raw)
-				results = append(results, SearchResult{Line: cp, Offset: logicalOffset})
+			// The scan carries on past the budget: totalMatches stays the true
+			// count for the whole chain, exactly as it already does past limit,
+			// so the UI can keep reporting how many matches exist.
+			//
+			// Once the budget is full nothing further is collected, rather than
+			// letting a later shorter line slip in. Results stay the first k
+			// matches, which is what the match navigation counts through.
+			if !budgetFull && len(results) < limit {
+				if len(results) > 0 && resultBytes+len(raw) > maxResponseBytes {
+					budgetFull = true
+				} else {
+					cp := make([]byte, len(raw))
+					copy(cp, raw)
+					results = append(results, SearchResult{Line: cp, Offset: logicalOffset})
+					resultBytes += len(raw)
+				}
 			}
 		}
 		fh.Close()

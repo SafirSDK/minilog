@@ -671,6 +671,16 @@ is built in memory before any of it is sent. It is not configurable, and the bro
 asks for more than 200, so it is not a limit any normal client meets. On `/search` it bounds
 the results returned, not `total_matches`, which still counts every match in the chain.
 
+A second ceiling bounds the **bytes**: a request stops collecting once the lines gathered reach
+**8 MB**, and returns what it has. The line clamp alone is a memory bound only while lines are of
+typical size, and a syslog sender chooses the size — a 65507-byte datagram of control bytes
+becomes roughly 400 KB of JSONL, so 5000 of those is about 2 GB built in memory for one GET.
+Long lines are still returned whole: a page ends between records, never inside one. Neither
+ceiling is reported in the response — a page cut short by either leaves `next_offset` (paging
+forward) or `first_offset` (paging back) just past what it returned, so a client simply continues
+from there and eventually sees everything. This is also not a limit the browser UI meets; at 200
+records a page it is reached only by a sink of records averaging over 40 KB.
+
 Filter parameters `sev` and `fac` accept comma-separated name strings (e.g. `sev=info,warning`, `fac=auth,daemon`).
 
 ## License

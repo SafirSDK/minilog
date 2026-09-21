@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -629,6 +630,152 @@ func TestHandler_Search_OversizedLimitIsClamped(t *testing.T) {
 	// reports how many matches exist in the chain.
 	if result.TotalMatches != maxLines+50 {
 		t.Errorf("total_matches = %d, want %d", result.TotalMatches, maxLines+50)
+	}
+}
+
+// ── byte budget ───────────────────────────────────────────────────────────────
+
+// The clamp above bounds how many lines a response holds, which is a memory
+// bound only while lines are of typical size — and a syslog sender picks the
+// size. These tests assert the size of the response body rather than the number
+// of lines in it, against a sink of records near maxLineBytes: what an attacker
+// who can reach the UDP port leaves behind, and what an application logging a
+// stack trace or a base64 blob leaves behind honestly.
+//
+// bodyCeiling is what one response may cost: the budget, plus the one line that
+// is taken whole however large it is, plus the JSON framing around them.
+const bodyCeiling = maxResponseBytes + maxLineBytes
+
+// oversizedLineSink builds a sink of records just under maxLineBytes, more of
+// them than the budget allows, so the bytes and not the line count decide what
+// a request returns.
+func oversizedLineSink(t *testing.T) Sink {
+	t.Helper()
+	return makeSink(t, t.TempDir(), "main", nearMaxLines(t, budgetLinesWanted+2))
+}
+
+// readBody returns the body of resp along with its size, which is the quantity
+// under test here.
+func readBody(t *testing.T, resp *http.Response) []byte {
+	t.Helper()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+	return body
+}
+
+// All three read paths reached through /lines have to come back inside the
+// budget: forward, backward (infinite scroll upward) and tail (the live view's
+// first load). At maxLines these records would be about 5 GB of response body.
+func TestHandler_Lines_ResponseIsBoundedByBytes(t *testing.T) {
+	sink := oversizedLineSink(t)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	for _, path := range []string{
+		"/lines?sink=main&count=5000",
+		"/lines?sink=main&dir=backward&offset=999999999&count=5000",
+		"/lines?sink=main&tail=true&count=5000",
+	} {
+		body := readBody(t, get(t, ts, path))
+		if len(body) > bodyCeiling {
+			t.Errorf("%s: body is %d bytes, over the %d ceiling", path, len(body), bodyCeiling)
+		}
+
+		var result linesResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			t.Fatalf("%s: decoding body: %v", path, err)
+		}
+		// Fewer lines than were asked for and fewer than the sink holds, so the
+		// budget is what ended the read — not the count, and not the file end.
+		if len(result.Lines) != budgetLinesWanted {
+			t.Errorf("%s: got %d lines, want %d", path, len(result.Lines), budgetLinesWanted)
+		}
+		// Whole records. A page cut on the budget must end between lines, never
+		// inside one: half a record is not JSON, and the browser drops it.
+		for i, line := range result.Lines {
+			if len(line) != nearMaxLineBytes {
+				t.Errorf("%s: line %d is %d bytes, want a whole %d-byte record",
+					path, i, len(line), nearMaxLineBytes)
+			}
+			if !json.Valid([]byte(line)) {
+				t.Errorf("%s: line %d is not valid JSON", path, i)
+			}
+		}
+	}
+}
+
+// What the client sees when a page ends on the budget is the cursor and nothing
+// else, so following next_offset has to walk the chain without stalling on a
+// page it cannot grow past and without skipping the line that ended it.
+func TestHandler_Lines_PagingPastTheByteBudgetDoesNotStallOrSkip(t *testing.T) {
+	sink := oversizedLineSink(t)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	wantLines := budgetLinesWanted + 2
+	seen, offset := 0, int64(0)
+	for requests := 0; seen < wantLines; requests++ {
+		if requests > wantLines {
+			t.Fatalf("paging did not finish after %d requests (%d lines)", requests, seen)
+		}
+		var result linesResponse
+		decodeJSON(t, get(t, ts,
+			fmt.Sprintf("/lines?sink=main&dir=forward&offset=%d&count=5000", offset)), &result)
+
+		if len(result.Lines) == 0 {
+			t.Fatalf("no lines at offset %d after %d of %d", offset, seen, wantLines)
+		}
+		if result.NextOffset <= offset {
+			t.Fatalf("next_offset %d did not advance past %d", result.NextOffset, offset)
+		}
+		seen += len(result.Lines)
+		offset = result.NextOffset
+	}
+	if seen != wantLines {
+		t.Errorf("paging returned %d lines, want %d", seen, wantLines)
+	}
+	if offset != sinkSize(t, sink) {
+		t.Errorf("paging ended at offset %d, want the end of the chain %d",
+			offset, sinkSize(t, sink))
+	}
+}
+
+// sinkSize is the size of a sink's active file, which for a single-file chain is
+// the logical offset a completed forward walk should have reached.
+func sinkSize(t *testing.T, s Sink) int64 {
+	t.Helper()
+	info, err := os.Stat(s.Path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", s.Path, err)
+	}
+	return info.Size()
+}
+
+func TestHandler_Search_ResponseIsBoundedByBytes(t *testing.T) {
+	sink := oversizedLineSink(t)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	body := readBody(t, get(t, ts, "/search?sink=main&q=line-&limit=5000"))
+	if len(body) > bodyCeiling {
+		t.Errorf("body is %d bytes, over the %d ceiling", len(body), bodyCeiling)
+	}
+
+	var result searchResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decoding body: %v", err)
+	}
+	if len(result.Results) != budgetLinesWanted {
+		t.Errorf("got %d results, want %d", len(result.Results), budgetLinesWanted)
+	}
+	// As with the limit clamp, the budget bounds what is returned and not what
+	// is counted — the scan runs the whole chain so the UI's match counter
+	// stays truthful.
+	if result.TotalMatches != budgetLinesWanted+2 {
+		t.Errorf("total_matches = %d, want %d", result.TotalMatches, budgetLinesWanted+2)
 	}
 }
 
