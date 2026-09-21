@@ -752,10 +752,10 @@ sink of very large records simultaneously is a few hundred megabytes of transien
 the accepted ceiling. Putting the viewer somewhere that fans out requests — reachable by crawlers,
 or serving many more than a handful of people — is outside what it is sized for.
 
-Long lines are returned whole: a page ends between records, never inside one, except that a
-chain whose non-final file does not end in a newline can still start a page one byte late (see
-[issue #41](https://github.com/SafirSDK/minilog/issues/41)). Neither ceiling is reported in the
-response. A page cut short by either advances `next_offset` to just past the last line returned
+Long lines are returned whole: a page ends between records, never inside one. That holds even for a
+chain whose files do not all end in a newline — a rotated generation left unterminated by a process
+killed mid-write is read as a record ending at the file's end, so the next page still starts on the
+following record. Neither ceiling is reported in the response. A page cut short by either advances `next_offset` to just past the last line returned
 when paging forward, and sets `first_offset` to the start of the oldest line returned when paging
 back, so a client continues from there and eventually sees everything.
 

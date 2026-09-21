@@ -336,6 +336,22 @@ func (fc *FileChain) ReadForward(logicalOffset int64, count int, f *Filter) (
 				collectedBytes += len(raw)
 			}
 			currentLogical += lineLen
+			// The +1 above is only really on disk if the line was terminated.
+			// The last line of a file need not be: minilog writes a newline
+			// after every record, but a process killed mid-write leaves a
+			// partial one, and the next rotation moves that file into the
+			// middle of the chain. Charging a byte that is not there pushed the
+			// cursor one past the file's end, so the following page started one
+			// byte into the next generation's first record and handed the client
+			// a line with its opening brace missing. Clamping to the snapshotted
+			// size is exact: the overshoot can only ever be that one byte, and
+			// only on a file's final token. ReadBackward needs no equivalent —
+			// it walks from the '\n' bytes that are actually there, so it
+			// already treats the unterminated tail as a line ending at the
+			// file's end.
+			if fileEnd := cf.start + cf.size; currentLogical > fileEnd {
+				currentLogical = fileEnd
+			}
 			nextOffset = currentLogical
 		}
 		fh.Close()

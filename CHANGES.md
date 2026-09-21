@@ -82,6 +82,21 @@
 
 ### Fixed
 
+- **A rotated log file that does not end in a newline no longer shifts every offset after it in the
+  web viewer.** `ReadForward` advanced its cursor by the length of each line plus one, the one
+  standing in for the newline that the scanner strips. That byte is only really on disk if the line
+  was terminated, and the last line of a file need not be: minilog writes a newline after every
+  record, but a process killed mid-write leaves a partial one behind, and the next rotation moves
+  that file out of the active slot and into the middle of the chain.
+
+  The cursor then pointed one byte past that file's end, so the following page began one byte into
+  the next generation's first record and the client received a line with its opening brace missing,
+  which is not JSON. The cursor is now clamped to the end of each file, which is exact — the
+  overshoot could only ever be that one byte, and only on a file's final line. The unterminated
+  record itself is still returned, since it may well be complete and only missing its terminator.
+  `ReadBackward` and `Search` needed no change: both derive their positions from the newline bytes
+  that are actually there, and now agree with a forward read on a chain like this.
+
 - **The web viewer bounds a response by bytes, not only by lines.** Clamping `count` and `limit`
   to 5000 bounds how many lines one request returns, which is a memory bound only while lines are
   of typical size — and a syslog sender picks the size. A 65507-byte datagram of control bytes

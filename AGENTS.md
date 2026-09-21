@@ -123,6 +123,11 @@ of that ordering and because those values are table-driven (see `matchStringFiel
     to the `minilog-web-viewer` Event Log source registered by `--install`
 - `FileChain` is rebuilt per request (snapshots the filesystem); supports forward paging,
   backward paging (for infinite-scroll upward), and full-chain search across all rotated generations.
+- A chain file need not end on a line boundary — an interrupted write leaves a partial record, and
+  rotation then moves that file into the middle of the chain. `ReadForward` charges `len(line)+1`
+  for the newline the scanner strips, so it clamps its cursor to the file's snapshotted size;
+  without that the next page starts one byte into the following generation. `ReadBackward` and
+  `Search` walk from the `'\n'` bytes that are really there and need no equivalent.
 - Two ceilings bound one `/lines` request, neither configurable and neither reported in the
   response: `maxLines` (5000, `handlers.go`) on lines returned, and `maxResponseBytes` (8 MB,
   `reader.go`) on their total size. Both leave the paging cursor just past what was returned, so a

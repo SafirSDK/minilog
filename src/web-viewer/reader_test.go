@@ -496,6 +496,166 @@ func TestReadForward_BlankLinesSkipped(t *testing.T) {
 	}
 }
 
+// ── Chain files that do not end on a line boundary ────────────────────────────
+//
+// minilog writes a newline after every record, but a process killed mid-write
+// leaves a partial one, and the next rotation moves that file out of the active
+// slot and into the middle of the chain. Every offset in every read path is then
+// one byte adrift of the file after it unless the missing newline is accounted
+// for.
+
+// writeUnterminated writes lines to path with a newline after each except the
+// last, leaving the file ending mid-line as an interrupted write would.
+func writeUnterminated(t *testing.T, path string, lines []string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatalf("writeUnterminated: %v", err)
+	}
+}
+
+func TestReadForward_UnterminatedFile_NextOffsetStopsAtFileEnd(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+	l0 := makeLine("only", "info", "daemon")
+	writeUnterminated(t, p, []string{l0})
+
+	fc := chainFromFiles(t, []string{p})
+	got, _, _, nextOff, err := fc.ReadForward(0, 100, noFilter())
+	if err != nil {
+		t.Fatalf("ReadForward error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 line, got %d: %v", len(got), lineTexts(got))
+	}
+	// The record is there and complete; only its terminator is missing, so the
+	// cursor must stop at the file's end rather than one byte past it.
+	if nextOff != int64(len(l0)) {
+		t.Errorf("nextOffset: want %d (end of file), got %d", len(l0), nextOff)
+	}
+	if nextOff != fc.TailOffset() {
+		t.Errorf("nextOffset %d is past the end of the chain (%d)", nextOff, fc.TailOffset())
+	}
+}
+
+// The case from issue #41: paging forward across the boundary handed the client
+// a line with its opening brace missing, which is not JSON.
+func TestReadForward_UnterminatedMiddleFile_NextPageStartsOnARecord(t *testing.T) {
+	dir := t.TempDir()
+	older := filepath.Join(dir, "old.jsonl")
+	newer := filepath.Join(dir, "new.jsonl")
+	writeUnterminated(t, older, []string{makeLine("killed-mid-write", "info", "daemon")})
+	writeLines(t, newer, []string{
+		makeLine("next-generation", "info", "daemon"),
+		makeLine("and-another", "info", "daemon"),
+	})
+
+	fc := chainFromFiles(t, []string{older, newer})
+
+	// One line at a time, so the page boundary lands exactly on the file
+	// boundary — the trigger is the count, with no byte budget involved.
+	var offset int64
+	var seen []string
+	for i := 0; i < 3; i++ {
+		got, _, _, next, err := fc.ReadForward(offset, 1, noFilter())
+		if err != nil {
+			t.Fatalf("page %d: ReadForward error: %v", i, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("page %d: want 1 line, got %d: %v", i, len(got), lineTexts(got))
+		}
+		line := string(got[0])
+		if !strings.HasPrefix(line, "{") || !strings.HasSuffix(line, "}") {
+			t.Errorf("page %d starts mid-record: %q", i, line)
+		}
+		seen = append(seen, line)
+		offset = next
+	}
+
+	want := []string{"killed-mid-write", "next-generation", "and-another"}
+	for i, w := range want {
+		if !strings.Contains(seen[i], w) {
+			t.Errorf("page %d: want a record containing %q, got %q", i, w, seen[i])
+		}
+	}
+	if offset != fc.TailOffset() {
+		t.Errorf("final cursor %d, want the end of the chain %d", offset, fc.TailOffset())
+	}
+}
+
+// Whatever offsets a forward read hands out, a backward read from them has to
+// resolve to the same records, since that is how the UI scrolls upward from a
+// page it already has.
+func TestReadBackward_UnterminatedMiddleFile_AgreesWithForward(t *testing.T) {
+	dir := t.TempDir()
+	older := filepath.Join(dir, "old.jsonl")
+	newer := filepath.Join(dir, "new.jsonl")
+	writeUnterminated(t, older, []string{
+		makeLine("old1", "info", "daemon"),
+		makeLine("old2-unterminated", "info", "daemon"),
+	})
+	writeLines(t, newer, []string{makeLine("new1", "info", "daemon")})
+
+	fc := chainFromFiles(t, []string{older, newer})
+
+	forward, forwardOffsets, _, _, err := fc.ReadForward(0, 100, noFilter())
+	if err != nil {
+		t.Fatalf("ReadForward error: %v", err)
+	}
+	if len(forward) != 3 {
+		t.Fatalf("want 3 lines forward, got %d: %v", len(forward), lineTexts(forward))
+	}
+
+	backward, backwardOffsets, _, _, err := fc.ReadBackward(fc.TailOffset(), 100, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+
+	if strings.Join(lineTexts(backward), "\n") != strings.Join(lineTexts(forward), "\n") {
+		t.Errorf("backward lines %v differ from forward lines %v",
+			lineTexts(backward), lineTexts(forward))
+	}
+	if len(backwardOffsets) != len(forwardOffsets) {
+		t.Fatalf("offset counts differ: %v vs %v", backwardOffsets, forwardOffsets)
+	}
+	for i := range forwardOffsets {
+		if backwardOffsets[i] != forwardOffsets[i] {
+			t.Errorf("offset %d: forward %d, backward %d", i, forwardOffsets[i], backwardOffsets[i])
+		}
+	}
+}
+
+// Search derives its offsets the same way a forward read does, and they are what
+// a client feeds back to /lines to jump to a match.
+func TestSearch_UnterminatedMiddleFile_OffsetsLandOnRecordStarts(t *testing.T) {
+	dir := t.TempDir()
+	older := filepath.Join(dir, "old.jsonl")
+	newer := filepath.Join(dir, "new.jsonl")
+	writeUnterminated(t, older, []string{makeLine("needle-old", "info", "daemon")})
+	writeLines(t, newer, []string{makeLine("needle-new", "info", "daemon")})
+
+	fc := chainFromFiles(t, []string{older, newer})
+	offsets, total, err := fc.Search("needle", 100, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("want 2 matches, got %d", total)
+	}
+
+	for i, off := range offsets {
+		got, _, _, _, rerr := fc.ReadForward(off, 1, noFilter())
+		if rerr != nil {
+			t.Fatalf("match %d: ReadForward error: %v", i, rerr)
+		}
+		if len(got) != 1 {
+			t.Fatalf("match %d: want 1 line at offset %d, got %d", i, off, len(got))
+		}
+		if !strings.HasPrefix(string(got[0]), "{") {
+			t.Errorf("match %d at offset %d starts mid-record: %q", i, off, string(got[0]))
+		}
+	}
+}
+
 // ── ReadBackward ──────────────────────────────────────────────────────────────
 
 func TestReadBackward_SingleFile_LastN(t *testing.T) {
