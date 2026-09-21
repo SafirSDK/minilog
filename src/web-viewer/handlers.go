@@ -302,6 +302,9 @@ func parseFilter(r *http.Request) *Filter {
 // concurrent requests multiply it. The viewer normally runs on the collector's
 // host, so the process that gets OOM-killed may well be the syslog server.
 //
+// How much that multiplication is allowed to reach, and why nothing caps it, is
+// recorded on maxResponseBytes in reader.go along with the per-request figure.
+//
 // No attacker is needed: a bookmarked URL, a typo or a crawler will do it.
 // There is deliberately no config knob, because assets/app.js never asks for
 // more than BATCH (200) and no legitimate client comes near this.

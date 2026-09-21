@@ -232,6 +232,20 @@ const maxLineBytes = 1024 * 1024
 // over 40 KB, and an explicit count of maxLines typical records is a couple of
 // megabytes. So the budget costs nothing on honest traffic.
 //
+// That is the bound for one request, and nothing bounds how many requests are in
+// flight — the figure for the process is this times the number of concurrent
+// readers. Left that way deliberately. The viewer serves an operator or a
+// handful of them, and assets/app.js issues one read at a time per tab: every
+// fetch is awaited, and the live tail skips a poll while the previous one is
+// still running, so a tab cannot multiply itself into several. A handful of tabs
+// each paging a sink of 40 KB records at once is therefore a few hundred
+// megabytes transient, and that is the accepted ceiling for this process. A cap
+// on concurrent reads would bound it tighter, at the cost of a number to pick
+// and of refusing honest requests, which is not worth it at this scale. What
+// would change the trade is fan-out this does not assume: a crawler following a
+// bookmarked count=5000 URL, or many more operators than a handful. Then the cap
+// is worth adding, and the per-request figure above is what to multiply.
+//
 // Collected bytes therefore stay at or under maxResponseBytes, with one
 // exemption: a line that would exceed the budget on its own is still collected
 // when it is the first one, so an honest long line is never truncated

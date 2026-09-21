@@ -112,6 +112,10 @@ of that ordering and because those values are table-driven (see `matchStringFiel
 - `/search` returns an offset per match and no record text, so neither ceiling bounds its size and
   it has no paging cursor. Clients jump to a match by asking `/lines` for the window around the
   offset. `total_matches` counts the whole chain even when `limit` truncated the offsets.
+- Concurrent requests are deliberately not capped: the viewer is sized for an operator or a handful,
+  `app.js` issues one read at a time per tab, and a few hundred MB of transient memory is the
+  accepted aggregate ceiling. Settled — see the `maxResponseBytes` comment for the reasoning and
+  for what would change it. Do not re-raise it as an open memory bound.
 - Filter params on `/lines` and `/search`: `sev` (severity names), `fac` (facility names),
   `inc` (include substrings), `exc` (exclude substrings).
 - Tests: `*_test.go` files in `src/web-viewer/`; run with `go test ./src/web-viewer/`.

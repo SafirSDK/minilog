@@ -684,6 +684,12 @@ records themselves do not use, so a sink of records dense in those — an applic
 say — yields a body closer to **48 MB**, and a comparable buffer while it is built. That is the
 documented worst case for one request.
 
+Nothing limits how many requests are served at once, because the viewer is built for an operator
+or a handful of them and the UI issues one read at a time per tab. A handful of tabs all paging a
+sink of very large records simultaneously is a few hundred megabytes of transient memory, which is
+the accepted ceiling. Putting the viewer somewhere that fans out requests — reachable by crawlers,
+or serving many more than a handful of people — is outside what it is sized for.
+
 Long lines are returned whole: a page ends between records, never inside one, except that a
 chain whose non-final file does not end in a newline can still start a page one byte late (see
 [issue #41](https://github.com/SafirSDK/minilog/issues/41)). Neither ceiling is reported in the

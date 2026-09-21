@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -1561,6 +1562,63 @@ func TestReadBackward_LineOverMaxLineBytes_DroppedNotBlocking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 lines (over-long one dropped), got %d (lengths %v)", len(got), lineLengths(got))
+	}
+	if string(got[0]) != older || string(got[1]) != newer {
+		t.Errorf("want [%q %q], got %v", older, newer, lineTexts(got))
+	}
+}
+
+func TestReadBackward_LineFarOverMaxLineBytes_IsNotAccumulated(t *testing.T) {
+	// The previous test covers the line being dropped. This one covers it not
+	// being held in memory on the way to being dropped, which is a separate
+	// guarantee and the reason the carry walk has a length check of its own.
+	//
+	// It needs a memory assertion rather than an assertion about the lines
+	// returned, because the two are indistinguishable by output: take() drops an
+	// over-long line whether or not the carry check exists, so removing that
+	// check leaves every existing test passing while carry grows without bound.
+	// The growth is quadratic, each chunk copying the fragment assembled so far,
+	// so what is asserted is cumulative allocation. Measured over this fixture:
+	// 17 MB with the check, 537 MB without it. The ceiling sits between the two
+	// with room on both sides rather than close to either.
+	//
+	// The line has to be far enough over maxLineBytes that carry passes the
+	// bound while the file still continues past that point. The previous test's
+	// line is only just over, so its walk reaches the start of the file first
+	// and take() is what drops it there — the carry check never runs.
+	const hugeLineBytes = 8 * maxLineBytes
+	const allocCeiling = 64 * 1024 * 1024
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.jsonl")
+	older := makeLine("older", "info", "daemon")
+	newer := makeLine("newer", "info", "daemon")
+	huge := makeLine(strings.Repeat("h", hugeLineBytes), "info", "daemon")
+	writeLines(t, p, []string{older, huge, newer})
+
+	fc := chainFromFiles(t, []string{p})
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), 10, noFilter(), -1)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+
+	// TotalAlloc only ever increases, so this measures what the read allocated
+	// in total and is not affected by when the collector runs.
+	allocated := after.TotalAlloc - before.TotalAlloc
+	if allocated > allocCeiling {
+		t.Errorf("read allocated %d MB for one %d MB line, over the %d MB ceiling — "+
+			"the carried fragment is being accumulated rather than abandoned",
+			allocated>>20, hugeLineBytes>>20, allocCeiling>>20)
+	}
+
+	// Asserted as well so that a change breaking both shows both.
 	if len(got) != 2 {
 		t.Fatalf("want 2 lines (over-long one dropped), got %d (lengths %v)", len(got), lineLengths(got))
 	}
