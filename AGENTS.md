@@ -102,10 +102,16 @@ of that ordering and because those values are table-driven (see `matchStringFiel
     to the `minilog-web-viewer` Event Log source registered by `--install`
 - `FileChain` is rebuilt per request (snapshots the filesystem); supports forward paging,
   backward paging (for infinite-scroll upward), and full-chain search across all rotated generations.
-- Two ceilings bound one request, neither configurable and neither reported in the response:
-  `maxLines` (5000, `handlers.go`) on lines returned, and `maxResponseBytes` (8 MB, `reader.go`) on
-  their total size. Both leave the paging cursor just past what was returned, so a client continues
-  from there; a line is never truncated to fit.
+- Two ceilings bound one `/lines` request, neither configurable and neither reported in the
+  response: `maxLines` (5000, `handlers.go`) on lines returned, and `maxResponseBytes` (8 MB,
+  `reader.go`) on their total size. Both leave the paging cursor just past what was returned, so a
+  client continues from there; a line is never truncated to fit. Note that `maxResponseBytes` bounds
+  the JSONL collected off disk, not the response body — `encoding/json` expands `<`, `>` and `&` to
+  `\u00NN`, which boost::json does not escape when writing the record, so records dense in them
+  reach ~6× that in body bytes.
+- `/search` returns an offset per match and no record text, so neither ceiling bounds its size and
+  it has no paging cursor. Clients jump to a match by asking `/lines` for the window around the
+  offset. `total_matches` counts the whole chain even when `limit` truncated the offsets.
 - Filter params on `/lines` and `/search`: `sev` (severity names), `fac` (facility names),
   `inc` (include substrings), `exc` (exclude substrings).
 - Tests: `*_test.go` files in `src/web-viewer/`; run with `go test ./src/web-viewer/`.

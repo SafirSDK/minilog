@@ -916,15 +916,15 @@ func TestSearch_FirstResult_AbsoluteOffsetIsZero(t *testing.T) {
 	writeLines(t, p, []string{makeLine("target", "info", "daemon")})
 	fc := chainFromFiles(t, []string{p})
 
-	results, _, err := fc.Search("target", 100, noFilter(), -1)
+	offsets, _, err := fc.Search("target", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
-	if len(results) != 1 {
-		t.Fatalf("want 1 result, got %d", len(results))
+	if len(offsets) != 1 {
+		t.Fatalf("want 1 result, got %d", len(offsets))
 	}
-	if results[0].Offset != 0 {
-		t.Errorf("first result offset: want 0, got %d", results[0].Offset)
+	if offsets[0] != 0 {
+		t.Errorf("first result offset: want 0, got %d", offsets[0])
 	}
 }
 
@@ -961,15 +961,15 @@ func TestSearch_OffsetOrdering(t *testing.T) {
 	})
 	fc := chainFromFiles(t, []string{p})
 
-	results, _, err := fc.Search("target", 100, noFilter(), -1)
+	offsets, _, err := fc.Search("target", 100, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("want 2 results, got %d", len(results))
+	if len(offsets) != 2 {
+		t.Fatalf("want 2 results, got %d", len(offsets))
 	}
-	if results[0].Offset >= results[1].Offset {
-		t.Errorf("results not in offset order: %d >= %d", results[0].Offset, results[1].Offset)
+	if offsets[0] >= offsets[1] {
+		t.Errorf("results not in offset order: %d >= %d", offsets[0], offsets[1])
 	}
 }
 
@@ -1805,25 +1805,27 @@ func TestSearch_Since_SkipsOlderLines(t *testing.T) {
 	// Set since to offset of line 3 (0-indexed): skip lines 0, 1, 2.
 	since := int64(len(lines[0])+1) + int64(len(lines[1])+1) + int64(len(lines[2])+1)
 
-	results, total, err := fc.Search("target", 100, noFilter(), since)
+	offsets, total, err := fc.Search("target", 100, noFilter(), since)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
 	if total != 2 {
 		t.Errorf("totalMatches: want 2, got %d", total)
 	}
-	if len(results) != 2 {
-		t.Fatalf("results: want 2, got %d", len(results))
+	if len(offsets) != 2 {
+		t.Fatalf("results: want 2, got %d", len(offsets))
 	}
-	if !strings.Contains(string(results[0].Line), "three") {
-		t.Errorf("first result should contain 'three', got %q", string(results[0].Line))
+	// Lines 3 and 4, identified by where they start — the offsets are the whole
+	// of what a search returns.
+	wantOffsets := []int64{since, since + int64(len(lines[3])+1)}
+	for i := range wantOffsets {
+		if offsets[i] != wantOffsets[i] {
+			t.Errorf("result %d: offset %d, want %d", i, offsets[i], wantOffsets[i])
+		}
 	}
-	if !strings.Contains(string(results[1].Line), "four") {
-		t.Errorf("second result should contain 'four', got %q", string(results[1].Line))
-	}
-	for i, r := range results {
-		if r.Offset < since {
-			t.Errorf("result[%d].Offset=%d is below since=%d", i, r.Offset, since)
+	for i, off := range offsets {
+		if off < since {
+			t.Errorf("result[%d] offset %d is below since=%d", i, off, since)
 		}
 	}
 }
@@ -1893,49 +1895,66 @@ func TestHandler_Lines_ForwardOnEmptyChain_Returns200(t *testing.T) {
 
 // ── maxResponseBytes (the byte budget) ────────────────────────────────────────
 
-// nearMaxLineBytes is the record size the byte-budget tests use: just under
-// maxLineBytes, so every read path accepts it, and large enough that a handful
-// of them exhausts maxResponseBytes. A 65507-byte datagram of control bytes
-// escapes to roughly this much JSONL, so it is the real worst case rather than
-// an invented one.
-const nearMaxLineBytes = maxLineBytes - 1024
-
-// budgetLinesWanted is how many nearMaxLineBytes records a read collects before
-// the budget stops it. Exact rather than approximate: a read stops before the
-// first line that would take the total over, and the first-line exemption
-// cannot apply because one record is well inside the budget.
-const budgetLinesWanted = maxResponseBytes / nearMaxLineBytes
-
-// nearMaxLine returns a valid JSONL record of exactly nearMaxLineBytes bytes
-// whose message starts with marker, so it stays both searchable and
-// identifiable once padded.
-func nearMaxLine(t *testing.T, marker string) string {
+// withBudget lowers maxResponseBytes for the duration of one test.
+//
+// The budget's real value is 8 MB, so a test that wanted to watch it bind at
+// full size would have to write tens of megabytes of fixture to do it — which is
+// what the first version of these tests did, at two seconds and 83 MB of temp
+// I/O. The behaviour is the same at any value, and the cases that matter (a
+// chain seam, a filter, a line larger than the whole budget) are only reachable
+// cheaply. TestByteBudget_IsTheDocumentedSize is what holds the real value in
+// place; TestHandler_Lines_ResponseIsBoundedByBytes is what exercises it at
+// realistic record sizes.
+func withBudget(t *testing.T, n int) {
 	t.Helper()
-	line := makeLine(marker, "info", "daemon")
-	if len(line) > nearMaxLineBytes {
-		t.Fatalf("nearMaxLine: marker %q leaves no room in %d bytes", marker, nearMaxLineBytes)
-	}
-	return makeLine(marker+strings.Repeat("p", nearMaxLineBytes-len(line)), "info", "daemon")
+	saved := maxResponseBytes
+	maxResponseBytes = n
+	t.Cleanup(func() { maxResponseBytes = saved })
 }
 
-// nearMaxLines returns n such records, each identifiable by its index.
-func nearMaxLines(t *testing.T, n int) []string {
+// The cheap budget tests use a 4 KB budget and 1 KB records, so four records
+// fill it exactly. Landing on the boundary rather than near it is the point:
+// stopping before a line that *would* exceed the budget and stopping on the line
+// that *reaches* it differ by one record, and only an exact fit tells them
+// apart.
+const (
+	testBudget        = 4096
+	testRecordBytes   = 1024
+	testBudgetRecords = testBudget / testRecordBytes // 4
+)
+
+// budgetRecord returns a valid JSONL record of exactly n bytes whose message
+// begins with marker, so a test can tell which record it got back.
+func budgetRecord(t *testing.T, marker string, n int) string {
+	t.Helper()
+	bare := makeLine(marker, "info", "daemon")
+	if len(bare) > n {
+		t.Fatalf("budgetRecord: marker %q needs %d bytes, over the %d asked for", marker, len(bare), n)
+	}
+	return makeLine(marker+strings.Repeat("p", n-len(bare)), "info", "daemon")
+}
+
+// budgetRecords returns n records of recordBytes each, identifiable by index.
+func budgetRecords(t *testing.T, n, recordBytes int) []string {
 	t.Helper()
 	out := make([]string, n)
 	for i := range out {
-		out[i] = nearMaxLine(t, fmt.Sprintf("line-%02d-", i))
+		out[i] = budgetRecord(t, fmt.Sprintf("line-%02d-", i), recordBytes)
 	}
 	return out
 }
 
-// budgetChain writes n near-maximum records to a one-file chain and returns
-// both, so a test can compare what a read gave back against what was written.
-func budgetChain(t *testing.T, n int) (*FileChain, []string) {
+// budgetChainOf writes one rotation generation per group, oldest first, and
+// returns the chain over them.
+func budgetChainOf(t *testing.T, groups ...[]string) *FileChain {
 	t.Helper()
-	lines := nearMaxLines(t, n)
-	p := filepath.Join(t.TempDir(), "a.jsonl")
-	writeLines(t, p, lines)
-	return chainFromFiles(t, []string{p}), lines
+	dir := t.TempDir()
+	paths := make([]string, len(groups))
+	for i, g := range groups {
+		paths[i] = filepath.Join(dir, fmt.Sprintf("gen%d.jsonl", i))
+		writeLines(t, paths[i], g)
+	}
+	return chainFromFiles(t, paths)
 }
 
 // totalBytes sums the sizes of the collected lines — the quantity the budget
@@ -1948,23 +1967,40 @@ func totalBytes(lines [][]byte) int {
 	return n
 }
 
+func TestByteBudget_IsTheDocumentedSize(t *testing.T) {
+	// Literal, and deliberately so. Every other budget test derives what it
+	// expects from maxResponseBytes, which makes them immune to drift in the
+	// fixture — and equally blind to the budget itself being widened. Setting it
+	// to 512 MB once passed this whole package. README.md and AGENTS.md both
+	// quote 8 MB, so changing it is a documentation change too.
+	if maxResponseBytes != 8*1024*1024 {
+		t.Errorf("maxResponseBytes = %d, want 8388608 (8 MB, as documented in README.md and AGENTS.md)",
+			maxResponseBytes)
+	}
+}
+
 func TestReadForward_ByteBudget_StopsBeforeExceedingIt(t *testing.T) {
-	// Asking for maxLines of these records would be gigabytes, so what bounds
+	// Asking for maxLines of large records would be gigabytes, so what bounds
 	// the read has to be the bytes collected and not the line count.
-	fc, lines := budgetChain(t, budgetLinesWanted+2)
+	withBudget(t, testBudget)
+	lines := budgetRecords(t, testBudgetRecords+2, testRecordBytes)
+	fc := budgetChainOf(t, lines)
 
 	got, offsets, first, next, err := fc.ReadForward(0, maxLines, noFilter())
 	if err != nil {
 		t.Fatalf("ReadForward error: %v", err)
 	}
 
-	if total := totalBytes(got); total > maxResponseBytes {
-		t.Errorf("collected %d bytes, over the %d budget", total, maxResponseBytes)
-	}
 	// Fewer than asked for and fewer than the chain holds, so it was the budget
 	// that ended the read rather than the count or the end of the file.
-	if len(got) != budgetLinesWanted {
-		t.Fatalf("got %d lines, want %d (lengths %v)", len(got), budgetLinesWanted, lineLengths(got))
+	if len(got) != testBudgetRecords {
+		t.Fatalf("got %d lines, want %d (lengths %v)", len(got), testBudgetRecords, lineLengths(got))
+	}
+	// Exactly the budget, not a record short of it: the records divide it
+	// evenly, so a read that stopped on reaching the budget instead of before
+	// exceeding it would come back with one fewer.
+	if total := totalBytes(got); total != testBudget {
+		t.Errorf("collected %d bytes, want exactly the %d budget", total, testBudget)
 	}
 	// Whole records. An honest long line is what this looks like from the
 	// reader's side, and truncating one mid-message would leave the browser
@@ -1980,9 +2016,80 @@ func TestReadForward_ByteBudget_StopsBeforeExceedingIt(t *testing.T) {
 	}
 	// The cursor stops at the start of the first line left out, so the next
 	// request returns that line rather than skipping past it.
-	wantNext := int64(budgetLinesWanted * (nearMaxLineBytes + 1))
+	wantNext := int64(testBudgetRecords * (testRecordBytes + 1))
 	if next != wantNext {
 		t.Errorf("next offset: got %d, want %d", next, wantNext)
+	}
+}
+
+func TestReadForward_ByteBudget_MultiFileChain_DropsNoLineAtTheSeam(t *testing.T) {
+	// The budget stops the read inside the older generation while the newer one
+	// opens with a record small enough to fit in what is left over. A read that
+	// stopped collecting without also ending the walk would take that short
+	// record and carry the cursor past the long one it had just refused — losing
+	// a line silently, which no amount of paging afterwards recovers.
+	withBudget(t, testBudget)
+	older := budgetRecords(t, 4, 1200) // 4800 bytes: the fourth does not fit
+	newer := []string{budgetRecord(t, "newer-00-", 200)}
+	fc := budgetChainOf(t, older, newer)
+
+	got, _, _, next, err := fc.ReadForward(0, maxLines, noFilter())
+	if err != nil {
+		t.Fatalf("ReadForward error: %v", err)
+	}
+	if want := older[:3]; len(got) != len(want) {
+		t.Fatalf("got %d lines, want %d (lengths %v)", len(got), len(want), lineLengths(got))
+	}
+	for i, want := range older[:3] {
+		if string(got[i]) != want {
+			t.Fatalf("line %d is not the record written", i)
+		}
+	}
+	if wantNext := int64(3 * 1201); next != wantNext {
+		t.Fatalf("next offset: got %d, want %d (the start of the refused record)", next, wantNext)
+	}
+
+	// And following the cursor picks up exactly where it left off, across the
+	// generation boundary.
+	rest, _, _, _, err := fc.ReadForward(next, maxLines, noFilter())
+	if err != nil {
+		t.Fatalf("ReadForward error: %v", err)
+	}
+	want := append([]string{older[3]}, newer...)
+	if got := lineTexts(rest); len(got) != len(want) {
+		t.Fatalf("second page has %d lines, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if string(rest[i]) != w {
+			t.Fatalf("second page line %d is not the record written", i)
+		}
+	}
+}
+
+func TestReadForward_ByteBudget_ChargesOnlyTheLinesItReturns(t *testing.T) {
+	// Non-matching records are read and skipped, so charging them to the budget
+	// would end a page early for a reason the caller cannot see from the
+	// response. A filtered browse is the ordinary case in the UI, not an edge
+	// one, and the skipped text here is several times the budget.
+	withBudget(t, testBudget)
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, budgetRecord(t, fmt.Sprintf("drop-%02d-", i), 2000))
+		lines = append(lines, budgetRecord(t, fmt.Sprintf("keep-%02d-", i), 600))
+	}
+	fc := budgetChainOf(t, lines)
+
+	got, _, _, _, err := fc.ReadForward(0, maxLines, &Filter{Include: []string{"keep-"}})
+	if err != nil {
+		t.Fatalf("ReadForward error: %v", err)
+	}
+	// 5 × 600 = 3000 bytes of matches, inside the budget; the 10000 bytes of
+	// skipped records are not.
+	if len(got) != 5 {
+		t.Fatalf("got %d matching lines, want 5 (lengths %v)", len(got), lineLengths(got))
+	}
+	if total := totalBytes(got); total != 3000 {
+		t.Errorf("collected %d bytes, want 3000", total)
 	}
 }
 
@@ -1990,7 +2097,9 @@ func TestReadForward_ByteBudget_PagingReturnsEveryLine(t *testing.T) {
 	// A page cut short by the budget says so only through next_offset, so
 	// following that cursor has to cover the chain without skipping a line or
 	// repeating one — the contract the live tail and infinite scroll rely on.
-	fc, lines := budgetChain(t, budgetLinesWanted+2)
+	withBudget(t, testBudget)
+	lines := budgetRecords(t, 11, testRecordBytes)
+	fc := budgetChainOf(t, lines)
 
 	var seen []string
 	offset := int64(0)
@@ -2022,20 +2131,45 @@ func TestReadForward_ByteBudget_PagingReturnsEveryLine(t *testing.T) {
 	}
 }
 
+func TestReadForward_ByteBudget_FirstLineIsTakenWhateverItsSize(t *testing.T) {
+	// A line larger than the whole budget still comes back, whole and alone. If
+	// it did not, the read would return nothing with its cursor unmoved and the
+	// caller would ask for the same page forever. maxLineBytes keeps this out of
+	// reach in production — no line can outgrow an 8 MB budget when it is capped
+	// at 1 MB — so lowering the budget is the only way to reach the guard that
+	// makes it a property of the code rather than of the two constants.
+	withBudget(t, 100)
+	lines := budgetRecords(t, 3, 500)
+	fc := budgetChainOf(t, lines)
+
+	got, _, _, next, err := fc.ReadForward(0, maxLines, noFilter())
+	if err != nil {
+		t.Fatalf("ReadForward error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d lines, want 1 (lengths %v)", len(got), lineLengths(got))
+	}
+	if string(got[0]) != lines[0] {
+		t.Errorf("the over-budget line came back altered, %d bytes of %d", len(got[0]), len(lines[0]))
+	}
+	if next != int64(501) {
+		t.Errorf("next offset: got %d, want 501 — a cursor that did not move stalls the caller", next)
+	}
+}
+
 func TestReadBackward_ByteBudget_KeepsNewestAndPagesFurtherBack(t *testing.T) {
-	fc, lines := budgetChain(t, budgetLinesWanted+2)
+	withBudget(t, testBudget)
+	lines := budgetRecords(t, testBudgetRecords+2, testRecordBytes)
+	fc := budgetChainOf(t, lines)
 
 	got, _, first, next, err := fc.ReadBackward(fc.TailOffset(), maxLines, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("ReadBackward error: %v", err)
 	}
 
-	if total := totalBytes(got); total > maxResponseBytes {
-		t.Errorf("collected %d bytes, over the %d budget", total, maxResponseBytes)
-	}
 	// The walk runs newest-first, so the budget drops the older end of the
-	// window: the newest budgetLinesWanted records, still in forward order.
-	want := lines[len(lines)-budgetLinesWanted:]
+	// window: the newest testBudgetRecords records, still in forward order.
+	want := lines[len(lines)-testBudgetRecords:]
 	if len(got) != len(want) {
 		t.Fatalf("got %d lines, want %d (lengths %v)", len(got), len(want), lineLengths(got))
 	}
@@ -2044,6 +2178,9 @@ func TestReadBackward_ByteBudget_KeepsNewestAndPagesFurtherBack(t *testing.T) {
 			t.Fatalf("line %d is not the record written (%d bytes, want %d)",
 				i, len(got[i]), len(want[i]))
 		}
+	}
+	if total := totalBytes(got); total != testBudget {
+		t.Errorf("collected %d bytes, want exactly the %d budget", total, testBudget)
 	}
 	if next != fc.TailOffset() {
 		t.Errorf("next offset: got %d, want the tail %d", next, fc.TailOffset())
@@ -2066,59 +2203,138 @@ func TestReadBackward_ByteBudget_KeepsNewestAndPagesFurtherBack(t *testing.T) {
 	}
 }
 
-func TestSearch_ByteBudget_BoundsResultsNotTotalMatches(t *testing.T) {
-	fc, lines := budgetChain(t, budgetLinesWanted+2)
+func TestReadBackward_ByteBudget_SinceStillBindsFirst(t *testing.T) {
+	// ReadBackward's stop flag now has two causes, the since floor and the
+	// budget, and they must not shadow each other. Here since is the nearer of
+	// the two: it has to end the walk while the budget still has room, or a
+	// cleared view would start showing lines from before the clear.
+	withBudget(t, testBudget)
+	lines := budgetRecords(t, 10, testRecordBytes)
+	fc := budgetChainOf(t, lines)
+	// The start of the second-newest record, so only two records are eligible —
+	// fewer than the budget would otherwise allow.
+	since := int64(8 * (testRecordBytes + 1))
 
-	results, total, err := fc.Search("line-", maxLines, noFilter(), -1)
+	got, _, first, _, err := fc.ReadBackward(fc.TailOffset(), maxLines, noFilter(), since)
 	if err != nil {
-		t.Fatalf("Search error: %v", err)
+		t.Fatalf("ReadBackward error: %v", err)
 	}
-
-	collected := 0
-	for _, r := range results {
-		collected += len(r.Line)
+	if len(got) != 2 {
+		t.Fatalf("got %d lines, want 2 (lengths %v)", len(got), lineLengths(got))
 	}
-	if collected > maxResponseBytes {
-		t.Errorf("collected %d bytes, over the %d budget", collected, maxResponseBytes)
-	}
-	if len(results) != budgetLinesWanted {
-		t.Fatalf("got %d results, want %d", len(results), budgetLinesWanted)
-	}
-	for i := range results {
-		if string(results[i].Line) != lines[i] {
-			t.Fatalf("result %d is not the record written (%d bytes, want %d)",
-				i, len(results[i].Line), len(lines[i]))
+	for i, want := range lines[8:] {
+		if string(got[i]) != want {
+			t.Fatalf("line %d is not the record written", i)
 		}
 	}
-	// As with limit, the budget bounds what is returned and not what is
-	// counted, so the UI can still report how many matches the chain holds.
-	if total != len(lines) {
-		t.Errorf("total_matches = %d, want %d", total, len(lines))
+	if first != since {
+		t.Errorf("first offset: got %d, want since=%d", first, since)
 	}
 }
 
-func TestSearch_ByteBudget_DoesNotAdmitLaterShorterMatches(t *testing.T) {
-	// One near-maximum record past the budget closes collection; a short match
-	// after that one still fits in the bytes left over, and must not be let in
-	// anyway. Results have to stay the *first* k matches, which is the run the
-	// UI's "match i of total_matches" navigation steps through — a gap in the
-	// middle would have it jump somewhere the count does not explain.
-	lines := append(nearMaxLines(t, budgetLinesWanted+1), makeLine("line-tiny", "info", "daemon"))
-	p := filepath.Join(t.TempDir(), "a.jsonl")
-	writeLines(t, p, lines)
-	fc := chainFromFiles(t, []string{p})
+func TestReadBackward_ByteBudget_ChargesOnlyTheLinesItReturns(t *testing.T) {
+	// The backward twin of the forward accounting test. It is not redundant: the
+	// two paths keep separate counters, ReadBackward's inside a closure fed by
+	// the reverse chunk walk, so charging skipped records is a mistake each can
+	// make on its own. Unfiltered budget tests cannot see it, every line there
+	// being one the read returns.
+	withBudget(t, testBudget)
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, budgetRecord(t, fmt.Sprintf("drop-%02d-", i), 2000))
+		lines = append(lines, budgetRecord(t, fmt.Sprintf("keep-%02d-", i), 600))
+	}
+	fc := budgetChainOf(t, lines)
 
-	results, total, err := fc.Search("line-", maxLines, noFilter(), -1)
+	got, _, _, _, err := fc.ReadBackward(fc.TailOffset(), maxLines, &Filter{Include: []string{"keep-"}}, -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	// 5 × 600 = 3000 bytes of matches, inside the budget; the 10000 bytes of
+	// skipped records are not. Charging those would stop the scroll two or three
+	// matches in and leave the rest reachable only by scrolling again.
+	if len(got) != 5 {
+		t.Fatalf("got %d matching lines, want 5 (lengths %v)", len(got), lineLengths(got))
+	}
+	if total := totalBytes(got); total != 3000 {
+		t.Errorf("collected %d bytes, want 3000", total)
+	}
+}
+
+func TestReadBackward_ByteBudget_NewestLineIsTakenWhateverItsSize(t *testing.T) {
+	// The backward counterpart of the forward exemption: the newest match comes
+	// back whole even when it alone is over the budget, so an upward scroll
+	// cannot deadlock on one oversized record.
+	withBudget(t, 100)
+	lines := budgetRecords(t, 3, 500)
+	fc := budgetChainOf(t, lines)
+
+	got, _, first, _, err := fc.ReadBackward(fc.TailOffset(), maxLines, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("ReadBackward error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d lines, want 1 (lengths %v)", len(got), lineLengths(got))
+	}
+	if string(got[0]) != lines[2] {
+		t.Errorf("want the newest record, got %d bytes", len(got[0]))
+	}
+	if first != int64(2*501) {
+		t.Errorf("first offset: got %d, want %d", first, 2*501)
+	}
+}
+
+func TestSearch_IsNotBoundedByTheByteBudget(t *testing.T) {
+	// Search returns offsets, so the budget has nothing to bound and must not
+	// cut the match list however low it is set. This is the guard on the
+	// regression it replaced: charging the budget against record text that the
+	// response carried but no client ever read made only the first handful of
+	// matches reachable on a sink of large records, with the match counter
+	// truthfully reporting hundreds more that could not be jumped to.
+	withBudget(t, 1)
+	lines := budgetRecords(t, 10, testRecordBytes)
+	fc := budgetChainOf(t, lines)
+
+	offsets, total, err := fc.Search("line-", maxLines, noFilter(), -1)
 	if err != nil {
 		t.Fatalf("Search error: %v", err)
 	}
-	if len(results) != budgetLinesWanted {
-		t.Fatalf("got %d results, want %d", len(results), budgetLinesWanted)
-	}
-	if last := results[len(results)-1].Line; string(last) != lines[budgetLinesWanted-1] {
-		t.Errorf("last result is %d bytes; the short trailing match got in", len(last))
+	if len(offsets) != len(lines) {
+		t.Fatalf("got %d matches, want all %d", len(offsets), len(lines))
 	}
 	if total != len(lines) {
 		t.Errorf("total_matches = %d, want %d", total, len(lines))
+	}
+	for i := range offsets {
+		if want := int64(i * (testRecordBytes + 1)); offsets[i] != want {
+			t.Errorf("match %d: offset %d, want %d", i, offsets[i], want)
+		}
+	}
+}
+
+func TestSearch_MultiFileChain_CountsEveryMatchPastLimit(t *testing.T) {
+	// totalMatches is what the UI reports, and the scan has to keep running
+	// across every generation once limit is full — a scan that stopped at the
+	// end of the file where limit filled would undercount silently.
+	withBudget(t, 1)
+	older := budgetRecords(t, 4, testRecordBytes)
+	newer := budgetRecords(t, 3, testRecordBytes)
+	fc := budgetChainOf(t, older, newer)
+
+	offsets, total, err := fc.Search("line-", 2, noFilter(), -1)
+	if err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if len(offsets) != 2 {
+		t.Fatalf("got %d matches, want the 2 asked for", len(offsets))
+	}
+	if want := len(older) + len(newer); total != want {
+		t.Errorf("total_matches = %d, want %d across both generations", total, want)
+	}
+	// The matches returned are the first two, in chain order.
+	for i := range offsets {
+		if want := int64(i * (testRecordBytes + 1)); offsets[i] != want {
+			t.Errorf("match %d: offset %d, want %d", i, offsets[i], want)
+		}
 	}
 }

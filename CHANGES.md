@@ -39,16 +39,30 @@
   attacker either: an application logging a stack trace, a serialised payload or a base64 blob
   produces large records honestly.
 
-  `ReadForward`, `ReadBackward` and `Search` now stop collecting once the lines gathered reach
-  8 MB and return what they have. Measured against a 160 MB sink of 400 KB records,
+  `ReadForward` and `ReadBackward` now stop collecting once the lines gathered reach 8 MB and
+  return what they have. Measured against a 160 MB sink of 400 KB records,
   `GET /lines?sink=main&count=5000` went from a 152 MB body and a peak RSS of 728 MB to a 7.6 MB
-  body and 51 MB. A long line is still returned whole — a page ends between records, never inside
-  one, so nothing arrives as unparseable JSON. Reaching the budget is not signalled separately:
-  every path leaves its cursor just past the last line collected, so a client following
-  `next_offset` forward or `first_offset` back continues from there exactly as it does when the
-  line count runs out, and following the cursor still walks the whole chain. On `/search` the
-  budget bounds the results returned and not `total_matches`, which still counts every match in
-  the chain, as it already did for `limit`.
+  body and 51 MB. A long line is still returned whole, so nothing arrives as unparseable JSON.
+  Reaching the budget is not signalled separately: both paths leave their cursor just past the last
+  line collected, so a client following `next_offset` forward or `first_offset` back continues from
+  there exactly as it does when the line count runs out, and following the cursor still walks the
+  whole chain.
+
+  What the 8 MB bounds is the JSONL read off disk, not the size of the response. Beyond framing,
+  `encoding/json` escapes `<`, `>` and `&` to the `\u00NN` form — six bytes out for one in — where
+  boost::json leaves those three alone when writing the record, so a sink of records dense in them
+  still yields a body, and a marshal buffer, of roughly 48 MB each. That is now the documented
+  worst case for one request rather than the multi-gigabyte one.
+
+- **A `/search` response no longer carries the matching records.** Each result was an offset and
+  the full line text, and the byte budget above was charged against that text — so on a sink of
+  large records a search that found 481 matches returned about 20 of them instead of the 200 asked
+  for, and the viewer's match-stepping wrapped around the short list while the counter honestly
+  read `3 / 20 (of 481)`. The text was never displayed: `assets/app.js` jumps to a match by asking
+  `/lines` for the window around its offset and reads only `offset` off each result. A result is
+  now just `{"offset": N}`, which makes `/search` responses tens of kilobytes whatever the records
+  behind them are, and leaves no reason to bound the search at all. `total_matches` still counts
+  every match in the chain even when `limit` truncated the offsets, as it already did.
 
 - **Resolving the forwarding destination no longer holds up startup.** `Forwarder`'s constructor
   called `getaddrinfo` synchronously, before the UDP socket binds and before the Windows service
@@ -179,14 +193,16 @@
   deliberately left unset, because a full-chain `/search` can legitimately take longer than any
   value worth setting and a truncated response is indistinguishable from a complete one.
 
-- **One web-viewer URL can no longer exhaust the host's memory.** `count` on `/lines` and `limit`
-  on `/search` were taken from the query string with no upper bound, and the read path
+- **A web-viewer URL can no longer ask for an unbounded number of lines.** `count` on `/lines` and
+  `limit` on `/search` were taken from the query string with no upper bound, and the read path
   materialises every matching line, copies it into a `[]string` and lets the JSON encoder buffer
   the whole response before sending a byte — several times the chain size in RSS. Against a 73 MB
   sink, `count=1000000000` returned an 89 MB body and took the process from 9 MB to 377 MB peak;
   at the documented defaults (`max_size = 100MB` x `max_files = 10`) that is roughly 6 GB for a
   single GET. Both are now clamped to 5000 lines: the same request returns 1.9 MB and peaks at
-  21 MB. No attacker is needed for the old behaviour — a bookmarked URL, a typo or a crawler
+  21 MB. That bounds the count and nothing else, so it is a memory bound only while lines are of
+  typical size; the byte ceiling above is what closes the rest. No attacker is needed for the old
+  behaviour — a bookmarked URL, a typo or a crawler
   would do it — and because the viewer usually shares a host with the collector, the process
   killed for memory could be the syslog server. The browser UI never asks for more than 200
   lines, so no legitimate client is affected, and there is deliberately no setting for it.

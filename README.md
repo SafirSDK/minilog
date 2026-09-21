@@ -666,20 +666,34 @@ listen address is bound, and reports a failed run to the SCM as a service-specif
 | `GET /search?sink=NAME&q=TEXT&limit=N&sev=…&fac=…&inc=…&exc=…` | Full-chain search |
 
 `count` and `limit` default to 200 and are clamped to **5000**; a larger value is silently
-reduced rather than rejected. The ceiling bounds what one request can cost, since the response
-is built in memory before any of it is sent. It is not configurable, and the browser UI never
-asks for more than 200, so it is not a limit any normal client meets. On `/search` it bounds
-the results returned, not `total_matches`, which still counts every match in the chain.
+reduced rather than rejected. The clamp bounds how many lines one request returns. It is not
+configurable, and the browser UI never asks for more than 200, so it is not a limit any normal
+client meets. On `/search` it bounds the results returned, not `total_matches`, which still
+counts every match in the chain.
 
-A second ceiling bounds the **bytes**: a request stops collecting once the lines gathered reach
-**8 MB**, and returns what it has. The line clamp alone is a memory bound only while lines are of
-typical size, and a syslog sender chooses the size — a 65507-byte datagram of control bytes
-becomes roughly 400 KB of JSONL, so 5000 of those is about 2 GB built in memory for one GET.
-Long lines are still returned whole: a page ends between records, never inside one. Neither
-ceiling is reported in the response — a page cut short by either leaves `next_offset` (paging
-forward) or `first_offset` (paging back) just past what it returned, so a client simply continues
-from there and eventually sees everything. This is also not a limit the browser UI meets; at 200
-records a page it is reached only by a sink of records averaging over 40 KB.
+A second ceiling bounds the **bytes** on `/lines`: a request stops collecting once the lines
+gathered reach **8 MB**, and returns what it has. The line clamp alone is not a memory bound,
+because a syslog sender chooses how long a line is — a 65507-byte datagram of control bytes
+becomes roughly 400 KB of JSONL, so 5000 of those would be about 2 GB built in memory for one
+GET. This is not a limit the browser UI meets either; at 200 records a page it is reached only
+by a sink of records averaging over 40 KB.
+
+That 8 MB is the log text collected off disk, not the size of the response. The two differ by
+more than framing: the JSON encoder rewrites `<`, `>` and `&` as six-byte escapes, which the
+records themselves do not use, so a sink of records dense in those — an application logging XML,
+say — yields a body closer to **48 MB**, and a comparable buffer while it is built. That is the
+documented worst case for one request.
+
+Long lines are returned whole: a page ends between records, never inside one, except that a
+chain whose non-final file does not end in a newline can still start a page one byte late (see
+[issue #41](https://github.com/SafirSDK/minilog/issues/41)). Neither ceiling is reported in the
+response. A page cut short by either advances `next_offset` to just past the last line returned
+when paging forward, and sets `first_offset` to the start of the oldest line returned when paging
+back, so a client continues from there and eventually sees everything.
+
+`/search` carries an offset per match and no record text — a client jumps to a match by asking
+`/lines` for the window around its offset — so its response is small whatever the records behind
+it are, and the byte ceiling does not apply to it.
 
 Filter parameters `sev` and `fac` accept comma-separated name strings (e.g. `sev=info,warning`, `fac=auth,daemon`).
 

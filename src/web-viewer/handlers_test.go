@@ -289,8 +289,7 @@ func TestHandler_Lines_TailOffsetAlwaysPresent(t *testing.T) {
 
 type searchResponse struct {
 	Results []struct {
-		Line   string `json:"line"`
-		Offset int64  `json:"offset"`
+		Offset int64 `json:"offset"`
 	} `json:"results"`
 	TotalMatches int `json:"total_matches"`
 }
@@ -642,9 +641,61 @@ func TestHandler_Search_OversizedLimitIsClamped(t *testing.T) {
 // who can reach the UDP port leaves behind, and what an application logging a
 // stack trace or a base64 blob leaves behind honestly.
 //
-// bodyCeiling is what one response may cost: the budget, plus the one line that
-// is taken whole however large it is, plus the JSON framing around them.
-const bodyCeiling = maxResponseBytes + maxLineBytes
+// This is also the only place the budget is exercised at its real 8 MB — the
+// reader-level tests lower it to keep their fixtures small — so it is what would
+// notice if the two diverged.
+
+// nearMaxLineBytes is the record size these tests use: just under maxLineBytes,
+// so every read path accepts it, and large enough that a handful of them
+// exhausts maxResponseBytes. A 65507-byte datagram of control bytes escapes to
+// roughly this much JSONL, so it is the real worst case rather than an invented
+// one.
+const nearMaxLineBytes = maxLineBytes - 1024
+
+// budgetLinesWanted is how many nearMaxLineBytes records a read collects before
+// the budget stops it.
+var budgetLinesWanted = maxResponseBytes / nearMaxLineBytes
+
+// escapePad is what the oversized records are padded with, and the choice
+// matters more than it looks. encoding/json rewrites '<' into a six-byte escape
+// while boost::json writes it through untouched, so a record dense in '<' is
+// where the bytes the budget counts and the bytes the client receives diverge
+// most. Padding with a byte JSON leaves alone — the 'p' these tests first used —
+// makes the ceiling below look six times tighter than it is, and hides the
+// expansion completely.
+const escapePad = "<"
+
+// jsonEscapeExpansion is how much larger the body can be than the lines
+// collected: one byte in, six out, for each of '<', '>' and '&'.
+const jsonEscapeExpansion = 6
+
+// bodyCeiling is what one /lines response may cost on the wire: the budget,
+// expanded by that escaping, plus room for the JSON framing around it. This is
+// the figure README.md documents as the cost of a request, and the reason the
+// budget is stated as the bytes collected off disk rather than as a body size.
+var bodyCeiling = maxResponseBytes*jsonEscapeExpansion + 64*1024
+
+// nearMaxLine returns a valid JSONL record of exactly nearMaxLineBytes bytes
+// whose message starts with marker, so it stays both searchable and
+// identifiable once padded.
+func nearMaxLine(t *testing.T, marker string) string {
+	t.Helper()
+	bare := makeLine(marker, "info", "daemon")
+	if len(bare) > nearMaxLineBytes {
+		t.Fatalf("nearMaxLine: marker %q leaves no room in %d bytes", marker, nearMaxLineBytes)
+	}
+	return makeLine(marker+strings.Repeat(escapePad, nearMaxLineBytes-len(bare)), "info", "daemon")
+}
+
+// nearMaxLines returns n such records, each identifiable by its index.
+func nearMaxLines(t *testing.T, n int) []string {
+	t.Helper()
+	out := make([]string, n)
+	for i := range out {
+		out[i] = nearMaxLine(t, fmt.Sprintf("line-%02d-", i))
+	}
+	return out
+}
 
 // oversizedLineSink builds a sink of records just under maxLineBytes, more of
 // them than the budget allows, so the bytes and not the line count decide what
@@ -654,8 +705,7 @@ func oversizedLineSink(t *testing.T) Sink {
 	return makeSink(t, t.TempDir(), "main", nearMaxLines(t, budgetLinesWanted+2))
 }
 
-// readBody returns the body of resp along with its size, which is the quantity
-// under test here.
+// readBody returns the body of resp, whose size is the quantity under test here.
 func readBody(t *testing.T, resp *http.Response) []byte {
 	t.Helper()
 	defer resp.Body.Close()
@@ -668,7 +718,8 @@ func readBody(t *testing.T, resp *http.Response) []byte {
 
 // All three read paths reached through /lines have to come back inside the
 // budget: forward, backward (infinite scroll upward) and tail (the live view's
-// first load). At maxLines these records would be about 5 GB of response body.
+// first load). At maxLines these records would be about 5 GB of collected text
+// and six times that on the wire.
 func TestHandler_Lines_ResponseIsBoundedByBytes(t *testing.T) {
 	sink := oversizedLineSink(t)
 	ts := newTestServer(t, []Sink{sink})
@@ -683,10 +734,20 @@ func TestHandler_Lines_ResponseIsBoundedByBytes(t *testing.T) {
 		if len(body) > bodyCeiling {
 			t.Errorf("%s: body is %d bytes, over the %d ceiling", path, len(body), bodyCeiling)
 		}
+		// And the ceiling is not vacuous: with this padding the body really is
+		// several times the bytes the budget counted, which is the whole reason
+		// it is stated in collected bytes. A body at or under the budget would
+		// mean the fixture had stopped reproducing the case that matters.
+		if len(body) <= maxResponseBytes {
+			t.Errorf("%s: body is only %d bytes against a %d budget — the fixture no longer "+
+				"exercises JSON escaping, so the ceiling proves nothing",
+				path, len(body), maxResponseBytes)
+		}
 
 		var result linesResponse
 		if err := json.Unmarshal(body, &result); err != nil {
-			t.Fatalf("%s: decoding body: %v", path, err)
+			t.Errorf("%s: decoding body: %v", path, err)
+			continue
 		}
 		// Fewer lines than were asked for and fewer than the sink holds, so the
 		// budget is what ended the read — not the count, and not the file end.
@@ -754,28 +815,41 @@ func sinkSize(t *testing.T, s Sink) int64 {
 	return info.Size()
 }
 
-func TestHandler_Search_ResponseIsBoundedByBytes(t *testing.T) {
+func TestHandler_Search_LargeRecords_EveryMatchStaysReachable(t *testing.T) {
+	// /search answers with an offset per match and no record text, so how large
+	// the records are does not bound the match list: all of them come back and
+	// the client can jump to any one of them, fetching the text through /lines
+	// like any other page. When the response carried the matching lines as well,
+	// the byte budget was charged against text nothing read and cut this sink to
+	// the first handful — the counter honestly reporting matches that had become
+	// impossible to reach.
 	sink := oversizedLineSink(t)
 	ts := newTestServer(t, []Sink{sink})
 	defer ts.Close()
 
 	body := readBody(t, get(t, ts, "/search?sink=main&q=line-&limit=5000"))
-	if len(body) > bodyCeiling {
-		t.Errorf("body is %d bytes, over the %d ceiling", len(body), bodyCeiling)
-	}
 
 	var result searchResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		t.Fatalf("decoding body: %v", err)
 	}
-	if len(result.Results) != budgetLinesWanted {
-		t.Errorf("got %d results, want %d", len(result.Results), budgetLinesWanted)
+	wantMatches := budgetLinesWanted + 2
+	if len(result.Results) != wantMatches {
+		t.Errorf("got %d results, want every one of the %d matches", len(result.Results), wantMatches)
 	}
-	// As with the limit clamp, the budget bounds what is returned and not what
-	// is counted — the scan runs the whole chain so the UI's match counter
-	// stays truthful.
-	if result.TotalMatches != budgetLinesWanted+2 {
-		t.Errorf("total_matches = %d, want %d", result.TotalMatches, budgetLinesWanted+2)
+	if result.TotalMatches != wantMatches {
+		t.Errorf("total_matches = %d, want %d", result.TotalMatches, wantMatches)
+	}
+	// A list of offsets over a sink of ten megabytes, so the response is a few
+	// hundred bytes and there is nothing for a byte budget to bound.
+	if len(body) > 4096 {
+		t.Errorf("body is %d bytes; an offset per match should be a small fraction of that", len(body))
+	}
+	// The record text is gone rather than merely unused: padding is the one thing
+	// a record of this fixture has plenty of, so finding a run of it in the body
+	// means the lines are still being serialised.
+	if strings.Contains(string(body), strings.Repeat(escapePad, 8)) {
+		t.Error("the /search response still carries record text")
 	}
 }
 
@@ -812,8 +886,9 @@ func TestHandler_Search_WithFilters(t *testing.T) {
 	if result.TotalMatches != 1 {
 		t.Errorf("total_matches: want 1, got %d", result.TotalMatches)
 	}
-	if len(result.Results) != 1 || !strings.Contains(result.Results[0].Line, "auth") {
-		t.Errorf("want [auth], got %v", result.Results)
+	// The first record is the only match, so the one result is at offset 0.
+	if len(result.Results) != 1 || result.Results[0].Offset != 0 {
+		t.Errorf("want one match at offset 0, got %v", result.Results)
 	}
 }
 

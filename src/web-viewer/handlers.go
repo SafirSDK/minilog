@@ -207,15 +207,18 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 			return
 		}
 
-		results, total, err := fc.Search(query, limit, f, since)
+		matchOffsets, total, err := fc.Search(query, limit, f, since)
 		if err != nil {
 			http.Error(w, "search error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		// An offset per match and no line text: the client jumps to a match by
+		// asking /lines for the window around its offset, so the record itself
+		// was never read out of this response. Kept as objects rather than bare
+		// numbers so a later field has somewhere to go.
 		type resultItem struct {
-			Line   string `json:"line"`
-			Offset int64  `json:"offset"`
+			Offset int64 `json:"offset"`
 		}
 		type response struct {
 			Results      []resultItem `json:"results"`
@@ -224,10 +227,10 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 
 		resp := response{
 			TotalMatches: total,
-			Results:      make([]resultItem, len(results)),
+			Results:      make([]resultItem, len(matchOffsets)),
 		}
-		for i, res := range results {
-			resp.Results[i] = resultItem{Line: string(res.Line), Offset: res.Offset}
+		for i, off := range matchOffsets {
+			resp.Results[i] = resultItem{Offset: off}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -304,8 +307,10 @@ func parseFilter(r *http.Request) *Filter {
 // more than BATCH (200) and no legitimate client comes near this.
 //
 // It bounds lines, not bytes, and a syslog sender chooses how long a line is —
-// so maxResponseBytes in reader.go is the other half of the bound, and the one
-// that makes it hold for a sink that has been fed oversized records.
+// so maxResponseBytes in reader.go is the other half of the bound on /lines, and
+// the one that makes it hold for a sink that has been fed oversized records. On
+// /search it is the whole bound, because that response carries an offset per
+// match and no line text.
 const maxLines = 5000
 
 // parseLineCount parses a caller-supplied line count. Non-numeric and

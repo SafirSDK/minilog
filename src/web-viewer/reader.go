@@ -204,9 +204,9 @@ func (fc *FileChain) fileAt(logicalOffset int64) (fileIdx int, physOffset int64)
 // \u00NN still fits.
 const maxLineBytes = 1024 * 1024
 
-// maxResponseBytes bounds the total size of the lines one read collects.
-// ReadForward, ReadBackward and Search all stop collecting once the lines
-// gathered would exceed it.
+// maxResponseBytes bounds the total size of the log lines one read collects.
+// ReadForward and ReadBackward stop collecting once the lines gathered would
+// exceed it. Search needs no such bound; see why on Search itself.
 //
 // maxLines bounds how many lines a request returns, which is only a memory
 // bound if lines are of typical size — and a syslog sender chooses the size. A
@@ -217,22 +217,38 @@ const maxLineBytes = 1024 * 1024
 // reaches the socket. This is what makes the bound real rather than
 // typical-case.
 //
+// What it bounds is the JSONL read off disk, not the response body, and the two
+// differ by more than framing: encoding/json escapes <, > and & to the \u00NN
+// form, one byte in for six out, while boost::json leaves those three alone when
+// writing the record. So a sink of records dense in them — an application
+// logging XML, no attacker needed — still turns this 8 MB into a body and a
+// marshal buffer of roughly 48 MB each. That expansion is the documented cost of
+// one request rather than a defect: the escaping is what makes the body safe to
+// embed, and the point of the budget is that the figure is tens of megabytes
+// instead of gigabytes.
+//
 // 8 MB is above anything a legitimate caller asks for: the browser UI requests
 // 200 lines a page, so it meets the budget only on a sink whose records average
 // over 40 KB, and an explicit count of maxLines typical records is a couple of
-// megabytes. So the budget costs nothing on honest traffic while taking the
-// worst case from gigabytes to megabytes.
+// megabytes. So the budget costs nothing on honest traffic.
 //
-// A line that would take the page over the budget on its own is still returned
-// whole when it is the first one collected. That keeps an honest long line from
-// being truncated mid-record, and keeps a read from returning nothing with its
-// cursor unmoved, which would stall the caller on that line forever. The true
-// ceiling is therefore maxResponseBytes + maxLineBytes.
+// Collected bytes therefore stay at or under maxResponseBytes, with one
+// exemption: a line that would exceed the budget on its own is still collected
+// when it is the first one, so an honest long line is never truncated
+// mid-record and a read never comes back empty with its cursor unmoved, which
+// would stall the caller on that line forever. While maxLineBytes is the
+// smaller of the two that exemption cannot fire, every line already fitting —
+// it is there to make the invariant a property of the code rather than of the
+// current pair of numbers.
 //
 // A read cut short by the budget is not signalled separately: every path leaves
 // its cursor just past the last line collected, so the next request continues
 // from there exactly as it does when the line count runs out.
-const maxResponseBytes = 8 * 1024 * 1024
+//
+// A var rather than a const only so tests can lower it: at 8 MB, seeing the
+// budget bind costs tens of megabytes of fixture per test. Nothing outside the
+// tests assigns it.
+var maxResponseBytes = 8 * 1024 * 1024
 
 // ReadForward reads up to count lines forward from logicalOffset, applying
 // filter f. It crosses file boundaries transparently.
@@ -523,23 +539,19 @@ func (fc *FileChain) ReadBackward(logicalOffset int64, count int, f *Filter, sin
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
-// SearchResult is one matching line and its logical offset.
-type SearchResult struct {
-	Line   []byte
-	Offset int64
-}
-
 // Search scans the entire chain oldest-to-newest for lines matching query q
 // (case-insensitive substring of raw JSON) that also pass filter f.
 //
-// Returns up to limit results plus the true total match count.
-func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (results []SearchResult, totalMatches int, err error) {
+// Returns the logical offsets of up to limit matches, plus the true total match
+// count. Offsets and not the matching lines: search is how a client locates a
+// match, and it then fetches the text through the ordinary paged read, so
+// returning the records here would be up to limit × maxLineBytes of body that
+// nothing reads — and the byte budget, charged against text no caller wants,
+// would cut the number of reachable matches by the same factor. It is also why
+// Search needs no budget of its own: limit offsets are a few tens of kilobytes
+// however large the records behind them are.
+func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (offsets []int64, totalMatches int, err error) {
 	qLower := []byte(strings.ToLower(q))
-
-	// Size of the results collected so far, and whether the budget has closed
-	// collection; see maxResponseBytes.
-	resultBytes := 0
-	budgetFull := false
 
 	for _, cf := range fc.files {
 		fh, ferr := os.Open(cf.path)
@@ -576,26 +588,15 @@ func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (result
 			}
 
 			totalMatches++
-			// The scan carries on past the budget: totalMatches stays the true
-			// count for the whole chain, exactly as it already does past limit,
-			// so the UI can keep reporting how many matches exist.
-			//
-			// Once the budget is full nothing further is collected, rather than
-			// letting a later shorter line slip in. Results stay the first k
-			// matches, which is what the match navigation counts through.
-			if !budgetFull && len(results) < limit {
-				if len(results) > 0 && resultBytes+len(raw) > maxResponseBytes {
-					budgetFull = true
-				} else {
-					cp := make([]byte, len(raw))
-					copy(cp, raw)
-					results = append(results, SearchResult{Line: cp, Offset: logicalOffset})
-					resultBytes += len(raw)
-				}
+			// The scan carries on past limit, so totalMatches stays the true
+			// count for the whole chain and a client can report how many
+			// matches exist even though it was handed only the first few.
+			if len(offsets) < limit {
+				offsets = append(offsets, logicalOffset)
 			}
 		}
 		fh.Close()
 	}
 
-	return results, totalMatches, nil
+	return offsets, totalMatches, nil
 }
