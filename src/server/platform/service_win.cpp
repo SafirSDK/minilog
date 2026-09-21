@@ -41,9 +41,17 @@ static constexpr char SERVICE_NAME[]    = "minilog";
 static constexpr char SERVICE_DISPLAY[] = "minilog Syslog Server";
 static constexpr char SERVICE_DESC[] = "Minimal syslog server. https://github.com/SafirSDK/minilog";
 
-// Upper bound on config load + sink open + socket bind, reported to the SCM as
-// the SERVICE_START_PENDING wait hint. Startup is milliseconds in practice; the
-// margin is there so a slow or contended disk is not mistaken for a hang.
+// Upper bound on everything runServer does before reportServiceStarted(): the
+// config load, opening the sinks, constructing the forwarder and binding the UDP
+// socket. Reported to the SCM as the SERVICE_START_PENDING wait hint. Startup is
+// milliseconds in practice; the margin is there so a slow or contended disk is
+// not mistaken for a hang.
+//
+// Resolving the forwarding destination is deliberately *not* in that list. It
+// was, as a blocking getaddrinfo in the Forwarder's constructor, and an
+// unresponsive resolver blocks there for tens of seconds — long enough to
+// exhaust this hint on a start that was otherwise healthy. The lookup now runs
+// on the io_context and finishes after the service is already reported running.
 static constexpr DWORD STARTUP_WAIT_HINT_MS = 10000;
 
 // Recovery actions configured at install time: restart twice, then leave the

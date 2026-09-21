@@ -39,6 +39,16 @@ namespace minilog
 // re-resolving periodically buys nothing until a deployment turns up whose
 // collector actually moves.
 //
+// The lookup is *started* by the constructor and completes on the io_context.
+// It used to be a blocking getaddrinfo in the constructor, which on Windows ran
+// inside the window the SCM times a start in, and on every platform delayed the
+// UDP bind that follows it. An unresponsive resolver is exactly when that call
+// blocks longest — tens of seconds — and is also the case the retry below
+// exists for, so the two combined could have the SCM declare a start hung. The
+// cost of the asynchronous form is that datagrams arriving before the lookup
+// returns are dropped; that is a state the retry path already concedes on every
+// failure, and they are counted and reported like any other.
+//
 // A name that does not resolve at startup is not a startup failure. A Windows
 // AUTO_START service is routinely running before DNS is, so treating "not yet"
 // as a fatal config error would make boot ordering a hazard. Instead the failure
@@ -56,7 +66,20 @@ public:
 
     // Cancel a pending resolution retry so the io_context can run out of work.
     // Safe to call from any thread, and safe to call when nothing is pending.
+    //
+    // It does not cancel a lookup that is already in flight. Asio runs
+    // getaddrinfo on a thread of its own and resolver::cancel() only reaches
+    // operations still queued, so a stop that lands during a lookup waits for
+    // that lookup to return — the resolver's own timeout, at worst. There is no
+    // timeout parameter to shorten it with, and taking the lookup off the
+    // io_context entirely means a detached thread outliving this object. The
+    // delay is accepted and documented rather than engineered around.
     void stop();
+
+    // Whether the destination has been resolved and the socket opened. For
+    // tests: read it only while no thread is inside io_context::run(), since it
+    // is written on the strand.
+    [[nodiscard]] bool resolved() const { return m_resolved; }
 
 private:
     void doForward(const SyslogMessage& msg);
@@ -64,6 +87,11 @@ private:
     // Adopt a resolved endpoint: open the socket with that endpoint's protocol,
     // which is what lets an IPv6 destination work, and report recovery.
     void useEndpoint(const boost::asio::ip::udp::endpoint& endpoint);
+
+    // Start an asynchronous lookup of the destination. firstAttempt marks the
+    // one the constructor starts: only it reports a failure, and only a retry
+    // grows the delay.
+    void startResolve(bool firstAttempt);
 
     void scheduleResolveRetry();
 
@@ -86,6 +114,10 @@ private:
     uint64_t m_droppedUnresolved      = 0;
     bool m_resolved                   = false;
     bool m_stopping                   = false;
+    // Whether a failure was ever reported for this destination. It decides how
+    // success reads: recovering from a reported outage is not the same event as
+    // the first lookup simply finishing after a few datagrams had arrived.
+    bool m_failureReported = false;
 };
 
 } // namespace minilog

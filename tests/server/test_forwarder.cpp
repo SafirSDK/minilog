@@ -114,6 +114,26 @@ void drain(boost::asio::io_context& ioc)
     ioc.restart();
 }
 
+// Let the destination resolve.
+//
+// The lookup is started by the constructor but completes on the io_context (see
+// #38), so a test that expects a datagram to arrive has to run the io_context
+// before it forwards anything — otherwise the forward runs on the strand first
+// and is dropped as unresolved, which is the documented cost of not blocking
+// the UDP bind on a name lookup.
+bool waitResolved(boost::asio::io_context& ioc,
+                  const Forwarder& fwd,
+                  std::chrono::milliseconds timeout = std::chrono::seconds(5))
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!fwd.resolved() && std::chrono::steady_clock::now() < deadline)
+    {
+        ioc.run_for(std::chrono::milliseconds(10));
+        ioc.restart();
+    }
+    return fwd.resolved();
+}
+
 } // namespace
 
 // ─── Forwarding enabled / disabled ───────────────────────────────────────────
@@ -137,6 +157,7 @@ BOOST_AUTO_TEST_CASE(enabled_sends_raw_payload)
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port()));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("hello world"));
     drain(ioc);
@@ -148,12 +169,70 @@ BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Destination resolution ───────────────────────────────────────────────────
 //
-// The destination may be a name. It is resolved once, at construction; a name
-// that does not resolve then is reported and retried in the background rather
-// than failing the process, because a Windows auto-start service routinely runs
-// before DNS does.
+// The destination may be a name. The lookup is started by the constructor and
+// completes on the io_context; a name that does not resolve is reported and
+// retried in the background rather than failing the process, because a Windows
+// auto-start service routinely runs before DNS does.
 
 BOOST_AUTO_TEST_SUITE(destination_resolution)
+
+BOOST_AUTO_TEST_CASE(the_constructor_does_not_resolve)
+{
+    // #38. The lookup used to be a blocking getaddrinfo in the constructor,
+    // which on Windows ran inside the window the SCM times a start in, and on
+    // every platform sat in front of the UDP bind. It runs on the io_context
+    // now — so with the io_context not yet run, the destination cannot have
+    // been resolved.
+    //
+    // That is also what an unresponsive resolver looks like from here: the one
+    // thing the constructor must not do is wait, and "the completion handler
+    // has not run" is the same state whether the lookup is taking a
+    // microsecond or forty seconds. Which is how this is tested without a real
+    // slow resolver, or any DNS at all.
+    //
+    // An IP literal takes the same path deliberately: the resolver handles
+    // both, and special-casing the literal would put the question of which one
+    // was written back into the constructor.
+    Receiver rx;
+    boost::asio::io_context ioc;
+    Forwarder fwd(ioc, makeConfig(rx.port()));
+
+    BOOST_TEST(!fwd.resolved());
+
+    // And once it is run, the destination resolves and forwarding works.
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
+    fwd.forward(makeMsg("after the lookup"));
+    drain(ioc);
+
+    BOOST_CHECK_EQUAL(rx.receive(), "after the lookup");
+}
+
+BOOST_AUTO_TEST_CASE(an_unresponsive_resolver_does_not_hold_up_construction)
+{
+    // The same property stated the way #38 states it: constructing a Forwarder
+    // is not allowed to cost a name lookup, whatever the resolver does. Running
+    // the io_context is the only thing that can advance the lookup, so not
+    // running it stands in for a resolver that never answers.
+    //
+    // .invalid never resolves (RFC 2606), so nothing here depends on the
+    // network either way.
+    Receiver rx;
+    boost::asio::io_context ioc;
+    ForwardingConfig cfg = makeConfig(rx.port());
+    cfg.host             = "collector.invalid";
+
+    const auto before = std::chrono::steady_clock::now();
+    Forwarder fwd(ioc, cfg);
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+
+    BOOST_TEST(!fwd.resolved());
+    // Generous by three orders of magnitude: the point is that no lookup was
+    // waited on, not how fast the machine is.
+    BOOST_TEST(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() < 1000);
+
+    fwd.stop();
+    ioc.run();
+}
 
 BOOST_AUTO_TEST_CASE(hostname_is_resolved_and_used)
 {
@@ -172,6 +251,7 @@ BOOST_AUTO_TEST_CASE(hostname_is_resolved_and_used)
     ForwardingConfig cfg = makeConfig(rx.port());
     cfg.host             = "localhost";
     Forwarder fwd(ioc, cfg);
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("by name"));
     drain(ioc);
@@ -201,6 +281,7 @@ BOOST_AUTO_TEST_CASE(ipv6_destination_is_sent_to)
     ForwardingConfig cfg = makeConfig(rx.port());
     cfg.host             = "::1";
     Forwarder fwd(ioc, cfg);
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("over v6"));
     drain(ioc);
@@ -236,6 +317,13 @@ BOOST_AUTO_TEST_CASE(stop_lets_the_io_context_run_out_of_work)
     // An outstanding retry timer is work, and io_context::run() does not return
     // while there is work — minilog would hang on shutdown waiting for a name
     // that is not coming.
+    //
+    // The startup lookup is work too, and stop() does not cancel one already in
+    // flight: Asio runs getaddrinfo on a thread of its own, and cancel() only
+    // reaches operations still queued. run() below therefore returns once that
+    // first lookup has come back, which for .invalid is an immediate NXDOMAIN.
+    // That delay is accepted and documented rather than engineered around; see
+    // Forwarder::stop().
     Receiver rx;
     boost::asio::io_context ioc;
     ForwardingConfig cfg = makeConfig(rx.port());
@@ -275,6 +363,7 @@ BOOST_AUTO_TEST_CASE(empty_filter_forwards_all)
     boost::asio::io_context ioc;
     // facilities={} → wildcard
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {}));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("msg", 4));
     drain(ioc);
@@ -287,6 +376,7 @@ BOOST_AUTO_TEST_CASE(matching_facility_is_forwarded)
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {4, 16}));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("kern msg", 4));
     drain(ioc);
@@ -299,6 +389,7 @@ BOOST_AUTO_TEST_CASE(non_matching_facility_is_dropped)
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {4}));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("other msg", 16));
     drain(ioc);
@@ -311,6 +402,7 @@ BOOST_AUTO_TEST_CASE(no_facility_on_message_dropped_by_non_wildcard_filter)
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {4}));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("malformed msg")); // facility = nullopt
     drain(ioc);
@@ -323,8 +415,9 @@ BOOST_AUTO_TEST_CASE(no_facility_on_message_forwarded_by_wildcard_filter)
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {})); // wildcard
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
-    fwd.forward(makeMsg("malformed msg"));               // facility = nullopt
+    fwd.forward(makeMsg("malformed msg")); // facility = nullopt
     drain(ioc);
 
     BOOST_CHECK_EQUAL(rx.receive(), "malformed msg");
@@ -341,6 +434,7 @@ BOOST_AUTO_TEST_CASE(no_truncation_when_maxSize_zero)
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {}, /*maxMsgSize=*/0));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     const std::string longMsg(500, 'A');
     fwd.forward(makeMsg(longMsg));
@@ -354,6 +448,7 @@ BOOST_AUTO_TEST_CASE(no_truncation_when_exactly_at_limit)
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {}, /*maxMsgSize=*/10));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("1234567890")); // exactly 10 bytes
     drain(ioc);
@@ -367,6 +462,7 @@ BOOST_AUTO_TEST_CASE(truncated_message_fits_within_max_size)
     boost::asio::io_context ioc;
     constexpr uint32_t limit = 50;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {}, limit));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     const std::string longMsg(200, 'X');
     fwd.forward(makeMsg(longMsg));
@@ -384,6 +480,7 @@ BOOST_AUTO_TEST_CASE(truncated_message_suffix_contains_original_size)
     boost::asio::io_context ioc;
     constexpr uint32_t limit = 50;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {}, limit));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     const std::string longMsg(200, 'X');
     fwd.forward(makeMsg(longMsg));
@@ -402,6 +499,7 @@ BOOST_AUTO_TEST_CASE(maxSize_smaller_than_suffix_truncates_to_maxSize)
     boost::asio::io_context ioc;
     constexpr uint32_t limit = 5;
     Forwarder fwd(ioc, makeConfig(rx.port(), true, {}, limit));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     const std::string longMsg(200, 'X');
     fwd.forward(makeMsg(longMsg));

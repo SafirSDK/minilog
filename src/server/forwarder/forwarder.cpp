@@ -46,40 +46,97 @@ Forwarder::Forwarder(boost::asio::io_context& ioc, ForwardingConfig cfg)
         return;
     }
 
-    // Resolved synchronously here, before the io_context runs, so that a
-    // destination which is reachable is usable from the first datagram rather
-    // than for everything after an asynchronous lookup happens to finish. An IP
-    // literal takes this path too — the resolver handles both, which is what
-    // removes the need to decide which one was written.
-    boost::system::error_code ec;
-    const auto results = m_resolver.resolve(m_cfg.host, std::to_string(m_cfg.port), ec);
-    if (!ec && !results.empty())
-    {
-        useEndpoint(*results.begin());
-        return;
-    }
+    // Started here, finished on the io_context. Resolving synchronously in the
+    // constructor made a reachable destination usable from the first datagram,
+    // but it did so by blocking in getaddrinfo before the UDP socket binds and,
+    // on Windows, before the SCM is told the service is running. An IP literal
+    // takes this path too — the resolver handles both, which is what removes
+    // the need to decide which one was written — and for a literal it finishes
+    // essentially at once.
+    startResolve(/*firstAttempt=*/true);
+}
 
-    osLogError("minilog: cannot resolve [forwarding] host " + describe(m_cfg) + ": " +
-               (ec ? ec.message() : std::string("no addresses returned")) +
-               ". Forwarding is off and resolution will be retried in the background; the rest of "
-               "minilog is unaffected.");
-    scheduleResolveRetry();
+void Forwarder::startResolve(bool firstAttempt)
+{
+    m_resolver.async_resolve(
+        m_cfg.host,
+        std::to_string(m_cfg.port),
+        [this, firstAttempt](const boost::system::error_code& ec,
+                             const boost::asio::ip::udp::resolver::results_type& results)
+        {
+            if (m_stopping)
+            {
+                return;
+            }
+            if (!ec && !results.empty())
+            {
+                useEndpoint(*results.begin());
+                return;
+            }
+            if (firstAttempt)
+            {
+                // Reported once, on the first failure only. The line names the
+                // host and says retries will continue, so repeating it every
+                // minute would fill the Event Log with one fact.
+                m_failureReported = true;
+                osLogError("minilog: cannot resolve [forwarding] host " + describe(m_cfg) + ": " +
+                           (ec ? ec.message() : std::string("no addresses returned")) +
+                           ". Forwarding is off and resolution will be retried in the background; "
+                           "the rest of minilog is unaffected.");
+            }
+            else
+            {
+                m_retryDelay = std::min(m_retryDelay * 2, kMaxRetryDelay);
+            }
+            scheduleResolveRetry();
+        });
 }
 
 void Forwarder::useEndpoint(const boost::asio::ip::udp::endpoint& endpoint)
 {
     // The protocol comes from the endpoint rather than being assumed to be
     // IPv4, which is what makes an IPv6 destination work at all.
-    m_socket.open(endpoint.protocol());
+    //
+    // Opened with an error_code because this now runs on the io_context rather
+    // than in the constructor: a throw here would escape into runIoContext and
+    // be reported as an unhandled handler exception, which says nothing about
+    // forwarding. Retried like a failed lookup, since whatever exhausted the
+    // descriptors may not still be doing so.
+    boost::system::error_code ec;
+    m_socket.open(endpoint.protocol(), ec);
+    if (ec)
+    {
+        if (!m_failureReported)
+        {
+            m_failureReported = true;
+            osLogError("minilog: cannot open a forwarding socket for [forwarding] host " +
+                       describe(m_cfg) + ": " + ec.message() +
+                       ". Forwarding is off and will be retried in the background; the rest of "
+                       "minilog is unaffected.");
+        }
+        m_retryDelay = std::min(m_retryDelay * 2, kMaxRetryDelay);
+        scheduleResolveRetry();
+        return;
+    }
     m_endpoint = endpoint;
     m_resolved = true;
 
     if (m_droppedUnresolved != 0)
     {
-        osLogInfo("minilog: [forwarding] host " + describe(m_cfg) + " resolved to " +
-                  m_endpoint.address().to_string() + " port " + std::to_string(m_cfg.port) +
-                  "; forwarding resumed after dropping " + std::to_string(m_droppedUnresolved) +
-                  " message(s) while it was unresolved");
+        const std::string where = "minilog: [forwarding] host " + describe(m_cfg) +
+                                  " resolved to " + m_endpoint.address().to_string() + " port " +
+                                  std::to_string(m_cfg.port) + "; ";
+        // Two different events, and saying "resumed" for both would invent an
+        // outage that never happened. Nothing was ever wrong in the second
+        // case: the startup lookup simply had not finished when the first
+        // datagrams arrived, which is the cost of not blocking the bind on it.
+        osLogInfo(m_failureReported
+                      ? where + "forwarding resumed after dropping " +
+                            std::to_string(m_droppedUnresolved) +
+                            " message(s) while it was unresolved"
+                      : where + "forwarding started; " + std::to_string(m_droppedUnresolved) +
+                            " message(s) arrived before the lookup finished and were not "
+                            "forwarded");
         m_droppedUnresolved = 0;
     }
 }
@@ -98,30 +155,7 @@ void Forwarder::scheduleResolveRetry()
             {
                 return; // cancelled at shutdown
             }
-            // Asynchronous, unlike the one in the constructor: this runs on a
-            // worker thread, and a blocking lookup there would stall ingestion
-            // for the resolver's timeout every time it fired.
-            m_resolver.async_resolve(
-                m_cfg.host,
-                std::to_string(m_cfg.port),
-                [this](const boost::system::error_code& rec,
-                       const boost::asio::ip::udp::resolver::results_type& results)
-                {
-                    if (m_stopping)
-                    {
-                        return;
-                    }
-                    if (!rec && !results.empty())
-                    {
-                        useEndpoint(*results.begin());
-                        return;
-                    }
-                    // Deliberately not reported again. The first failure named
-                    // the host and said retries would continue; repeating it
-                    // every minute would fill the Event Log with one fact.
-                    m_retryDelay = std::min(m_retryDelay * 2, kMaxRetryDelay);
-                    scheduleResolveRetry();
-                });
+            startResolve(/*firstAttempt=*/false);
         });
 }
 

@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- **Resolving the forwarding destination no longer holds up startup.** `Forwarder`'s constructor
+  called `getaddrinfo` synchronously, before the UDP socket binds and before the Windows service
+  reports itself running — all inside a single 10-second `SERVICE_START_PENDING` wait hint whose
+  budget was written for "config load + sink open + socket bind". An unresponsive resolver is
+  exactly when that call blocks longest, tens of seconds on a glibc host walking its `resolv.conf`
+  attempts, and it is also the case the background retry exists for: the motivating scenario was
+  the one that could have the SCM treat the start as hung. On Linux there is no SCM to complain,
+  but the lookup still sat in front of the bind, so a collector could be unable to receive for the
+  whole of it. The lookup is started by the constructor and completes on the io_context now, and
+  everything the startup path does after it proceeds immediately. Messages arriving before it
+  finishes are dropped, counted, and reported when it succeeds, the same way the retry path has
+  always handled them. Stopping minilog while a lookup is in flight still waits for that lookup to
+  return: Asio runs `getaddrinfo` on a thread of its own and `resolver::cancel()` only reaches
+  operations still queued, which is now said where it used to be claimed otherwise.
+
 - **`max_size = 0` now works as documented.** `config.hpp`, the README and `minilog.conf.example`
   all describe `0` as "no rotation", and `rotateIfNeeded` implements exactly that — but the parser
   rejected it, so the documented way to disable rotation was the one value that would not load.

@@ -338,10 +338,13 @@ Read by `minilog-web-viewer` only; minilog itself ignores the section. See
 
 The destination is resolved once, when minilog starts, and the address found is used for the
 lifetime of the process — re-resolving per message would put a name lookup on the hot path, and a
-collector that moves is rare enough to be worth a restart. A name that does **not** resolve at
-startup is not a startup failure: minilog runs with forwarding off, reports it once, and retries
-in the background with a growing delay until it succeeds, reporting how many messages were
-dropped in the meantime. That is deliberate — a Windows `AUTO_START` service is routinely running
+collector that moves is rare enough to be worth a restart. The lookup does not hold up startup:
+it runs in the background while the UDP socket binds and the service reports itself running, so a
+slow resolver delays forwarding and nothing else. Messages arriving in the moment before it
+finishes are not forwarded, and are counted and reported when it does. A name that does **not**
+resolve at startup is not a startup failure: minilog runs with forwarding off, reports it once,
+and retries in the background with a growing delay until it succeeds, reporting how many messages
+were dropped in the meantime. That is deliberate — a Windows `AUTO_START` service is routinely running
 before DNS is, and losing the collector over an unreachable forwarding destination would be worse
 than losing forwarding. A value that cannot be a host at all — brackets, a space, a scheme, or a
 port appended (`syslog.example.com:514`, `10.0.0.5:514`) — is still a config error at startup,
