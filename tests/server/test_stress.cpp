@@ -538,22 +538,153 @@ BOOST_AUTO_TEST_CASE(a_summary_is_reported_once_the_interval_has_passed)
     BOOST_TEST(decision.suppressed == 3u);
 }
 
-BOOST_AUTO_TEST_CASE(a_different_error_is_reported_immediately)
+BOOST_AUTO_TEST_CASE(a_different_error_mid_streak_does_not_restart_the_backoff)
 {
-    // A new failure is news even in the middle of a streak of another one, and
-    // it may well be the transient kind — so the delay starts over too.
+    // It used to. A message differing from the previous one reset the delay to
+    // kFirstDelay and reported, on the reasoning that a new failure is news —
+    // which is true of the first error on a healthy socket and not of one more
+    // error on a socket that is already failing. The socket is still failing,
+    // so the re-arm rate must keep falling.
     ReceiveBackoff backoff;
     const auto now = std::chrono::steady_clock::now();
     for (int i = 0; i < 10; ++i)
     {
         backoff.onError("no buffer space", now);
     }
-    BOOST_REQUIRE(backoff.delay().count() > ReceiveBackoff::kFirstDelay.count());
+    const auto grown = backoff.delay();
+    BOOST_REQUIRE(grown.count() > ReceiveBackoff::kFirstDelay.count());
 
     const auto decision = backoff.onError("connection reset", now);
 
+    BOOST_TEST(!decision.report);
+    BOOST_TEST(decision.delay.count() >= grown.count());
+}
+
+BOOST_AUTO_TEST_CASE(alternating_errors_do_not_defeat_the_backoff)
+{
+    // #39. Two errors alternating took the "new message" branch on every call,
+    // so the delay never left kFirstDelay and every single error was logged:
+    // measured against the class as committed, 100 alternating errors produced
+    // 100 log lines and 5000 ms of total delay, where 100 identical ones
+    // produced 1 line and 96550 ms. The socket re-armed every 50 ms and
+    // osLogError fired about twenty times a second, indefinitely — into the
+    // host's system log, which on a collector is frequently relayed back into
+    // minilog, so the loop fed itself.
+    //
+    // Alternating errors are not the common case; a single persistent one is,
+    // and that was already handled. But the consequence is unbounded once it
+    // happens.
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+
+    int reports = 0;
+    std::chrono::milliseconds totalDelay{0};
+
+    for (int i = 0; i < 100; ++i)
+    {
+        // Same instant throughout, so nothing here depends on the test being
+        // slow enough for the report interval to elapse.
+        const auto decision =
+            backoff.onError(i % 2 == 0 ? "no buffer space" : "connection reset", start);
+        reports += decision.report ? 1 : 0;
+        totalDelay += decision.delay;
+    }
+
+    // Only the first, which is the one nobody had been told about yet.
+    BOOST_TEST(reports == 1);
+    BOOST_TEST(backoff.delay().count() == ReceiveBackoff::kMaxDelay.count());
+    // For comparison: the broken version totalled 100 * kFirstDelay.
+    BOOST_TEST(totalDelay.count() > 100 * ReceiveBackoff::kFirstDelay.count());
+}
+
+BOOST_AUTO_TEST_CASE(a_summary_after_mixed_errors_says_they_were_mixed)
+{
+    // The line names one error, so a bare "still failing; N further
+    // occurrence(s)" would claim the other N were that same error.
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+    backoff.onError("no buffer space", start);
+    backoff.onError("connection reset", start);
+
+    const auto decision =
+        backoff.onError("no buffer space", start + ReceiveBackoff::kReportInterval);
+
     BOOST_TEST(decision.report);
+    BOOST_TEST(decision.suppressed == 2u);
+    BOOST_TEST(decision.varied);
+}
+
+BOOST_AUTO_TEST_CASE(a_summary_after_identical_errors_does_not)
+{
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+    backoff.onError("no buffer space", start);
+    backoff.onError("no buffer space", start);
+
+    const auto decision =
+        backoff.onError("no buffer space", start + ReceiveBackoff::kReportInterval);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.varied == false);
+}
+
+BOOST_AUTO_TEST_CASE(a_message_change_does_not_discard_the_suppressed_count)
+{
+    // It used to zero m_unreported without ever surfacing it, so a streak of N
+    // suppressed occurrences ended by a single different error was counted
+    // nowhere — while the class documented suppressed occurrences as
+    // summarised.
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+    backoff.onError("no buffer space", start);
+    for (int i = 0; i < 4; ++i)
+    {
+        backoff.onError("no buffer space", start);
+    }
+    backoff.onError("connection reset", start);
+
+    const auto decision =
+        backoff.onError("connection reset", start + ReceiveBackoff::kReportInterval);
+
+    // The four silent repeats, the different error, and this one. Only the
+    // very first was ever reported.
+    BOOST_TEST(decision.suppressed == 6u);
+}
+
+BOOST_AUTO_TEST_CASE(a_new_error_on_a_healthy_socket_is_still_reported_at_once)
+{
+    // The property worth keeping from the branch that was removed: an error
+    // arriving after the socket has been receiving normally is reported
+    // immediately, whatever came before it and however long ago.
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10; ++i)
+    {
+        backoff.onError("no buffer space", start);
+    }
+    BOOST_REQUIRE(backoff.onSuccess() == 10u);
+
+    const auto decision = backoff.onError("connection reset", start);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.suppressed == 0u);
     BOOST_TEST(decision.delay.count() == ReceiveBackoff::kFirstDelay.count());
+}
+
+BOOST_AUTO_TEST_CASE(success_counts_a_mixed_streak_in_full)
+{
+    // "receiving again after N consecutive receive error(s)" has to be true of
+    // a streak whose errors were not all the same; the streak used to restart
+    // at 1 on every message change, so N was whatever the last run happened to
+    // be.
+    ReceiveBackoff backoff;
+    const auto now = std::chrono::steady_clock::now();
+    for (int i = 0; i < 7; ++i)
+    {
+        backoff.onError(i % 2 == 0 ? "no buffer space" : "connection reset", now);
+    }
+
+    BOOST_TEST(backoff.onSuccess() == 7u);
 }
 
 BOOST_AUTO_TEST_CASE(success_ends_the_streak_and_reports_how_long_it_was)

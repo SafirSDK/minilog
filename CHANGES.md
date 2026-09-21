@@ -68,9 +68,14 @@
   is right; for a persistent one it was a tight loop at 100% of a core writing one log line per
   iteration into the host's system log — which on a syslog collector is frequently relayed back
   into minilog, so the loop fed itself. The re-arm now waits, from 50 ms doubling to a second, and
-  a repeat of the same error is counted rather than logged, with a summary at most once a minute.
-  The first occurrence is still reported immediately, a different error is always reported at
-  once, and recovery is reported with the length of the streak.
+  further errors are counted rather than logged, with a summary at most once a minute that says
+  whether they were all the same error. The delay is monotonic and only a successful receive
+  resets it — a socket failing in two ways alternately is still a failing socket. An earlier
+  draft restarted the backoff whenever the error message changed, which two errors alternating
+  defeated completely: 100 such errors produced 100 log lines and never left the 50 ms delay,
+  where 100 identical ones produced one line. The first error after a healthy receive is still
+  reported immediately, and recovery is reported with the length of the streak, counted across a
+  mixed one.
 
 - **The cli-viewer no longer exits on a record it did not expect.** `record.get("message", "")`
   defaults only when the key is *absent*, so `"message": null` produced `None`, which reached

@@ -140,7 +140,10 @@ void UdpServer::handleReceiveError(const boost::system::error_code& ec)
         if (decision.suppressed != 0)
         {
             message += " (still failing; " + std::to_string(decision.suppressed) +
-                       " further occurrence(s) since the last report)";
+                       " further occurrence(s) since the last report";
+            // Said explicitly, because the line names one error and "still
+            // failing" would otherwise claim the others were that same one.
+            message += decision.varied ? ", not all with this error)" : ")";
         }
         osLogError(message);
     }
