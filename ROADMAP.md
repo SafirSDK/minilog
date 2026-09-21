@@ -1,7 +1,13 @@
 # Roadmap — v1.4.0
 
-Working order for the 28 issues (#10–#37) to be closed before the v1.4.0
-release. Current version is 1.3.0.
+Working order for the issues to be closed before the v1.4.0 release. Current
+version is 1.3.0.
+
+Batches 1–5 covered the original sweep (#10–#35). Batches 6–8 cover what is
+left, including three issues (#38–#40) that came out of reviewing batch 5 rather
+than from the original sweep. Completed batches stay in the file: their
+rationale is what a context reset needs, and their being finished is not
+something this file tracks.
 
 **This file is temporary.** Delete it as part of preparing the v1.4.0 release —
 git history keeps the record. It exists only to survive context resets while the
@@ -79,39 +85,84 @@ stripping in `config.go`.
 #24 is a docs-only single-file change — good filler whenever something short is
 wanted.
 
-## Batch 6 — #23 last
+## Batch 6 — close the gaps batch 5 left
 
-`--check` is a preflight that validates everything the earlier batches
-establish, and it depends on #26. Writing it before that validation exists means
-writing it twice. Re-evaluate its scope when reached.
+**#38 → #39 → #40**
 
-## Batch 7 — #36, after everything else
+All three came out of reviewing batch 5, and all three are corrections to code
+that batch had just landed. They share the server and little else: #38 is in
+`forwarder.cpp` and `main.cpp`, #39 in `receive_backoff.hpp`, #40 in
+`config.cpp`. They belong together anyway — doing them while that code is still
+in mind is worth more here than file locality is.
 
-A sink closed by a filesystem error stays closed until minilog is restarted. #13
-chose that deliberately and it is the right default, but "restart to recover"
-was accepted as a cost rather than decided on its merits.
+Ordered by severity, since nothing depends on anything else:
 
-Deliberately last. It is a design decision rather than a defect, and the choice
-depends on batches that come first: #10 settles behaviour under load, and
-#31/#32 settle how much config surface is acceptable — which decides whether a
-retry interval can be configurable. Starting from the options recorded on the
-issue rather than from scratch.
+- **#38** can have the SCM declare a start hung. The forwarder resolves DNS
+  synchronously before the UDP bind and before the service reports running, all
+  inside one 10 s wait hint — and an unresponsive resolver, the case #18's retry
+  design exists for, is exactly when `getaddrinfo` blocks longest. Suggested fix
+  and the rejected alternative are on the issue.
+- **#39** is a log loop, but needs an unusual trigger: two receive errors
+  alternating reset the backoff on every call, so the socket re-arms every 50 ms
+  and a line goes to the host's syslog each time — which a collector frequently
+  relays back into itself.
+- **#40** is the smallest, and also has to land before #23: `--check` reports
+  config problems, and #40 changes which values are problems.
 
-## Batch 8 — #37, last of all
+#40 carries a documentation tail — #31's `CHANGES.md` entry describes the
+inline-comment fall-back as intended behaviour, and rejecting unparseable values
+replaces it.
 
-Came out of reviewing batch 4 rather than the original sweep. #12 clamped
-`count`/`limit` to 5000 lines, which bounds how many lines a request returns but
-not how many bytes: a sender who can reach the UDP port controls line size, so a
-fed sink still reaches the multi-gigabyte response #12 set out to remove.
+## Batch 7 — #37, the last web-viewer issue
 
-After #36 rather than with the rest of the security work, for two reasons. It
-needs the collector fed first, so it is a step further out than #12, which
-needed only a URL. And the fix is a byte budget in the read path, which wants
-the same judgement about what a client sees when a page ends early that #36's
-recovery question raises about partial state — worth having settled first.
+#12 clamped `count`/`limit` to 5000 lines, which bounds how many lines a request
+returns but not how many bytes: a sender who can reach the UDP port controls
+line size, so a fed sink still reaches the multi-gigabyte response #12 set out
+to remove.
+
+Its own batch because it touches `reader.go` and `handlers.go` and nothing else
+remaining goes near them — a C++ batch and a Go batch reuse nothing. Fold it
+into batch 6 if fewer context clears are worth more than that; it is independent
+of everything.
+
+**Moved ahead of #36**, reversing the earlier ordering. That put #37 last partly
+because "the byte budget wants the same judgement about what a client sees when
+a page ends early that #36's recovery question raises about partial state" — on
+re-reading both, that link is thin: a HTTP page cut short on a byte budget and a
+sink closed by a filesystem error are not the same question. The other reason
+given — it needs the collector fed first, so it is a step further out than #12,
+which needed only a URL — is a priority argument rather than a dependency, and
+#37 is now competing with three batch-5 corrections rather than with the rest of
+the security work.
 
 #12 parked the streaming refactor deliberately; start from that decision, not
 from scratch.
+
+## Batch 8 — running but not collecting
+
+**#36 → #23**
+
+The one pair left with a real dependency, and the only batch that starts with a
+conversation rather than with code.
+
+#36 decides whether a sink closed by a filesystem error ever reopens. #13 chose
+"stays closed until restart" deliberately and it is the right default, but
+"restart to recover" was accepted as a cost rather than decided on its merits.
+Its stated preconditions have now landed: #10 settled behaviour under load, and
+#31/#32 settled how much config surface is acceptable — which is what decides
+whether a retry interval can be configurable.
+
+#23 follows because its primary motivation *is* the dead sink — a log directory
+with the wrong ACLs leaves the server running and silently discarding everything
+routed to that sink. If #36 lands a retry, that case weakens, so #23's scope
+depends on #36's answer.
+
+**#23 may be closed rather than built.** The issue lists three things that
+survive #26: the dead-sink case, validating a deployment before anything is
+installed, and read-only diagnosis of a live system. #26 has landed, #36 may
+finish the first, and the issue itself says closing is a reasonable outcome if
+the remainder does not feel worth a new command. Decide that explicitly at the
+top of this batch rather than starting to build.
 
 ---
 
@@ -130,6 +181,31 @@ from scratch.
   `--service-name` to typo. #21 preserves a hand-set account and start type
   across an upgrade, so an environment that mandates them can use `sc config`
   once instead.
+- **#18 — resolve once at startup, retry in the background on failure.** The
+  forwarding destination is resolved when the Forwarder is constructed and the
+  endpoint reused for the process lifetime; re-resolving per message puts a
+  lookup on the hot path, and a periodic re-resolve buys nothing until a
+  deployment turns up whose collector moves. A name that does not resolve is
+  reported once and retried rather than failing the start, because a Windows
+  `AUTO_START` service is routinely running before DNS is. #38 changes only
+  *how* the startup lookup is performed, not either of these.
+- **#34 — an unknown config key is an error, not a warning.** Settled in batch
+  5. Sections minilog does not know are still ignored, so the file can carry
+  another tool's settings — claiming the whole namespace is what would have
+  rejected the `[web_viewer]` section #19 added.
+- **#16 — `max_size = 0` means no rotation.** Three documents and
+  `rotateIfNeeded` already said so; only the parser disagreed.
+  `max_queue_bytes` still rejects `0`: there is deliberately no unlimited
+  setting for the receive queue.
+- **#16 — `matchStringField` keeps its substring scan.** Parsing every line of
+  a chain that can be gigabytes, on every request, is not the trade. The
+  assumption it rests on — fixed field order with `message` last, table-driven
+  facility/severity values — is documented at the function, in the README's
+  JSONL section and in AGENTS.md instead.
+- **#40 — unparseable config values are rejected**, consistent with unknown
+  keys. The known cost is accepted: `max_files = 10 ; ten generations` becomes a
+  startup failure rather than a silent fall-back, and #31's changelog entry
+  describing that fall-back as intended has to be corrected with it.
 - **Rotation races in the web-viewer — declined.** Requires `max_files = 1`
   together with high traffic, and self-corrects on refresh. Display-level
   integrity only.
@@ -155,7 +231,22 @@ it each time.
 
 ## Minimum set if the rollout lands early
 
-**#26, #33, #17.** Without those three, a failed install or a typo'd config in a
-locked-down Windows environment produces a service that reports success and does
-nothing, with no Event Log trail. #20 and #19 are the ergonomics to add next,
-but they are comfort rather than correctness.
+The original minimum — #26, #33, #17, so that a failed install or a typo'd
+config cannot produce a service that reports success and does nothing — has
+landed, along with the ergonomics that were to follow it (#19, #20).
+
+Of what is left, two matter for a rollout and the rest can wait:
+
+- **#38**, but only where `[forwarding]` is enabled with a hostname. A slow or
+  unresponsive resolver at boot can make the SCM treat the start as hung, and it
+  delays the UDP bind on every platform. An IP literal resolves instantly and is
+  unaffected.
+- **#36**, because a sink closed by a two-second storage blip stays closed until
+  somebody restarts the service, and nothing after the moment it happened says
+  so. A running service with a log file that stops mid-afternoon is the failure
+  this release is otherwise about removing.
+
+#39 needs two receive errors alternating to bite. #40 costs diagnosis quality
+rather than correct operation. #37 needs either an attacker who can already
+reach the UDP port or an application that honestly logs very long lines. #23 is
+a convenience, and may not be built at all.
