@@ -33,21 +33,30 @@ namespace minilog
 // Forwards messages to a remote syslog server over UDP.
 // Messages exceeding max_message_size are truncated before sending.
 //
-// The destination may be a hostname or an IP literal. It is resolved once, at
-// construction, and the endpoint is then used for the lifetime of the process:
-// re-resolving per message would put a name lookup on the hot path, and a timer
-// re-resolving periodically buys nothing until a deployment turns up whose
-// collector actually moves.
+// The destination may be a hostname or an IP literal. It is settled once, at
+// construction — a literal by parsing it, a name by a single lookup — and the
+// endpoint is then used for the lifetime of the process: re-resolving per message
+// would put a name lookup on the hot path, and a timer re-resolving periodically
+// buys nothing until a deployment turns up whose collector actually moves.
 //
-// The lookup is *started* by the constructor and completes on the io_context.
-// It used to be a blocking getaddrinfo in the constructor, which on Windows ran
-// inside the window the SCM times a start in, and on every platform delayed the
-// UDP bind that follows it. An unresponsive resolver is exactly when that call
-// blocks longest — tens of seconds — and is also the case the retry below
-// exists for, so the two combined could have the SCM declare a start hung. The
-// cost of the asynchronous form is that datagrams arriving before the lookup
-// returns are dropped; that is a state the retry path already concedes on every
-// failure, and they are counted and reported like any other.
+// An IP literal is parsed and adopted by the constructor, so forwarding to one
+// works from the first datagram. A name is different: the lookup is *started* by
+// the constructor and completes on the io_context. It used to be a blocking
+// getaddrinfo in the constructor, which on Windows ran inside the window the SCM
+// times a start in, and on every platform delayed the UDP bind that follows it.
+// An unresponsive resolver is exactly when that call blocks longest — tens of
+// seconds — and is also the case the retry below exists for, so the two combined
+// could have the SCM declare a start hung. The cost of the asynchronous form is
+// that datagrams arriving before the lookup returns are dropped; that is a state
+// the retry path already concedes on every failure, and they are counted and
+// reported like any other.
+//
+// The split is between what can block and what cannot, not between two spellings
+// of a destination: parsing a literal costs no syscall and no resolver thread, so
+// it cannot delay the bind however the host's DNS behaves. Sending a literal
+// through the resolver as well was tried, and left a startup window in which
+// datagrams to a reachable collector were dropped — never on an idle host,
+// roughly one start in fourteen under load, taking the whole first burst.
 //
 // A name that does not resolve at startup is not a startup failure. A Windows
 // AUTO_START service is routinely running before DNS is, so treating "not yet"
@@ -84,7 +93,8 @@ public:
     // How many lookups have come back, successfully or not. For tests, under the
     // same rule as resolved(). It is what lets a test wait for a failed lookup —
     // which has no other outward sign, since the failure is reported to the
-    // system log and forwarding simply stays off.
+    // system log and forwarding simply stays off. It stays 0 for an IP literal,
+    // which is settled without a lookup.
     [[nodiscard]] uint64_t resolveAttempts() const { return m_resolveAttempts; }
 
 private:
@@ -125,6 +135,11 @@ private:
     // success reads: recovering from a reported outage is not the same event as
     // the first lookup simply finishing after a few datagrams had arrived.
     bool m_failureReported = false;
+    // Whether the socket-open failure in particular was reported. Kept apart
+    // from m_failureReported so that a lookup which fails and then succeeds into
+    // a descriptor limit still says so: the two failures are different faults
+    // with different fixes, and one flag for both silenced the second.
+    bool m_openFailureReported = false;
 };
 
 } // namespace minilog

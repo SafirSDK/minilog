@@ -42,7 +42,22 @@
   finishes are dropped, counted, and reported when it succeeds, the same way the retry path has
   always handled them. Stopping minilog while a lookup is in flight still waits for that lookup to
   return: Asio runs `getaddrinfo` on a thread of its own and `resolver::cancel()` only reaches
-  operations still queued, which is now said where it used to be claimed otherwise.
+  operations still queued, which is now said where it used to be claimed otherwise. The Windows
+  service reports a 30-second `SERVICE_STOP_PENDING` wait hint to cover that wait; it used to report
+  none, which tells the SCM to expect the stop to be immediate. 30 s is what `--stop` waits by
+  default, so both ends give up at the same point.
+
+  An IP literal destination does not go through the resolver at all: the constructor parses it with
+  `boost::asio::ip::make_address` and forwarding is live before the socket binds. Sending literals
+  through the asynchronous lookup along with names was tried first, because one path for both reads
+  better, but parsing a literal is not a lookup — no syscall, no resolver thread, nothing that can
+  block — so it was paying the cost of the fix without having the problem the fix is for. Measured,
+  because the window sounded too small to matter: on an idle host it never opened in 240 starts, but
+  with the machine loaded about one start in fourteen lost the whole first burst to a destination
+  that was reachable the entire time. That is what a collector restarting alongside minilog looks
+  like. Nothing was silent about it — the local sinks kept every message and the log said how many
+  were not forwarded — but the split now follows what can block rather than how the destination was
+  spelled. A name still only has its lookup started, which is the part that needed to move.
 
 - **`max_size = 0` now works as documented.** `config.hpp`, the README and `minilog.conf.example`
   all describe `0` as "no rotation", and `rotateIfNeeded` implements exactly that — but the parser
@@ -59,9 +74,11 @@
 
 - **`max_files` is bounded at 1000.** Every generation costs a filesystem existence check — on each
   rotation in the server, and on each HTTP request in the web viewer as it builds its file chain —
-  so `max_files = 2000000000` was two billion stat calls to answer one GET. The server rejects
-  anything higher and the viewer clamps, since it can be pointed at a config directly. 1000 is the
-  number the viewer already used for `max_files = 0`, so both ends agree on how deep a chain can be.
+  so `max_files = 2000000000` was two billion stat calls to answer one GET. Both the server and the
+  viewer reject anything higher: the viewer clamped at first, which would have had it show a chain
+  depth no running minilog ever writes and say nothing about a config minilog will not start on.
+  1000 is the number the viewer already used for `max_files = 0`, so both ends agree on how deep a
+  chain can be.
 
 - **The web viewer escapes the severity badge's class attribute.** The badge text was escaped and
   the `class` interpolation next to it was not, so a severity containing a double quote would close
@@ -98,9 +115,15 @@
   resets it — a socket failing in two ways alternately is still a failing socket. An earlier
   draft restarted the backoff whenever the error message changed, which two errors alternating
   defeated completely: 100 such errors produced 100 log lines and never left the 50 ms delay,
-  where 100 identical ones produced one line. The first error after a healthy receive is still
-  reported immediately, and recovery is reported with the length of the streak, counted across a
-  mixed one.
+  where 100 identical ones produced one line. A second draft reported the first error after every
+  successful receive immediately, which a socket failing on every other receive defeated the same
+  way — 100 error/success pairs produced 100 error lines and 100 recovery lines, and a success
+  resets the delay, so it never left 50 ms either. The reporting interval therefore spans
+  successes, and only a streak that was reported gets a "receiving again after N consecutive
+  receive error(s)" line, counted across a mixed streak. A summary covering occurrences with a
+  successful receive among them says "failing intermittently" rather than "still failing", which
+  would claim nothing had been received since the last line. The delay still resets on a success: a
+  socket that just delivered a datagram should re-arm at once.
 
 - **The cli-viewer no longer exits on a record it did not expect.** `record.get("message", "")`
   defaults only when the key is *absent*, so `"message": null` produced `None`, which reached

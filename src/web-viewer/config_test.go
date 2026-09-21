@@ -254,20 +254,39 @@ func TestLoadConfig_MaxFilesZero_Unlimited(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_MaxFilesAboveTheLimitIsClamped(t *testing.T) {
+func TestLoadConfig_MaxFilesAboveTheLimit_IsAnError(t *testing.T) {
 	// Every generation costs an os.Stat while the chain is built, on every
 	// request, so "max_files = 2000000000" is two billion stat calls to answer
-	// one GET. minilog's loader rejects it; the viewer can be pointed at a
-	// config directly, so it clamps.
+	// one GET. It is rejected rather than clamped because the server rejects it:
+	// clamping would have the viewer show a chain depth no running minilog ever
+	// writes, and say nothing about the config being one minilog will not start
+	// on — the same reason an unreadable max_files is an error here.
 	dir := t.TempDir()
 	p := writeConfig(t, dir,
 		"[output.main]\njsonl_file = /var/log/syslog.jsonl\nmax_files = 2000000000\n")
+	_, err := loadConfig(p)
+	if err == nil {
+		t.Fatal("want an error for max_files = 2000000000, got nil")
+	}
+	for _, want := range []string{"[output.main] max_files", "1000"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestLoadConfig_MaxFilesAtTheLimit_IsAccepted(t *testing.T) {
+	// The boundary itself is a legal value, and it is the depth max_files = 0
+	// maps to, so rejecting it would make the sentinel unreachable by hand.
+	dir := t.TempDir()
+	p := writeConfig(t, dir,
+		"[output.main]\njsonl_file = /var/log/syslog.jsonl\nmax_files = 1000\n")
 	cfg, err := loadConfig(p)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.Sinks[0].MaxFiles != 1000 {
-		t.Errorf("MaxFiles: want 1000 (the limit), got %d", cfg.Sinks[0].MaxFiles)
+		t.Errorf("MaxFiles: want 1000, got %d", cfg.Sinks[0].MaxFiles)
 	}
 }
 

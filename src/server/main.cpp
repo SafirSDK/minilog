@@ -73,10 +73,11 @@ int runServer(const std::string& configPath)
         return EXIT_FAILURE;
     }
 
-    // Constructed before the socket binds, and deliberately cheap: it starts the
-    // lookup of the forwarding destination but does not wait for it. A blocking
-    // getaddrinfo here delayed the bind below by the resolver's timeout and, on
-    // Windows, spent that time inside the SCM's start window. A name that does
+    // Constructed before the socket binds, and deliberately cheap: an IP literal
+    // destination is parsed and ready here, and a name only has its lookup
+    // started, not waited for. A blocking getaddrinfo here delayed the bind below
+    // by the resolver's timeout and, on Windows, spent that time inside the SCM's
+    // start window; parsing a literal cannot block, so it stays. A name that does
     // not resolve is still not a startup failure — a service started before DNS
     // is up must not fail its start over it — so reaching the catch means
     // something else went wrong, which must still be a reported startup failure

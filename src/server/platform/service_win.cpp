@@ -54,6 +54,20 @@ static constexpr char SERVICE_DESC[] = "Minimal syslog server. https://github.co
 // on the io_context and finishes after the service is already reported running.
 static constexpr DWORD STARTUP_WAIT_HINT_MS = 10000;
 
+// Upper bound on stopping, reported as the SERVICE_STOP_PENDING wait hint. Like
+// startup, stopping is milliseconds in practice — the sinks flush and the
+// io_context runs out of work — with one exception: a forwarding-destination
+// lookup that is in flight when the stop arrives. Asio runs getaddrinfo on a
+// thread of its own and resolver::cancel() only reaches operations still queued,
+// so the stop waits for that lookup to return, and an unresponsive resolver
+// takes tens of seconds over it. This is the hint that keeps the SCM from
+// declaring the stop hung while that happens, and it is longer than the startup
+// hint for exactly that reason: the lookup is no longer in the startup path, so
+// it is in this one. 30 s is also what --stop waits by default
+// (DEFAULT_STOP_TIMEOUT_S in main.cpp), so the installer and the SCM give up on
+// a stop at the same point rather than one of them first.
+static constexpr DWORD STOP_WAIT_HINT_MS = 30000;
+
 // Recovery actions configured at install time: restart twice, then leave the
 // service stopped. The reset period is what separates the two failure modes.
 // A service that fails at startup fails again within seconds, so the counter
@@ -104,7 +118,7 @@ void WINAPI serviceCtrlHandler(DWORD ctrl)
 {
     if (ctrl == SERVICE_CONTROL_STOP)
     {
-        reportStatus(SERVICE_STOP_PENDING);
+        reportStatus(SERVICE_STOP_PENDING, NO_ERROR, STOP_WAIT_HINT_MS);
         SetEvent(g_stopEvent);
     }
 }

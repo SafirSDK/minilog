@@ -116,11 +116,16 @@ void drain(boost::asio::io_context& ioc)
 
 // Let the destination resolve.
 //
-// The lookup is started by the constructor but completes on the io_context (see
-// #38), so a test that expects a datagram to arrive has to run the io_context
-// before it forwards anything — otherwise the forward runs on the strand first
-// and is dropped as unresolved, which is the documented cost of not blocking
-// the UDP bind on a name lookup.
+// A name's lookup is started by the constructor but completes on the io_context
+// (see #38), so a test that expects a datagram to arrive has to run the
+// io_context before it forwards anything — otherwise the forward runs on the
+// strand first and is dropped as unresolved, which is the documented cost of not
+// blocking the UDP bind on a name lookup.
+//
+// For an IP literal there is nothing to wait for: the constructor has already
+// adopted the endpoint, so this returns true on the first check without running
+// anything. Tests using a literal keep the call anyway, so that what they assert
+// does not depend on knowing which of the two the host string was.
 bool waitResolved(boost::asio::io_context& ioc,
                   const Forwarder& fwd,
                   std::chrono::milliseconds timeout = std::chrono::seconds(5))
@@ -140,10 +145,19 @@ bool waitResolved(boost::asio::io_context& ioc,
 // forwarding just stays off — so without this a test against an unresolvable
 // name reaches its assertions before the lookup has returned, and passes without
 // having exercised the failure path at all.
+//
+// The generous timeout is for the host this runs on rather than for the code. A
+// name under .invalid is guaranteed not to resolve, not to resolve quickly:
+// a resolver that forwards it upstream instead of answering NXDOMAIN itself
+// takes its own timeout over it, which on a glibc host walking its resolv.conf
+// attempts is around ten seconds per lookup — the same reason test_binary.py
+// waits as long as it does. A test that waits for two attempts pays that twice
+// plus kFirstRetryDelay, so 10 s was a timeout the CI runners could cross while
+// the code was working correctly.
 bool waitAttempts(boost::asio::io_context& ioc,
                   const Forwarder& fwd,
                   uint64_t n,
-                  std::chrono::milliseconds timeout = std::chrono::seconds(10))
+                  std::chrono::milliseconds timeout = std::chrono::seconds(60))
 {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (fwd.resolveAttempts() < n && std::chrono::steady_clock::now() < deadline)
@@ -189,42 +203,40 @@ BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Destination resolution ───────────────────────────────────────────────────
 //
-// The destination may be a name. The lookup is started by the constructor and
-// completes on the io_context; a name that does not resolve is reported and
-// retried in the background rather than failing the process, because a Windows
-// auto-start service routinely runs before DNS does.
+// The destination may be an IP literal, which the constructor parses and adopts,
+// or a name, whose lookup the constructor only starts — it completes on the
+// io_context. A name that does not resolve is reported and retried in the
+// background rather than failing the process, because a Windows auto-start
+// service routinely runs before DNS does.
 
 BOOST_AUTO_TEST_SUITE(destination_resolution)
 
-BOOST_AUTO_TEST_CASE(the_constructor_does_not_resolve)
+BOOST_AUTO_TEST_CASE(an_ip_literal_is_ready_before_the_io_context_runs)
 {
-    // #38. The lookup used to be a blocking getaddrinfo in the constructor,
-    // which on Windows ran inside the window the SCM times a start in, and on
-    // every platform sat in front of the UDP bind. It runs on the io_context
-    // now — so with the io_context not yet run, the destination cannot have
-    // been resolved.
+    // A literal is parsed, not looked up, so there is nothing to wait for and
+    // nothing that can block the UDP bind either way. It used to go through the
+    // resolver along with names, which read tidily and left a window between the
+    // bind and the completion handler where datagrams to a reachable collector
+    // were dropped: never on an idle host, about one start in fourteen under
+    // load, and it took the whole first burst rather than a single datagram.
     //
-    // That is also what an unresponsive resolver looks like from here: the one
-    // thing the constructor must not do is wait, and "the completion handler
-    // has not run" is the same state whether the lookup is taking a
-    // microsecond or forty seconds. Which is how this is tested without a real
-    // slow resolver, or any DNS at all.
-    //
-    // An IP literal takes the same path deliberately: the resolver handles
-    // both, and special-casing the literal would put the question of which one
-    // was written back into the constructor.
+    // Asserted without running the io_context at all, which is the only way to
+    // say "ready before anything else has had a chance to run" — and is exactly
+    // the state the server is in between constructing the Forwarder and binding
+    // the socket.
     Receiver rx;
     boost::asio::io_context ioc;
     Forwarder fwd(ioc, makeConfig(rx.port()));
 
-    BOOST_TEST(!fwd.resolved());
+    BOOST_TEST(fwd.resolved());
+    // No lookup was started, so a resolver that never answers cannot matter.
+    BOOST_TEST(fwd.resolveAttempts() == 0u);
 
-    // And once it is run, the destination resolves and forwarding works.
-    BOOST_REQUIRE(waitResolved(ioc, fwd));
-    fwd.forward(makeMsg("after the lookup"));
+    // The first datagram is forwarded, not counted and dropped.
+    fwd.forward(makeMsg("the very first"));
     drain(ioc);
 
-    BOOST_CHECK_EQUAL(rx.receive(), "after the lookup");
+    BOOST_CHECK_EQUAL(rx.receive(), "the very first");
 }
 
 BOOST_AUTO_TEST_CASE(an_unresponsive_resolver_does_not_hold_up_construction)
@@ -275,6 +287,13 @@ BOOST_AUTO_TEST_CASE(hostname_is_resolved_and_used)
     ForwardingConfig cfg = makeConfig(rx.port());
     cfg.host             = "localhost";
     Forwarder fwd(ioc, cfg);
+
+    // #38: a name costs a lookup, and the constructor only starts it. Nothing
+    // has run the io_context yet, so it cannot have finished — the property that
+    // keeps a slow resolver away from the UDP bind, asserted here on a name that
+    // does resolve rather than only on one that never will.
+    BOOST_TEST(!fwd.resolved());
+
     BOOST_REQUIRE(waitResolved(ioc, fwd));
 
     fwd.forward(makeMsg("by name"));
@@ -285,9 +304,9 @@ BOOST_AUTO_TEST_CASE(hostname_is_resolved_and_used)
 
 BOOST_AUTO_TEST_CASE(ipv6_destination_is_sent_to)
 {
-    // The socket's protocol comes from the resolved endpoint. It used to be
-    // hardcoded to v4, so a v6 destination parsed in the config and then could
-    // not be sent to at all.
+    // The socket's protocol comes from the destination endpoint — here a parsed
+    // literal, on the name path a resolved one. It used to be hardcoded to v4, so
+    // a v6 destination parsed in the config and then could not be sent to at all.
     boost::asio::io_context probeIoc;
     boost::asio::ip::udp::socket probe(probeIoc);
     boost::system::error_code ec;
@@ -349,16 +368,27 @@ BOOST_AUTO_TEST_CASE(a_message_sent_before_the_lookup_finishes_is_not_misrouted)
     // arriving in the first moments is dropped rather than forwarded, counted,
     // and mentioned when the lookup succeeds.
     //
-    // Which of the two orderings happens here is a genuine race — the forward is
-    // queued on the strand microseconds after construction, and the lookup's
-    // completion is queued whenever the resolver's own thread gets round to it —
-    // so this asserts what has to hold either way rather than pretending the
-    // race can be won on purpose. What must never happen is the payload going
-    // somewhere other than the configured destination, or the forwarder being
-    // left unusable by having been given work before it was ready.
-    Receiver rx;
+    // On a name, deliberately: a literal has no such window any more, so running
+    // this against one would assert nothing. Which of the two orderings happens
+    // is a genuine race — the forward is queued on the strand microseconds after
+    // construction, and the lookup's completion is queued whenever the resolver's
+    // own thread gets round to it — so this asserts what has to hold either way
+    // rather than pretending the race can be won on purpose. What must never
+    // happen is the payload going somewhere other than the configured
+    // destination, or the forwarder being left unusable by having been given work
+    // before it was ready.
+    boost::asio::io_context resolverIoc;
+    boost::asio::ip::udp::resolver resolver(resolverIoc);
+    boost::system::error_code ec;
+    const auto results = resolver.resolve("localhost", "0", ec);
+    BOOST_REQUIRE_MESSAGE(!ec && !results.empty(), "localhost does not resolve on this host");
+
+    ReceiverOn rx(boost::asio::ip::udp::endpoint(results.begin()->endpoint().protocol(), 0));
+
     boost::asio::io_context ioc;
-    Forwarder fwd(ioc, makeConfig(rx.port()));
+    ForwardingConfig cfg = makeConfig(rx.port());
+    cfg.host             = "localhost";
+    Forwarder fwd(ioc, cfg);
 
     fwd.forward(makeMsg("too early"));
     BOOST_REQUIRE(waitResolved(ioc, fwd));

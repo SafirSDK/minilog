@@ -536,6 +536,8 @@ BOOST_AUTO_TEST_CASE(a_summary_is_reported_once_the_interval_has_passed)
     // The first error was reported on its own, so it is not in the count: the
     // two silent repeats after it, plus this one.
     BOOST_TEST(decision.suppressed == 3u);
+    // Nothing got through in between, so the line may say "still failing".
+    BOOST_TEST(decision.intermittent == false);
 }
 
 BOOST_AUTO_TEST_CASE(a_different_error_mid_streak_does_not_restart_the_backoff)
@@ -651,11 +653,36 @@ BOOST_AUTO_TEST_CASE(a_message_change_does_not_discard_the_suppressed_count)
     BOOST_TEST(decision.suppressed == 6u);
 }
 
-BOOST_AUTO_TEST_CASE(a_new_error_on_a_healthy_socket_is_still_reported_at_once)
+BOOST_AUTO_TEST_CASE(a_summary_covering_one_error_does_not_say_they_were_mixed)
 {
-    // The property worth keeping from the branch that was removed: an error
-    // arriving after the socket has been receiving normally is reported
-    // immediately, whatever came before it and however long ago.
+    // The error reported on its own is not one of the occurrences the summary
+    // covers, so it must not make the summary a mixed one. The guard used to ask
+    // whether the streak was non-empty, which it is by then, and so "no buffer
+    // space" once followed by nothing but "connection reset" reported five
+    // connection resets as "not all with this error".
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+    backoff.onError("no buffer space", start);
+    for (int i = 0; i < 5; ++i)
+    {
+        backoff.onError("connection reset", start);
+    }
+
+    const auto decision =
+        backoff.onError("connection reset", start + ReceiveBackoff::kReportInterval);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.suppressed == 6u);
+    BOOST_TEST(decision.varied == false);
+}
+
+BOOST_AUTO_TEST_CASE(the_report_interval_spans_a_successful_receive)
+{
+    // What replaced "an error after a healthy receive is always reported at
+    // once". That read well for a socket that fails, is fixed and later fails
+    // again, and it is also the rule that let a socket failing every other
+    // receive log without bound — see the flapping case below. The interval
+    // decides, and a success in the middle of it does not shorten it.
     ReceiveBackoff backoff;
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < 10; ++i)
@@ -664,11 +691,52 @@ BOOST_AUTO_TEST_CASE(a_new_error_on_a_healthy_socket_is_still_reported_at_once)
     }
     BOOST_REQUIRE(backoff.onSuccess() == 10u);
 
-    const auto decision = backoff.onError("connection reset", start);
+    const auto immediate = backoff.onError("connection reset", start);
+    BOOST_TEST(!immediate.report);
+    // The delay does reset, which is the half of the state a success owns: the
+    // socket just delivered a datagram, so re-arming at once is right.
+    BOOST_TEST(immediate.delay.count() == ReceiveBackoff::kFirstDelay.count());
 
-    BOOST_TEST(decision.report);
-    BOOST_TEST(decision.suppressed == 0u);
-    BOOST_TEST(decision.delay.count() == ReceiveBackoff::kFirstDelay.count());
+    const auto later = backoff.onError("connection reset", start + ReceiveBackoff::kReportInterval);
+
+    BOOST_TEST(later.report);
+    // Everything since the last line, from both sides of the success.
+    BOOST_TEST(later.suppressed == 11u);
+    // And the line says so. A summary spanning a success is describing a socket
+    // failing by turns; "still failing" would read as one that has received
+    // nothing since the last report, which is the thing an operator is trying to
+    // work out.
+    BOOST_TEST(later.intermittent);
+}
+
+BOOST_AUTO_TEST_CASE(a_socket_flapping_between_error_and_success_is_not_a_line_per_error)
+{
+    // #39 again, reached the other way. Measured against the class as first
+    // committed, where every success cleared the reporting state and the streak:
+    // 100 iterations of one error then one successful receive produced 100 error
+    // lines and 100 "receiving again after 1 consecutive receive error(s)"
+    // lines, with the delay never leaving kFirstDelay. A socket that delivers a
+    // datagram between failures is no less a failing socket, and 200 lines is
+    // the same unbounded log rate — into the host's syslog, which on a collector
+    // comes back in.
+    ReceiveBackoff backoff;
+    const auto start = std::chrono::steady_clock::now();
+
+    int errorLines    = 0;
+    int recoveryLines = 0;
+    for (int i = 0; i < 100; ++i)
+    {
+        // Same instant throughout: the interval must be what holds the rate
+        // down, not the test running slowly.
+        errorLines += backoff.onError("no buffer space", start).report ? 1 : 0;
+        recoveryLines += backoff.onSuccess() != 0 ? 1 : 0;
+    }
+
+    BOOST_TEST(errorLines == 1);
+    // Recovery follows the error line it recovers from. Reporting every
+    // recovery would simply move the line per iteration from one call to the
+    // other.
+    BOOST_TEST(recoveryLines == 1);
 }
 
 BOOST_AUTO_TEST_CASE(success_counts_a_mixed_streak_in_full)
@@ -698,10 +766,11 @@ BOOST_AUTO_TEST_CASE(success_ends_the_streak_and_reports_how_long_it_was)
 
     BOOST_TEST(backoff.onSuccess() == 5u);
 
-    // And the next error is a fresh one: full reporting, first delay.
+    // And the next error starts a fresh streak: the first delay again, and a
+    // line as soon as the reporting interval allows one.
     const auto decision = backoff.onError("no buffer space", now);
-    BOOST_TEST(decision.report);
     BOOST_TEST(decision.delay.count() == ReceiveBackoff::kFirstDelay.count());
+    BOOST_TEST(backoff.onError("no buffer space", now + ReceiveBackoff::kReportInterval).report);
 }
 
 BOOST_AUTO_TEST_CASE(success_without_a_streak_reports_nothing)

@@ -47,6 +47,15 @@ func loadConfig(configPath string) (Config, error) {
 	const outputPrefix = "output."
 	const viewerSection = "web_viewer"
 
+	// maxFilesLimit is both the ceiling on a configured max_files and what
+	// max_files = 0 ("keep every generation") maps to. Every generation costs an
+	// os.Stat while the chain is built, on every request, so an unbounded value
+	// is unbounded work per HTTP request — "max_files = 2000000000" is two
+	// billion stat calls to answer one GET. It is the same limit minilog's own
+	// loader enforces (kMaxFilesLimit in config.hpp), so both ends agree on how
+	// deep a chain can be.
+	const maxFilesLimit = 1000
+
 	type section struct {
 		name        string
 		jsonlFile   string
@@ -140,9 +149,19 @@ func loadConfig(configPath string) (Config, error) {
 			// "7 ; keep 7 generations" lands here: a value runs to the end of
 			// its line, which is what makes a '#' or ';' legal in a path.
 			n, err := strconv.Atoi(val)
-			if err != nil || n < 0 {
+			if err != nil {
 				return Config{}, fmt.Errorf(
 					"[output.%s] max_files = %q is not a whole number", current.name, val)
+			}
+			// Out of range is rejected rather than clamped, for the same reason
+			// as an unreadable value: the server will not start on it, so
+			// clamping would have the viewer show a chain depth no running
+			// minilog ever writes, and report nothing about the config being
+			// wrong.
+			if n < 0 || n > maxFilesLimit {
+				return Config{}, fmt.Errorf(
+					"[output.%s] max_files = %d must be between 0 and %d",
+					current.name, n, maxFilesLimit)
 			}
 			current.maxFiles = n
 			current.maxFilesSet = true
@@ -153,22 +172,15 @@ func loadConfig(configPath string) (Config, error) {
 	}
 
 	const defaultMaxFiles = 10
-	// maxFilesLimit is both the ceiling on a configured max_files and what
-	// max_files = 0 ("keep every generation") maps to. Every generation costs an
-	// os.Stat while the chain is built, on every request, so an unbounded value
-	// is unbounded work per HTTP request — "max_files = 2000000000" is two
-	// billion stat calls to answer one GET. minilog's own loader rejects
-	// anything above this (kMaxFilesLimit in config.hpp); clamping here as well
-	// is what keeps a config the viewer is pointed at directly from costing the
-	// same.
-	const maxFilesLimit = 1000
 
 	var sinks []Sink
 	for _, s := range sections {
 		if s.jsonlFile != "" {
 			mf := defaultMaxFiles
 			if s.maxFilesSet {
-				if s.maxFiles == 0 || s.maxFiles > maxFilesLimit {
+				// Anything out of range was rejected as it was read, so the
+				// only value left to translate is the 0 sentinel.
+				if s.maxFiles == 0 {
 					mf = maxFilesLimit
 				} else {
 					mf = s.maxFiles

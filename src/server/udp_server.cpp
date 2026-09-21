@@ -139,10 +139,16 @@ void UdpServer::handleReceiveError(const boost::system::error_code& ec)
         std::string message = "minilog: receive error: " + ec.message();
         if (decision.suppressed != 0)
         {
-            message += " (still failing; " + std::to_string(decision.suppressed) +
+            // "still failing" is a claim that nothing has been received since the
+            // last line, and the reporting interval now spans successful
+            // receives — so a socket failing every other receive would be
+            // described as one that has stopped receiving altogether. The
+            // difference is the whole question for whoever is looking at this.
+            message += decision.intermittent ? " (failing intermittently; " : " (still failing; ";
+            message += std::to_string(decision.suppressed) +
                        " further occurrence(s) since the last report";
-            // Said explicitly, because the line names one error and "still
-            // failing" would otherwise claim the others were that same one.
+            // Said explicitly, because the line names one error and a bare
+            // count would otherwise claim the others were that same one.
             message += decision.varied ? ", not all with this error)" : ")";
         }
         osLogError(message);

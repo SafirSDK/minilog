@@ -17,6 +17,7 @@
 
 #include "platform/os_log.hpp"
 
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/post.hpp>
 
 #include <algorithm>
@@ -46,13 +47,29 @@ Forwarder::Forwarder(boost::asio::io_context& ioc, ForwardingConfig cfg)
         return;
     }
 
-    // Started here, finished on the io_context. Resolving synchronously in the
-    // constructor made a reachable destination usable from the first datagram,
-    // but it did so by blocking in getaddrinfo before the UDP socket binds and,
-    // on Windows, before the SCM is told the service is running. An IP literal
-    // takes this path too — the resolver handles both, which is what removes
-    // the need to decide which one was written — and for a literal it finishes
-    // essentially at once.
+    // An IP literal is adopted here and now, so forwarding is live before the
+    // UDP socket binds. Parsing one is not a lookup: no syscall, no resolver
+    // thread, nothing that can block — and blocking is the only reason the name
+    // lookup had to leave this path. Handing a literal to the resolver as well
+    // read tidily, but it left a window between the bind and the completion
+    // handler in which datagrams to a perfectly reachable collector were counted
+    // and dropped. On an idle host that window never opened in 240 starts; with
+    // the machine loaded it opened on about one start in fourteen and took the
+    // whole first burst with it, which is what a collector's own start looks
+    // like.
+    boost::system::error_code ec;
+    const auto address = boost::asio::ip::make_address(m_cfg.host, ec);
+    if (!ec)
+    {
+        useEndpoint(boost::asio::ip::udp::endpoint(address, m_cfg.port));
+        return;
+    }
+
+    // A name, and therefore a lookup: started here, finished on the io_context.
+    // Resolving synchronously in the constructor made a reachable destination
+    // usable from the first datagram, but it did so by blocking in getaddrinfo
+    // before the UDP socket binds and, on Windows, before the SCM is told the
+    // service is running.
     startResolve(/*firstAttempt=*/true);
 }
 
@@ -98,18 +115,26 @@ void Forwarder::useEndpoint(const boost::asio::ip::udp::endpoint& endpoint)
     // The protocol comes from the endpoint rather than being assumed to be
     // IPv4, which is what makes an IPv6 destination work at all.
     //
-    // Opened with an error_code because this now runs on the io_context rather
-    // than in the constructor: a throw here would escape into runIoContext and
-    // be reported as an unhandled handler exception, which says nothing about
-    // forwarding. Retried like a failed lookup, since whatever exhausted the
-    // descriptors may not still be doing so.
+    // Opened with an error_code because this runs on the io_context for a name:
+    // a throw there would escape into runIoContext and be reported as an
+    // unhandled handler exception, which says nothing about forwarding. Retried
+    // like a failed lookup, since whatever exhausted the descriptors may not
+    // still be doing so. For an IP literal this runs in the constructor instead,
+    // where nothing else can be touching the forwarder yet, so the same code is
+    // safe on both paths.
     boost::system::error_code ec;
     m_socket.open(endpoint.protocol(), ec);
     if (ec)
     {
-        if (!m_failureReported)
+        // Gated on its own flag, not on m_failureReported. A destination that
+        // failed to resolve and then resolved into a descriptor limit has two
+        // things wrong with it, and sharing the flag made the second one silent —
+        // leaving forwarding off with the log saying only that a name could not
+        // be resolved, which by then it can.
+        if (!m_openFailureReported)
         {
-            m_failureReported = true;
+            m_openFailureReported = true;
+            m_failureReported     = true;
             osLogError("minilog: cannot open a forwarding socket for [forwarding] host " +
                        describe(m_cfg) + ": " + ec.message() +
                        ". Forwarding is off and will be retried in the background; the rest of "
