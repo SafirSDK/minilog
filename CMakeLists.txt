@@ -83,6 +83,7 @@ endif()
 
 add_executable(minilog
     src/server/main.cpp
+    src/server/preflight.cpp
     src/server/config/config.cpp
     src/server/parser/syslog_parser.cpp
     src/server/udp_server.cpp

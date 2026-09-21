@@ -47,6 +47,11 @@ std::optional<int> tryRunAsService(const std::function<int()>& /*serviceMain*/)
 
 void installService(const std::string& /*configPath*/) {}
 
+ServiceState queryServiceState()
+{
+    return ServiceState::NotApplicable;
+}
+
 void stopService(std::chrono::seconds /*timeout*/) {}
 
 void uninstallService(std::chrono::seconds /*timeout*/) {}

@@ -91,6 +91,29 @@ void installService(const std::string& configPath);
 // Linux: no-op.
 void stopService(std::chrono::seconds timeout);
 
+// What the OS service manager currently says about minilog.
+enum class ServiceState
+{
+    NotApplicable, // this platform has no service manager (Linux)
+    NotInstalled,  // no minilog service is registered
+    Running,       // registered and running, so it holds the UDP port
+    NotRunning,    // registered but stopped, starting or stopping
+    Unknown        // the service manager could not be asked (usually no rights)
+};
+
+// Ask the service manager whether minilog is running.
+//
+// Purely informational: this exists so --check can tell "the port is taken by
+// the minilog you already installed" apart from "the port is taken by something
+// else", which are opposite conclusions about the same bind failure. Nothing
+// here throws — a query that cannot be answered is Unknown, and the caller says
+// less rather than failing.
+//
+// Windows: queries the SCM. Anyone can open it for read, so this needs no
+//          elevation, unlike --install or --stop.
+// Linux:   always NotApplicable.
+ServiceState queryServiceState();
+
 // Stop the minilog Windows NT service, wait for its process to exit, and delete
 // it. timeout - how long to wait for the stop.
 //

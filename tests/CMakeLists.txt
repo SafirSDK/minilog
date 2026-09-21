@@ -27,6 +27,26 @@ add_boost_test(test_wait_until server/test_wait_until.cpp)
 add_boost_test(test_config     server/test_config.cpp)
 target_sources(test_config     PRIVATE ../src/server/config/config.cpp)
 
+add_boost_test(test_preflight  server/test_preflight.cpp)
+target_sources(test_preflight  PRIVATE
+    ../src/server/config/config.cpp
+    ../src/server/preflight.cpp
+)
+if(WIN32)
+    target_sources(test_preflight PRIVATE
+        ../src/server/platform/os_log_win.cpp
+        ../src/server/platform/service_win.cpp
+    )
+    target_include_directories(test_preflight PRIVATE ${CMAKE_BINARY_DIR})
+    add_dependencies(test_preflight minilog_generate_messages)
+    target_link_libraries(test_preflight PRIVATE ws2_32 advapi32)
+else()
+    target_sources(test_preflight PRIVATE
+        ../src/server/platform/os_log_linux.cpp
+        ../src/server/platform/service_linux.cpp
+    )
+endif()
+
 add_boost_test(test_output     server/test_output.cpp)
 target_sources(test_output     PRIVATE
     ../src/server/config/config.cpp

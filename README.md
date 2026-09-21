@@ -151,6 +151,7 @@ The suite contains:
 |--------|---------------|
 | `test_config` | INI config parsing, defaults, validation |
 | `test_wait_until` | The stop-and-wait timeout logic behind `--stop`/`--uninstall` |
+| `test_preflight` | What `--check` reports about a config and the machine under it |
 | `test_parser` | RFC 3164, RFC 5424, and UNKNOWN datagram parsing |
 | `test_output` | File writing, rotation, facility filtering |
 | `test_forwarder` | UDP forwarding, truncation, facility filtering |
@@ -195,6 +196,7 @@ ctest --preset linux-asan-extended --output-on-failure
 
 ```
 minilog <config-path>
+minilog --check <config-path>      # validate the config and this machine, then exit
 minilog --help
 ```
 
@@ -255,6 +257,51 @@ Note that `sc start minilog` returns as soon as the service reports `SERVICE_STA
 its exit code does not say whether startup then succeeded. Use `net start minilog`, which waits
 for the outcome, or check `sc query minilog` afterwards — a failed start shows
 `WIN32_EXIT_CODE : 1066` with a non-zero `SERVICE_EXIT_CODE`. The reason is in the Event Log.
+
+### Validating a deployment — `--check`
+
+`minilog --check <config-path>` loads the config, checks the machine against it, prints everything
+it found and exits. It starts no server, writes to no log file and creates nothing that outlives
+the run: the probe it writes into each log directory is deleted again, and an existing log file is
+opened for appending without a byte being added.
+
+```
+minilog --check /etc/minilog/minilog.conf
+```
+
+It reports:
+
+- **config errors** — the same validation the server does at startup. A config that will not load
+  ends the run, since there is nothing left to check the machine against.
+- **a log directory that does not exist**, distinguished from **one that exists but is not
+  writable**. minilog never creates directories, so these are the two halves of provisioning and
+  they have nothing in common: one needs the directory created, the other needs its ACL changed.
+- **an existing log file that cannot be appended to** — a directory with the right permissions is
+  not enough once someone has tightened the permissions on yesterday's log.
+- **the UDP listen port**, by binding it with the same socket options the server uses and letting
+  go again.
+- **an unresolvable forwarding destination**, when `[forwarding] enabled = true`. The server
+  deliberately does not fail to start over this; it retries the lookup in the background, so the
+  only symptom at runtime is that nothing is forwarded.
+- **`max_size = 0`**, as a warning: rotation is off, which is a valid choice and worth stating.
+
+Every check runs even after one has failed, so one run lists every problem — a preflight that
+stopped at the first fault would force the fix-rerun-fix-rerun cycle it exists to prevent. The exit
+code is non-zero if any finding is an error; warnings alone exit zero.
+
+Output goes to stdout only, never to the Event Log or syslog: a validation run must not leave
+entries behind, least of all before `--install` has registered the event source that renders them.
+
+On Windows with the service already running, the bind test cannot succeed —
+`SO_EXCLUSIVEADDRUSE` means the running minilog holds the port exclusively. `--check` asks the SCM
+and reports that as a warning naming the service, rather than as a bind failure; that is the state
+of a healthy machine, which is where `--check` is most often run. The SCM query is read-only and
+needs no elevation.
+
+What it cannot tell you is whether **remote senders can reach the port**. That takes a datagram
+from a real sender; nothing running locally can prove a firewall rule exists. The report ends with
+a list of what the configuration requires from the machine — listen endpoints and directories
+needing write access — to hand to whoever provisions those rules and ACLs.
 
 ## Configuration
 

@@ -13,6 +13,7 @@
  *
  ******************************************************************************/
 
+#include "preflight.hpp"
 #include "run_loop.hpp"
 #include "udp_server.hpp"
 
@@ -197,6 +198,7 @@ int main(int argc, char* argv[])
     // clang-format off
     desc.add_options()
         ("help,h",      "show this help message and exit")
+        ("check",       "validate the configuration and this machine, then exit without running")
         ("config-path", po::value<std::string>(), "path to the configuration file");
 #ifdef _WIN32
     desc.add_options()
@@ -265,6 +267,15 @@ int main(int argc, char* argv[])
     }
 
     const std::string configPath = vm["config-path"].as<std::string>();
+
+    if (vm.count("check"))
+    {
+        // stdout, not osLogError: on Windows that writes to the Event Log, and a
+        // validation run must not leave entries behind — least of all before
+        // --install has registered the event source that renders them.
+        return minilog::printPreflight(
+            minilog::preflight(configPath, minilog::queryServiceState()), configPath, std::cout);
+    }
 
     if (vm.count("install"))
     {

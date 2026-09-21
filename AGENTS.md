@@ -62,6 +62,17 @@ split as `ReceiveBackoff` and `AdmissionControl`. `LogFile::close()` sets a shut
 cancelling the timer: a pending retry keeps `io_context::run()` from returning, and `cancel()` alone
 does not stop a handler that was already queued.
 
+### Preflight (`--check`)
+`preflight.hpp/.cpp` validates a config and the host without starting anything. `preflight()`
+returns a `PreflightReport` (requirements + findings) and does the looking; `printPreflight()` does
+the printing and returns the exit code, so every check is testable without capturing output. It goes
+to stdout only — never `osLogError`, which would write to the Windows Event Log from a validation
+run. Directory writability is tested with a probe file that is deleted again, never by opening the
+configured log file (that would leave an empty `syslog.log` behind). `ServiceState` /
+`queryServiceState()` in `platform/service.hpp` exist for this one decision: a failed bind while the
+minilog service is running is a warning, not an error. It is passed into `preflight()` rather than
+queried inside it, so the classification is testable on a host with no SCM.
+
 ### RFC5424 structured data
 Kept verbatim as a prefix of `message` — **not** parsed into a separate JSONL field.
 

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### New
+
+- **`minilog --check <config-path>` validates a config and the machine it will run on.** minilog
+  never creates directories and never adjusts permissions, so its correctness depends on facts about
+  the host that nothing verified: the log directory existing, its ACL allowing writes, the UDP port
+  being free, the forwarding destination resolving. Most of those failures are loud at startup, but
+  the one that matters most is not — an unwritable log directory closes that sink and leaves the
+  server running and accepting datagrams, so nothing looks broken and the logs are simply empty.
+
+  `--check` reports every problem it finds in one run and exits non-zero if any of them is an error.
+  It distinguishes a directory that does not exist from one that exists but is not writable, because
+  the remedies have nothing in common. It separates errors from warnings: an unresolvable forwarding
+  destination with `enabled = true` is an error, while `max_size = 0` merely means rotation is off
+  and is worth stating. It also prints what the configuration requires of the machine — listen
+  endpoints and directories needing write access — so the output can be handed to whoever
+  provisions the firewall rules and ACLs.
+
+  Nothing is created that outlives the run: writability is tested with a probe file that is deleted
+  again, rather than by opening the configured log file, which would leave an empty `syslog.log`
+  behind on every run. Output goes to stdout only and never through the Event Log, which a
+  validation run must not write to — least of all before `--install` has registered the event
+  source. On Windows, a bind test that fails because the installed service is already running is
+  reported as such, by asking the SCM, rather than as a scary and wrong "cannot bind UDP 514" on a
+  perfectly healthy machine.
+
+  What it does not claim is that remote senders can reach the port: that needs a datagram from a
+  real sender, and no local test can show that a firewall rule exists.
+
 ### Changed
 
 - **A sink closed by a filesystem error now reopens itself.** Isolating a storage fault to the one

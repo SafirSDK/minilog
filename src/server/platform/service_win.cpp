@@ -593,6 +593,40 @@ void stopService(std::chrono::seconds timeout)
     osLogInfo("minilog service stopped");
 }
 
+ServiceState queryServiceState()
+{
+    // Read-only throughout, so this runs unelevated: SC_MANAGER_CONNECT and
+    // SERVICE_QUERY_STATUS are granted to any authenticated user. --check has to
+    // work for whoever is diagnosing the machine, not only for an administrator.
+    const ScopedServiceHandle scm(OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT));
+    if (!scm)
+    {
+        return ServiceState::Unknown;
+    }
+
+    const ScopedServiceHandle svc(OpenServiceA(scm.get(), SERVICE_NAME, SERVICE_QUERY_STATUS));
+    if (!svc)
+    {
+        return GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST ? ServiceState::NotInstalled
+                                                              : ServiceState::Unknown;
+    }
+
+    try
+    {
+        // START_PENDING counts as running: the process is up and has bound the
+        // socket well before it reports RUNNING to the SCM.
+        const auto status = queryServiceStatus(svc.get());
+        return (status.dwCurrentState == SERVICE_RUNNING ||
+                status.dwCurrentState == SERVICE_START_PENDING)
+                   ? ServiceState::Running
+                   : ServiceState::NotRunning;
+    }
+    catch (const std::exception&)
+    {
+        return ServiceState::Unknown;
+    }
+}
+
 void uninstallService(std::chrono::seconds timeout)
 {
     const ScopedServiceHandle scm(OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT));

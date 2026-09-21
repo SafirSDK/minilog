@@ -184,6 +184,141 @@ class TestCLI(unittest.TestCase):
             self.assertIn("no-such-file.conf", r.stderr)
 
 
+# ── --check preflight ─────────────────────────────────────────────────────────
+
+
+class TestCheckMode(unittest.TestCase):
+    """`--check` validates the config and the machine without running anything.
+
+    The checks themselves are covered by tests/server/test_preflight.cpp; what
+    only the real executable can show is that the flag is wired up, that the
+    report goes to stdout, that the exit code follows the findings, and that a
+    run leaves nothing behind.
+    """
+
+    def test_valid_config_reports_no_problems_and_exits_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            conf = write_config(d, free_port())
+
+            r = subprocess.run(
+                [BINARY, "--check", str(conf)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("No problems found", r.stdout)
+            self.assertIn("This configuration requires:", r.stdout)
+
+    def test_check_creates_no_log_file(self):
+        """Running the server creates syslog.log eagerly; --check must not.
+
+        A preflight that changes the machine it inspects cannot be run twice with
+        the same meaning -- and on a host being provisioned, a stray empty log
+        file with the wrong owner is its own fault to chase down.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            conf = write_config(d, free_port())
+
+            subprocess.run(
+                [BINARY, "--check", str(conf)],
+                capture_output=True,
+                timeout=10,
+                check=True,
+            )
+
+            self.assertEqual([p.name for p in sorted(d.iterdir())], ["minilog.conf"])
+
+    def test_missing_log_directory_exits_nonzero(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            conf = write_config(d, free_port(), log_dir=d / "not-provisioned")
+
+            r = subprocess.run(
+                [BINARY, "--check", str(conf)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("does not exist", r.stdout)
+            self.assertIn("not-provisioned", r.stdout)
+
+    def test_unloadable_config_exits_nonzero(self):
+        with tempfile.TemporaryDirectory() as d:
+            conf = Path(d) / "minilog.conf"
+            conf.write_text("[server]\nudp_port = not-a-number\n")
+
+            r = subprocess.run(
+                [BINARY, "--check", str(conf)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("config:", r.stdout)
+
+    def test_check_without_config_path_exits_nonzero(self):
+        r = subprocess.run([BINARY, "--check"], capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_port_held_by_another_process_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as holder:
+                holder.bind(("127.0.0.1", 0))
+                conf = write_config(d, holder.getsockname()[1])
+
+                r = subprocess.run(
+                    [BINARY, "--check", str(conf)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+
+            # No minilog service is registered on a CI runner, so the port being
+            # taken is a real error rather than the expected state.
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("cannot bind UDP", r.stdout)
+
+    def test_a_running_minilog_does_not_make_check_report_its_own_socket(self):
+        """The bind test is the one check that a healthy machine can fail.
+
+        On Windows the running service is recognised through the SCM and the
+        finding is a warning; elsewhere there is no service manager to ask, so
+        this only pins down that --check stays a read-only observer of a live
+        server and still names the port it could not test.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            port = free_port()
+            conf = write_config(d, port)
+
+            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
+            try:
+                self.assertTrue(wait_for_port(port), "server did not start in time")
+                r = subprocess.run(
+                    [BINARY, "--check", str(conf)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertIn(str(port), r.stdout)
+
+                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: still alive", port)
+                self.assertTrue(wait_for_text(d / "syslog.log", "still alive"))
+            finally:
+                terminate(proc)
+                proc.wait(timeout=10)
+
+            self.assertEqual(proc.returncode, 0)
+
+
 # ── Basic smoke test ──────────────────────────────────────────────────────────
 
 
