@@ -14,12 +14,16 @@
  ******************************************************************************/
 
 #pragma once
+#include "sink_recovery.hpp"
+
 #include "config/config.hpp"
 #include "parser/syslog_message.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -45,7 +49,12 @@ std::string escapeControlChars(std::string_view s);
 class LogFile
 {
 public:
-    explicit LogFile(boost::asio::io_context& ioc, OutputConfig cfg);
+    // retryInterval is how long a sink closed by a filesystem error waits before
+    // trying to open its files again. A parameter only so that tests can shorten
+    // it — nothing outside the tests passes anything but the default.
+    explicit LogFile(boost::asio::io_context& ioc,
+                     OutputConfig cfg,
+                     std::chrono::milliseconds retryInterval = SinkRecovery::kRetryInterval);
     ~LogFile();
 
     // Open the output files now, reporting failure instead of discovering it on
@@ -70,10 +79,20 @@ private:
     void closeFiles();
 
     // Report a failure and take this sink out of service: every later write is
-    // dropped. Deliberately permanent — nothing reopens a closed sink, so a
-    // storage problem degrades one sink instead of stopping the process or
-    // producing one error per message for as long as the problem lasts.
+    // dropped, so a storage problem degrades one sink instead of stopping the
+    // process or producing one error per message for as long as it lasts.
+    //
+    // Not permanent: scheduleRetry() arranges an attempt to open the files again,
+    // and the reporting is rate-limited so that a fault which never clears cannot
+    // fill the system log. See SinkRecovery for why the retry is on a timer.
     void failSink(const std::string& reason);
+
+    // Arm the retry timer for a sink that has just been closed.
+    void scheduleRetry();
+
+    // Try to open the files again, reporting recovery if they open. A failure
+    // here goes through failSink() like any other, which re-arms the timer.
+    void attemptReopen();
 
     // failSink for use from a handler's catch block. Never throws: a second
     // failure while reporting the first (out of memory, say) must not escape
@@ -82,9 +101,17 @@ private:
 
     OutputConfig m_cfg;
     boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
+    const std::chrono::milliseconds m_retryInterval;
 
-    // All fields below are accessed only on m_strand.
+    // All fields below are accessed only on m_strand. The timer's handler runs
+    // there too, since it is constructed with the strand as its executor.
+    boost::asio::steady_timer m_retryTimer;
+    SinkRecovery m_recovery;
     bool m_closed = false;
+    // Set by close() and never cleared: a sink closed for shutdown must not be
+    // reopened by a retry, and cancel() alone does not cover a handler that was
+    // already queued when the close arrived.
+    bool m_shuttingDown = false;
     std::ofstream m_textStream;
     std::ofstream m_jsonlStream;
     uint64_t m_textSize  = 0;

@@ -4,6 +4,31 @@
 
 ### Changed
 
+- **A sink closed by a filesystem error now reopens itself.** Isolating a storage fault to the one
+  sink that hit it left "restart minilog to get that sink back" as the only way out, and the
+  triggers are mostly transient: a network path that blips, a backup agent holding a handle for a
+  few seconds, a brief permissions change while ACLs are being provisioned. A two-second fault cost
+  a whole facility's log until somebody noticed — and nothing said so after the moment it happened,
+  since the service stayed `RUNNING`, the other sinks kept writing and the only trace was one Event
+  Log entry. Anyone looking a day later saw a healthy service and a log file that stopped
+  mid-afternoon.
+
+  A closed sink now tries to open its files again every 30 seconds, and reports the outage with its
+  duration when they open. The interval is fixed rather than configurable: this release spent its
+  effort removing config surface, and no deployment has a reason to prefer a different number.
+
+  The retry is on a timer rather than on the next message routed to the sink. Sinks are selected by
+  facility, so a write-triggered retry would leave the quiet sink — the one whose silence is least
+  likely to be noticed — closed indefinitely. Messages that arrive while a sink is closed are still
+  dropped; what the retry restores is the sink, not the gap.
+
+  A sink that is still closed is re-reported once a minute with the number of failed attempts,
+  which is what makes an outage visible for as long as it lasts rather than only when it starts. A
+  fault that never clears therefore costs one line a minute and one open attempt every 30 seconds,
+  which is the accepted price of never needing a restart to recover a sink. Reopening does not try
+  to repair a rotation abandoned part way through: the sink appends to what is on disk and takes
+  its rotation accounting from the sizes it finds there.
+
 - **A config value that cannot be read is a startup error.** Making an unrecognised *key* a hard
   error left the other half of the same guarantee undone: `boost::property_tree`'s
   `get<T>(path, default)` returns the default on a failed translation as well as on an absent key,

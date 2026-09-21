@@ -40,6 +40,19 @@ std::filesystem::path rotatedPath(const std::filesystem::path& base, int n)
            std::format("{}.{}{}", base.stem().string(), n, base.extension().string());
 }
 
+// The retry interval, for the log line that announces it. Whole seconds in
+// production; tests shorten the interval to milliseconds and the line should
+// still read as a duration rather than as "0 s".
+std::string formatInterval(std::chrono::milliseconds interval)
+{
+    if (interval % std::chrono::seconds{1} == std::chrono::milliseconds::zero())
+    {
+        return std::to_string(std::chrono::duration_cast<std::chrono::seconds>(interval).count()) +
+               " s";
+    }
+    return std::to_string(interval.count()) + " ms";
+}
+
 std::string currentTimestamp()
 {
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
@@ -251,8 +264,11 @@ std::string toJsonlRecord(const SyslogMessage& msg, const std::string& rcv)
 
 } // namespace
 
-LogFile::LogFile(boost::asio::io_context& ioc, OutputConfig cfg)
-    : m_cfg(std::move(cfg)), m_strand(boost::asio::make_strand(ioc))
+LogFile::LogFile(boost::asio::io_context& ioc,
+                 OutputConfig cfg,
+                 std::chrono::milliseconds retryInterval)
+    : m_cfg(std::move(cfg)), m_strand(boost::asio::make_strand(ioc)),
+      m_retryInterval(retryInterval), m_retryTimer(m_strand)
 {
 }
 
@@ -297,9 +313,16 @@ void LogFile::close()
     boost::asio::post(m_strand,
                       [this]()
                       {
-                          m_closed = true;
+                          m_shuttingDown = true;
+                          m_closed       = true;
                           try
                           {
+                              // A pending retry is outstanding work, and run()
+                              // does not return while there is any: without this
+                              // a shutdown during an outage would wait out the
+                              // retry interval, and the retry that followed would
+                              // reopen files nobody is going to write to.
+                              m_retryTimer.cancel();
                               closeFiles();
                           }
                           catch (...)
@@ -312,9 +335,99 @@ void LogFile::close()
 
 void LogFile::failSink(const std::string& reason)
 {
-    osLogError("minilog: " + reason + "; closing sink");
+    const auto decision = m_recovery.onFailure(reason, std::chrono::steady_clock::now());
+
+    if (decision.report)
+    {
+        if (decision.firstFailure)
+        {
+            osLogError("minilog: " + reason + "; closing sink '" + m_cfg.name +
+                       "', retrying every " + formatInterval(m_retryInterval));
+        }
+        else
+        {
+            // The count is of attempts to reopen, so it says the sink is being
+            // retried as well as that it is still down — which is what an
+            // operator reading this a day into an outage needs to know.
+            std::string message = "minilog: sink '" + m_cfg.name + "' still closed after " +
+                                  std::to_string(decision.closedFor.count()) + " s: " + reason +
+                                  " (" + std::to_string(decision.suppressed) +
+                                  " failed attempt(s) to reopen it since the last report";
+            // Said explicitly, because the line names one reason and a bare count
+            // would otherwise claim the other attempts failed the same way.
+            message += decision.varied ? ", not all with this error)" : ")";
+            osLogError(message);
+        }
+    }
+
     m_closed = true;
     closeFiles();
+    scheduleRetry();
+}
+
+void LogFile::scheduleRetry()
+{
+    // Belt and braces: no failure can currently reach here after close(), since
+    // doWrite() returns early on a closed sink and the retry handler below stops
+    // itself. Left in because the cost of a path that did would be a shutdown
+    // that waits out the retry interval.
+    if (m_shuttingDown)
+    {
+        return;
+    }
+
+    m_retryTimer.expires_after(m_retryInterval);
+    m_retryTimer.async_wait(
+        [this](const boost::system::error_code& ec)
+        {
+            // A cancelled timer is a shutdown; m_shuttingDown catches the same
+            // thing arriving after this handler was already queued, for which
+            // cancel() comes too late.
+            if (ec || m_shuttingDown)
+            {
+                return;
+            }
+            // Same last line of defence as write(): anything escaping here
+            // unwinds out of io_context::run() and takes the process with it.
+            try
+            {
+                attemptReopen();
+            }
+            catch (const std::exception& e)
+            {
+                failSinkFromHandler(e.what());
+            }
+            catch (...)
+            {
+                failSinkFromHandler("non-standard exception");
+            }
+        });
+}
+
+// A rotation abandoned partway leaves the generation chain half-shifted — with
+// both a text and a jsonl file configured, one chain can be shifted and the
+// other not, and the active file of a shifted one has already become .1. The
+// retry does not try to repair that and does not need to: openFiles() appends to
+// the active path and creates it when the rename took, which is exactly where a
+// successful rotate() would have left it, and the sizes it records come from
+// file_size() rather than from what they were before the failure. So the
+// accounting matches what is on disk and the next write rotates from there.
+void LogFile::attemptReopen()
+{
+    // Cleared first so that openFiles() reports a failure through failSink() like
+    // any other, which counts the attempt and arms the timer again.
+    m_closed = false;
+    openFiles();
+    if (m_closed)
+    {
+        return;
+    }
+
+    const auto outage = m_recovery.onRecovered(std::chrono::steady_clock::now());
+    osLogInfo("minilog: sink '" + m_cfg.name + "' reopened after " +
+              std::to_string(outage.closedFor.count()) + " s and " +
+              std::to_string(outage.failures) + " failure(s); messages routed to it during that " +
+              "time were dropped");
 }
 
 void LogFile::failSinkFromHandler(const char* what) noexcept

@@ -16,11 +16,13 @@
 #define BOOST_TEST_MODULE test_output
 #include "output/log_file.hpp"
 #include "output/output_manager.hpp"
+#include "output/sink_recovery.hpp"
 
 #include <boost/json.hpp>
 #include <boost/test/unit_test.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -105,6 +107,19 @@ struct Fixture
         return msg;
     }
 
+    // Run the io_context until it runs out of work, or until timeout. Returns
+    // whether it ran out. A sink that reopens leaves nothing behind — the retry
+    // timer is only re-armed while the sink is still closed — so this returns as
+    // soon as a recovery happens and only waits out the whole timeout when one
+    // never does.
+    bool runUntilIdle(std::chrono::milliseconds timeout)
+    {
+        ioc.restart();
+        const auto start = std::chrono::steady_clock::now();
+        ioc.run_for(timeout);
+        return std::chrono::steady_clock::now() - start < timeout;
+    }
+
     SyslogMessage unknownMsg(const std::string& raw = "not a syslog message") const
     {
         SyslogMessage msg;
@@ -115,6 +130,34 @@ struct Fixture
         return msg;
     }
 };
+
+// rfc3164Msg only varies `raw`, which the JSONL record does not carry. Tests
+// that match on the record need the `message` field to vary too.
+SyslogMessage messageWith(const std::string& text)
+{
+    SyslogMessage msg;
+    msg.raw          = "<34>Oct 11 22:14:15 mymachine su[123]: " + text;
+    msg.srcIp        = "192.168.1.50";
+    msg.protocol     = Protocol::RFC3164;
+    msg.facilityName = "daemon";
+    msg.severityName = "NOTICE";
+    msg.hostname     = "mymachine";
+    msg.appName      = "su";
+    msg.procId       = "123";
+    msg.timestamp    = "Oct 11 22:14:15";
+    msg.message      = text;
+    return msg;
+}
+
+OutputConfig sinkConfig(const fs::path& jsonlPath, uint64_t maxSize)
+{
+    OutputConfig cfg;
+    cfg.jsonlFile        = jsonlPath.string();
+    cfg.maxSize          = maxSize;
+    cfg.maxFiles         = 3;
+    cfg.includeMalformed = true;
+    return cfg;
+}
 
 } // namespace
 
@@ -1025,6 +1068,293 @@ BOOST_AUTO_TEST_CASE(eight_bit_bytes_unchanged)
 
 BOOST_AUTO_TEST_SUITE_END()
 
+// ─── Sink recovery policy ────────────────────────────────────────────────────
+//
+// When a closed sink retries, and how often the outage is reported while it
+// lasts. Unit level with an injected clock, because a real filesystem fault
+// cannot be made to last a controlled number of seconds.
+
+BOOST_AUTO_TEST_SUITE(sink_recovery_policy)
+
+BOOST_AUTO_TEST_CASE(the_failure_that_closes_a_sink_is_reported_at_once)
+{
+    SinkRecovery recovery;
+    const auto now = std::chrono::steady_clock::now();
+
+    const auto decision = recovery.onFailure("write failed", now);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.firstFailure);
+    BOOST_TEST(decision.suppressed == 0u);
+    BOOST_TEST(recovery.closed());
+}
+
+BOOST_AUTO_TEST_CASE(failed_reopens_within_the_interval_are_silent)
+{
+    SinkRecovery recovery;
+    const auto now = std::chrono::steady_clock::now();
+    recovery.onFailure("open failed", now);
+
+    for (int i = 0; i < 20; ++i)
+    {
+        // Same instant every time: nothing here may depend on the test being
+        // slow enough for the report interval to elapse.
+        const auto decision = recovery.onFailure("open failed", now);
+        BOOST_TEST(!decision.report, "attempt " << i << " was reported");
+    }
+}
+
+BOOST_AUTO_TEST_CASE(a_summary_is_reported_once_the_interval_has_passed)
+{
+    SinkRecovery recovery;
+    const auto start = std::chrono::steady_clock::now();
+    recovery.onFailure("open failed", start);
+    recovery.onFailure("open failed", start);
+    recovery.onFailure("open failed", start);
+
+    const auto decision = recovery.onFailure("open failed", start + SinkRecovery::kReportInterval);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(!decision.firstFailure);
+    // The failure that closed the sink was reported on its own, so it is not in
+    // the count: the two silent attempts after it, plus this one.
+    BOOST_TEST(decision.suppressed == 3u);
+    BOOST_TEST(!decision.varied);
+    BOOST_TEST(decision.closedFor.count() == SinkRecovery::kReportInterval.count());
+}
+
+BOOST_AUTO_TEST_CASE(a_summary_covering_two_reasons_says_so)
+{
+    // The line names one reason, so a bare count would claim the attempts it
+    // covers all failed that way.
+    SinkRecovery recovery;
+    const auto start = std::chrono::steady_clock::now();
+    recovery.onFailure("open failed", start);
+    recovery.onFailure("open failed", start);
+    recovery.onFailure("cannot determine size", start);
+
+    const auto decision = recovery.onFailure("open failed", start + SinkRecovery::kReportInterval);
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.varied);
+}
+
+BOOST_AUTO_TEST_CASE(the_report_clock_restarts_after_each_summary)
+{
+    SinkRecovery recovery;
+    const auto start = std::chrono::steady_clock::now();
+    recovery.onFailure("open failed", start);
+
+    const auto first = recovery.onFailure("open failed", start + SinkRecovery::kReportInterval);
+    BOOST_REQUIRE(first.report);
+
+    // One tick later is not another interval.
+    const auto tooSoon = recovery.onFailure(
+        "open failed", start + SinkRecovery::kReportInterval + std::chrono::seconds{1});
+    BOOST_TEST(!tooSoon.report);
+
+    const auto second =
+        recovery.onFailure("open failed", start + (2 * SinkRecovery::kReportInterval));
+    BOOST_TEST(second.report);
+    // Only what happened since the previous summary, which is the point of the
+    // count: the two above.
+    BOOST_TEST(second.suppressed == 2u);
+    BOOST_TEST(second.closedFor.count() == 2 * SinkRecovery::kReportInterval.count());
+}
+
+BOOST_AUTO_TEST_CASE(recovery_reports_the_length_of_the_outage)
+{
+    SinkRecovery recovery;
+    const auto start = std::chrono::steady_clock::now();
+    recovery.onFailure("open failed", start);
+    recovery.onFailure("open failed", start + std::chrono::seconds{30});
+
+    const auto outage = recovery.onRecovered(start + std::chrono::seconds{60});
+
+    BOOST_TEST(outage.closedFor.count() == 60);
+    // The failure that closed the sink plus the one failed reopen.
+    BOOST_TEST(outage.failures == 2u);
+    BOOST_TEST(!recovery.closed());
+}
+
+BOOST_AUTO_TEST_CASE(a_sink_that_fails_again_after_recovering_starts_a_new_outage)
+{
+    // Otherwise the second outage would be reported as a continuation of the
+    // first — silent until the old report interval elapsed, and with a duration
+    // measured from a fault that has already been fixed.
+    SinkRecovery recovery;
+    const auto start = std::chrono::steady_clock::now();
+    recovery.onFailure("open failed", start);
+    recovery.onRecovered(start + std::chrono::seconds{10});
+
+    const auto decision = recovery.onFailure("write failed", start + std::chrono::seconds{11});
+
+    BOOST_TEST(decision.report);
+    BOOST_TEST(decision.firstFailure);
+    BOOST_TEST(decision.closedFor.count() == 0);
+}
+
+BOOST_AUTO_TEST_CASE(recovering_a_sink_that_was_never_closed_reports_nothing)
+{
+    SinkRecovery recovery;
+    const auto outage = recovery.onRecovered(std::chrono::steady_clock::now());
+    BOOST_TEST(outage.failures == 0u);
+    BOOST_TEST(outage.closedFor.count() == 0);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Sink recovery, end to end ───────────────────────────────────────────────
+//
+// A sink closed by a filesystem error used to stay closed until the process was
+// restarted, so a storage fault lasting seconds cost one facility's log for as
+// long as it took somebody to notice. These drive the real timer with the
+// interval shortened, and provoke the fault with a missing directory so they run
+// on Windows as well as POSIX.
+
+BOOST_FIXTURE_TEST_SUITE(sink_recovery_end_to_end, Fixture)
+
+namespace
+{
+
+// Short enough to keep these tests quick, long enough that a loaded machine
+// still runs several attempts inside the timeouts below.
+constexpr std::chrono::milliseconds kTestRetry{20};
+// Generous: it bounds how long a *passing* test waits only when recovery never
+// happens, since run_for returns as soon as the sink reopens.
+constexpr std::chrono::milliseconds kRecoveryTimeout{5000};
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(a_closed_sink_reopens_once_its_directory_appears)
+{
+    const auto subdir = dir / "provisioned_late";
+    auto cfg          = sinkConfig(subdir / "syslog.jsonl", 0);
+    cfg.name          = "main";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+
+    // The directory does not exist yet, so the lazy open on the first write
+    // fails and closes the sink.
+    writeSync(lf, messageWith("lost"));
+    BOOST_REQUIRE(!fs::exists(cfg.jsonlFile));
+
+    fs::create_directories(subdir);
+    BOOST_REQUIRE(runUntilIdle(kRecoveryTimeout));
+
+    // Reopening does not replay the message that was dropped; what it restores
+    // is the sink, so the next one lands.
+    writeSync(lf, messageWith("kept"));
+    const auto contents = readAll(cfg.jsonlFile);
+    BOOST_CHECK(contents.find("kept") != std::string::npos);
+    BOOST_CHECK(contents.find("lost") == std::string::npos);
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
+BOOST_AUTO_TEST_CASE(a_sink_whose_fault_never_clears_keeps_retrying)
+{
+    auto cfg = sinkConfig(dir / "still_missing" / "syslog.jsonl", 0);
+    cfg.name = "main";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, messageWith("dropped"));
+
+    // Never runs out of work, because every failed attempt arms the timer again.
+    BOOST_CHECK(!runUntilIdle(std::chrono::milliseconds{300}));
+    BOOST_CHECK(!fs::exists(cfg.jsonlFile));
+
+    // And it is still the same sink, so it recovers whenever the fault does.
+    fs::create_directories(dir / "still_missing");
+    BOOST_REQUIRE(runUntilIdle(kRecoveryTimeout));
+    writeSync(lf, messageWith("kept"));
+    BOOST_CHECK(readAll(cfg.jsonlFile).find("kept") != std::string::npos);
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
+BOOST_AUTO_TEST_CASE(closing_a_sink_during_an_outage_stops_the_retry)
+{
+    // A pending retry is outstanding work, so a shutdown that left one armed
+    // would wait out the interval — and the attempt after it would reopen files
+    // that nothing is going to write to.
+    const auto subdir = dir / "closed_during_outage";
+    auto cfg          = sinkConfig(subdir / "syslog.jsonl", 0);
+    cfg.name          = "main";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, messageWith("dropped"));
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+
+    // Fixing the fault now must not bring the sink back: it was closed for
+    // shutdown, not by the fault.
+    fs::create_directories(subdir);
+    BOOST_CHECK(runUntilIdle(std::chrono::milliseconds{300}));
+    writeSync(lf, messageWith("after close"));
+    BOOST_CHECK(!fs::exists(cfg.jsonlFile));
+}
+
+BOOST_AUTO_TEST_CASE(recovers_from_a_rotation_abandoned_half_way)
+{
+    // Rotation shifts the text chain and the jsonl chain in turn, so a failure
+    // between the two leaves the pair half-shifted: the text file has become .1
+    // while the jsonl file is still the active one. Reopening does not repair
+    // that — it appends to whatever is on disk and takes the sizes from there.
+    OutputConfig cfg;
+    cfg.name             = "main";
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.maxSize          = 1; // every write rotates
+    cfg.maxFiles         = 1; // so rotation deletes generation 1 rather than shifting it
+    cfg.includeMalformed = true;
+
+    // A non-empty directory where the rotated jsonl generation belongs: removing
+    // it fails, which is what aborts the rotation part way through. Portable —
+    // no filesystem removes a directory that has a file in it.
+    const auto blocker = dir / "syslog.1.jsonl";
+    fs::create_directories(blocker);
+    std::ofstream(blocker / "occupied") << "x";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+
+    writeSync(lf, messageWith("first"));
+    BOOST_REQUIRE(fs::exists(cfg.textFile));
+    BOOST_REQUIRE(fs::exists(cfg.jsonlFile));
+
+    // Rotates: the text file moves to syslog.1.log, then the jsonl chain cannot
+    // be shifted and the sink closes.
+    writeSync(lf, messageWith("second"));
+    BOOST_REQUIRE(fs::exists(dir / "syslog.1.log"));
+    BOOST_REQUIRE(!fs::exists(cfg.textFile));
+    BOOST_REQUIRE(readAll(cfg.jsonlFile).find("first") != std::string::npos);
+
+    fs::remove_all(blocker);
+    BOOST_REQUIRE(runUntilIdle(kRecoveryTimeout));
+
+    // The reopened sink writes to both files again, and the jsonl record that
+    // the aborted rotation left in the active file is carried into the chain by
+    // the rotation that follows rather than lost. Its text counterpart is gone,
+    // but for an ordinary reason: max_files = 1 keeps one generation, and this
+    // write is the second rotation of that chain.
+    writeSync(lf, messageWith("third"));
+    BOOST_CHECK(readAll(cfg.textFile).find("third") != std::string::npos);
+    BOOST_CHECK(readAll(cfg.jsonlFile).find("third") != std::string::npos);
+    BOOST_CHECK(readAll(dir / "syslog.1.jsonl").find("first") != std::string::npos);
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 // ─── Filesystem failure handling ─────────────────────────────────────────────
 //
 // A storage problem must degrade the one sink that hit it, never the process.
@@ -1068,34 +1398,6 @@ private:
     fs::path m_dir;
 };
 
-// rfc3164Msg only varies `raw`, which the JSONL record does not carry. These
-// tests match on the record, so they need the `message` field to vary too.
-SyslogMessage messageWith(const std::string& text)
-{
-    SyslogMessage msg;
-    msg.raw          = "<34>Oct 11 22:14:15 mymachine su[123]: " + text;
-    msg.srcIp        = "192.168.1.50";
-    msg.protocol     = Protocol::RFC3164;
-    msg.facilityName = "daemon";
-    msg.severityName = "NOTICE";
-    msg.hostname     = "mymachine";
-    msg.appName      = "su";
-    msg.procId       = "123";
-    msg.timestamp    = "Oct 11 22:14:15";
-    msg.message      = text;
-    return msg;
-}
-
-OutputConfig sinkConfig(const fs::path& jsonlPath, uint64_t maxSize)
-{
-    OutputConfig cfg;
-    cfg.jsonlFile        = jsonlPath.string();
-    cfg.maxSize          = maxSize;
-    cfg.maxFiles         = 3;
-    cfg.includeMalformed = true;
-    return cfg;
-}
-
 } // namespace
 
 BOOST_AUTO_TEST_CASE(rotation_permission_denied_closes_sink_without_aborting)
@@ -1120,8 +1422,10 @@ BOOST_AUTO_TEST_CASE(rotation_permission_denied_closes_sink_without_aborting)
         writeSync(lf, messageWith("second"));
     }
 
-    // Reaching here at all is the main assertion. The sink is now closed, so a
-    // later write is dropped even though the directory is readable again.
+    // Reaching here at all is the main assertion. The sink is closed, so a write
+    // is dropped even though the directory is readable again: the retry runs on a
+    // timer, and these tests only poll the io_context, so the default 30 s
+    // interval cannot elapse inside one. Recovery has its own suite above.
     const auto contents = readAll(cfg.jsonlFile);
     writeSync(lf, messageWith("third"));
     BOOST_CHECK_EQUAL(readAll(cfg.jsonlFile), contents);

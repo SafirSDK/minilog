@@ -262,11 +262,26 @@ minilog reads a single INI file passed on the command line. There is no config r
 
 Errors (bad config, bind failure, write failure) are reported to the Windows Event Log on Windows, and to the system syslog on Linux — plus stderr in both cases.
 
-**Sink failures are isolated and final.** If a sink cannot write, rotate or reopen its files — a
-denied directory, a full disk, a network path that has gone away — that sink is taken out of
-service and every later message routed to it is dropped. The failure is reported once, the other
-sinks and the forwarder keep running, and the process stays up. A closed sink is not reopened
-automatically, so restart minilog once the underlying storage problem is fixed.
+**Sink failures are isolated, and a closed sink retries.** If a sink cannot write, rotate or
+reopen its files — a denied directory, a full disk, a network path that has gone away — that sink
+is taken out of service: the failure is reported, every message routed to it is dropped, and the
+other sinks and the forwarder keep running with the process up.
+
+Every 30 seconds it tries to open its files again, and reports the outage with its duration when
+they open. The interval is not configurable. A sink is selected by facility, so the retry is on a
+timer rather than on the next message to reach that sink — the sink whose silence is least likely
+to be noticed is exactly the quiet one no message would wake. **Messages that arrive while a sink
+is closed are gone**; what the retry restores is the sink, not the gap.
+
+A sink still closed is re-reported once a minute, naming how many attempts to reopen it have
+failed, so an outage that lasts is visible for as long as it lasts and not only at the moment it
+began. A fault that never clears therefore costs one log line a minute and one open attempt every
+30 seconds, indefinitely — which is the intended cost of never having to restart minilog to
+recover a sink.
+
+Reopening does not repair a rotation that failed part way through: the sink appends to whatever is
+on disk and takes its rotation accounting from the file sizes it finds, so a generation may be
+missing or a file short. The next rotation proceeds from there.
 
 **An unrecognised key is a config error, and so is a value that cannot be read.** minilog rejects
 a key it does not know in `[server]`, `[output.*]`, `[forwarding]` or `[web_viewer]`, naming the

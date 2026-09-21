@@ -52,6 +52,16 @@ processing task  →  parse  →  post write to each matching sink strand
 Triggered before each write if **either** `text_file` or `jsonl_file` exceeds `max_size`.
 Both files always rotate together.
 
+### Sink failure and recovery
+A filesystem error closes that one sink (`LogFile::failSink`) and drops every message routed to it;
+the process and the other sinks are unaffected. A closed sink retries `openFiles()` on its own
+`steady_timer` every `SinkRecovery::kRetryInterval` (30 s, deliberately not configurable) and is
+re-reported once a minute while it stays closed. `SinkRecovery` (`output/sink_recovery.hpp`) holds
+the reporting policy and nothing else, so it is unit-testable with an injected clock — the same
+split as `ReceiveBackoff` and `AdmissionControl`. `LogFile::close()` sets a shutdown flag as well as
+cancelling the timer: a pending retry keeps `io_context::run()` from returning, and `cancel()` alone
+does not stop a handler that was already queued.
+
 ### RFC5424 structured data
 Kept verbatim as a prefix of `message` — **not** parsed into a separate JSONL field.
 
