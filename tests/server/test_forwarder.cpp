@@ -134,6 +134,26 @@ bool waitResolved(boost::asio::io_context& ioc,
     return fwd.resolved();
 }
 
+// Let n lookups come back, successful or not.
+//
+// A failed lookup has no outward sign — the failure goes to the system log and
+// forwarding just stays off — so without this a test against an unresolvable
+// name reaches its assertions before the lookup has returned, and passes without
+// having exercised the failure path at all.
+bool waitAttempts(boost::asio::io_context& ioc,
+                  const Forwarder& fwd,
+                  uint64_t n,
+                  std::chrono::milliseconds timeout = std::chrono::seconds(10))
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (fwd.resolveAttempts() < n && std::chrono::steady_clock::now() < deadline)
+    {
+        ioc.run_for(std::chrono::milliseconds(10));
+        ioc.restart();
+    }
+    return fwd.resolveAttempts() >= n;
+}
+
 } // namespace
 
 // ─── Forwarding enabled / disabled ───────────────────────────────────────────
@@ -225,6 +245,10 @@ BOOST_AUTO_TEST_CASE(an_unresponsive_resolver_does_not_hold_up_construction)
     Forwarder fwd(ioc, cfg);
     const auto elapsed = std::chrono::steady_clock::now() - before;
 
+    // No lookup has come back, because the only thing that can deliver one is
+    // the io_context and it has not been run. Deterministic whatever the
+    // resolver does on its own thread, which is the whole point.
+    BOOST_TEST(fwd.resolveAttempts() == 0u);
     BOOST_TEST(!fwd.resolved());
     // Generous by three orders of magnitude: the point is that no lookup was
     // waited on, not how fast the machine is.
@@ -302,6 +326,13 @@ BOOST_AUTO_TEST_CASE(unresolvable_host_drops_messages_without_failing)
     std::optional<Forwarder> fwd;
     BOOST_REQUIRE_NO_THROW(fwd.emplace(ioc, cfg));
 
+    // Wait for the lookup to come back before asserting anything. Without this
+    // the test reaches its assertions while the lookup is still in flight, and
+    // passes for the wrong reason — nothing was sent because nothing had been
+    // tried yet, rather than because the failure was handled.
+    BOOST_REQUIRE(waitAttempts(ioc, *fwd, 1));
+    BOOST_CHECK(!fwd->resolved());
+
     fwd->forward(makeMsg("nowhere to go"));
     drain(ioc);
 
@@ -309,6 +340,56 @@ BOOST_AUTO_TEST_CASE(unresolvable_host_drops_messages_without_failing)
 
     // The retry timer would otherwise keep the io_context alive.
     fwd->stop();
+    drain(ioc);
+}
+
+BOOST_AUTO_TEST_CASE(a_message_sent_before_the_lookup_finishes_is_not_misrouted)
+{
+    // The documented cost of not blocking the bind on a name lookup: a datagram
+    // arriving in the first moments is dropped rather than forwarded, counted,
+    // and mentioned when the lookup succeeds.
+    //
+    // Which of the two orderings happens here is a genuine race — the forward is
+    // queued on the strand microseconds after construction, and the lookup's
+    // completion is queued whenever the resolver's own thread gets round to it —
+    // so this asserts what has to hold either way rather than pretending the
+    // race can be won on purpose. What must never happen is the payload going
+    // somewhere other than the configured destination, or the forwarder being
+    // left unusable by having been given work before it was ready.
+    Receiver rx;
+    boost::asio::io_context ioc;
+    Forwarder fwd(ioc, makeConfig(rx.port()));
+
+    fwd.forward(makeMsg("too early"));
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
+    drain(ioc);
+
+    const std::string first = rx.receive();
+    BOOST_TEST((first.empty() || first == "too early"), "unexpected payload: " << first);
+
+    // Whichever way that went, the forwarder works from here on.
+    fwd.forward(makeMsg("after the lookup"));
+    drain(ioc);
+    BOOST_CHECK_EQUAL(rx.receive(), "after the lookup");
+}
+
+BOOST_AUTO_TEST_CASE(an_unresolved_destination_is_retried)
+{
+    // The failure is reported once and retried in the background, rather than
+    // failing the start — a Windows auto-start service is routinely running
+    // before DNS is. This covers the retry timer firing and starting a second
+    // lookup, which is what "retried" means; the delay before the first retry
+    // is what makes this the slowest test in the file.
+    Receiver rx;
+    boost::asio::io_context ioc;
+    ForwardingConfig cfg = makeConfig(rx.port());
+    cfg.host             = "collector.invalid";
+    Forwarder fwd(ioc, cfg);
+
+    BOOST_REQUIRE(waitAttempts(ioc, fwd, 2));
+    BOOST_CHECK(!fwd.resolved());
+
+    fwd.stop();
     drain(ioc);
 }
 

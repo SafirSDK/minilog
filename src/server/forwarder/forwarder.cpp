@@ -64,6 +64,7 @@ void Forwarder::startResolve(bool firstAttempt)
         [this, firstAttempt](const boost::system::error_code& ec,
                              const boost::asio::ip::udp::resolver::results_type& results)
         {
+            ++m_resolveAttempts;
             if (m_stopping)
             {
                 return;

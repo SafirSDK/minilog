@@ -81,6 +81,12 @@ public:
     // is written on the strand.
     [[nodiscard]] bool resolved() const { return m_resolved; }
 
+    // How many lookups have come back, successfully or not. For tests, under the
+    // same rule as resolved(). It is what lets a test wait for a failed lookup —
+    // which has no other outward sign, since the failure is reported to the
+    // system log and forwarding simply stays off.
+    [[nodiscard]] uint64_t resolveAttempts() const { return m_resolveAttempts; }
+
 private:
     void doForward(const SyslogMessage& msg);
 
@@ -112,6 +118,7 @@ private:
     boost::asio::steady_timer m_retryTimer;
     std::chrono::seconds m_retryDelay = kFirstRetryDelay;
     uint64_t m_droppedUnresolved      = 0;
+    uint64_t m_resolveAttempts        = 0;
     bool m_resolved                   = false;
     bool m_stopping                   = false;
     // Whether a failure was ever reported for this destination. It decides how

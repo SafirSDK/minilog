@@ -61,6 +61,21 @@ def wait_for_port(port: int, timeout: float = 5.0) -> bool:
     return False
 
 
+def wait_for_text(path: Path, needle: str, timeout: float = 10.0) -> bool:
+    """Block until *needle* appears in the file at *path*.
+
+    For output a process writes at a moment of its own choosing. Reading the
+    file once after stopping the process only sees what happened to be written
+    by then, which turns "did it report this?" into a race with shutdown.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists() and needle in path.read_text(errors="replace"):
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def send_udp(msg: str, port: int) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.sendto(msg.encode(), ("127.0.0.1", port))
@@ -467,31 +482,46 @@ class TestInvalidAddresses(unittest.TestCase):
         # Windows auto-start service routinely runs before DNS does, and losing
         # the whole collector over a forwarding destination would be worse than
         # losing forwarding.
+        #
+        # stderr goes to a file so the report can be waited for. The lookup runs
+        # on the io_context rather than blocking the constructor, so the report
+        # arrives some time after the port is bound instead of before it — and
+        # reading stderr once, after stopping the process, would be a race with
+        # however long the resolver takes to answer.
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             port = free_port()
             conf = d / "minilog.conf"
             conf.write_text(self._forwarding_config(d, port, "collector.invalid"))
+            err_path = d / "stderr.txt"
 
-            proc = subprocess.Popen(
-                [BINARY, str(conf)],
-                stderr=subprocess.PIPE,
-                text=True,
-                **_POPEN_FLAGS,
-            )
-            try:
-                self.assertTrue(wait_for_port(port), "server did not bind")
+            with err_path.open("w") as err:
+                proc = subprocess.Popen(
+                    [BINARY, str(conf)], stderr=err, text=True, **_POPEN_FLAGS
+                )
+                try:
+                    self.assertTrue(wait_for_port(port), "server did not bind")
 
-                send_udp("<14>hello", port)
-                time.sleep(0.3)
-                self.assertIn("hello", (d / "syslog.log").read_text())
-            finally:
-                terminate(proc)
-                stderr = proc.communicate(timeout=10)[1]
+                    send_udp("<14>hello", port)
+                    time.sleep(0.3)
+                    self.assertIn("hello", (d / "syslog.log").read_text())
 
+                    # Generous, and free when it passes: the wait ends as soon
+                    # as the line appears. A resolver under load can take many
+                    # seconds to return NXDOMAIN for a name in a TLD it has to
+                    # ask upstream about, and that delay is now visible here
+                    # instead of in the time the server takes to bind.
+                    self.assertTrue(
+                        wait_for_text(err_path, "cannot resolve", timeout=60.0),
+                        f"no resolve failure reported: {err_path.read_text()!r}",
+                    )
+                finally:
+                    terminate(proc)
+                    proc.wait(timeout=10)
+
+            stderr = err_path.read_text()
             self.assertEqual(proc.returncode, 0, f"stderr: {stderr}")
             self.assertIn("collector.invalid", stderr)
-            self.assertIn("cannot resolve", stderr)
 
     def test_resolvable_hostname_as_forwarding_host_is_accepted(self):
         with tempfile.TemporaryDirectory() as d:

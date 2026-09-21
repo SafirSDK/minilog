@@ -1265,18 +1265,18 @@ BOOST_AUTO_TEST_CASE(the_accepted_bool_spellings_are_exactly_boosts)
     // true / false / 1 / 0, which is the set property_tree's own translator
     // took. yes/no/on/off would be a larger promise than this fix needs, and
     // the documentation would have to carry it.
-    for (const std::string& yes : {"true", "1"})
+    for (const auto* yes : {"true", "1"})
     {
         TempFile tmp(kOutputPrefix + "include_malformed = " + yes + "\n");
         BOOST_TEST(loadConfig(tmp.path).outputs[0].includeMalformed, "spelling: " << yes);
     }
-    for (const std::string& no : {"false", "0"})
+    for (const auto* no : {"false", "0"})
     {
         TempFile tmp(kOutputPrefix + "include_malformed = " + no + "\n");
         BOOST_TEST(!loadConfig(tmp.path).outputs[0].includeMalformed, "spelling: " << no);
     }
 
-    for (const std::string& spelled : {"TRUE", "True", "yes", "on"})
+    for (const auto* spelled : {"TRUE", "True", "yes", "on"})
     {
         TempFile tmp(kOutputPrefix + "include_malformed = " + spelled + "\n");
         BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
