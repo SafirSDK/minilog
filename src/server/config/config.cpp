@@ -136,9 +136,25 @@ void requireDestinationHost(const std::string& label, const std::string& value)
     }
 }
 
-// Get an integer field from the property tree, throwing std::runtime_error for
-// non-integer values (e.g. "abc"). Returns defaultVal when the key is absent.
-int requireInt(const boost::property_tree::ptree& tree, const std::string& path, int defaultVal)
+// Reading a value that has to be translated, saying so when it cannot be.
+//
+// property_tree's get<T>(path, default) returns the default on a *translation
+// failure* as well as on an absent key. So "max_files = abc" was silently 10 and
+// "include_malformed = yess" silently true, while "max_sise = 100MB" — a typo one
+// character away — was a startup failure naming the section and the key. A
+// misspelled key and a misspelled value are the same operator mistake with the
+// same consequence, a running server doing something other than what the file
+// says, and only one of them was caught.
+//
+// label is the section and key as they appear in the file, e.g. "[output.main]
+// max_files", so the operator is told where to look rather than which member of
+// which struct failed to fill. Each of these returns defaultVal when the key is
+// absent, which is still not an error.
+
+int requireInt(const boost::property_tree::ptree& tree,
+               const std::string& path,
+               const std::string& label,
+               int defaultVal)
 {
     const auto raw = tree.get_optional<std::string>(path);
     if (!raw)
@@ -157,8 +173,64 @@ int requireInt(const boost::property_tree::ptree& tree, const std::string& path,
     }
     catch (...)
     {
-        throw std::runtime_error("Invalid integer value for '" + path + "': '" + *raw + "'");
+        throw std::runtime_error(label + " = '" + *raw + "' is not a whole number");
     }
+}
+
+uint32_t requireUint32(const boost::property_tree::ptree& tree,
+                       const std::string& path,
+                       const std::string& label,
+                       uint32_t defaultVal)
+{
+    const auto raw = tree.get_optional<std::string>(path);
+    if (!raw)
+    {
+        return defaultVal;
+    }
+    // std::stoul accepts a leading '-' and wraps, so "-1" would come back as
+    // 4294967295 rather than failing. Checked before parsing rather than after,
+    // because by then the wrap has already happened.
+    const bool negative = !raw->empty() && raw->front() == '-';
+    try
+    {
+        std::size_t pos;
+        const unsigned long val = std::stoul(*raw, &pos);
+        if (negative || pos != raw->size() || val > std::numeric_limits<uint32_t>::max())
+        {
+            throw std::invalid_argument("");
+        }
+        return static_cast<uint32_t>(val);
+    }
+    catch (...)
+    {
+        throw std::runtime_error(label + " = '" + *raw + "' is not a whole number between 0 and " +
+                                 std::to_string(std::numeric_limits<uint32_t>::max()));
+    }
+}
+
+// Exactly the spellings property_tree's own translator accepted, and nothing
+// else. Widening this to yes/no/on/off would be a larger promise than the
+// mistake being fixed here needs, and one the documentation would then have to
+// carry.
+bool requireBool(const boost::property_tree::ptree& tree,
+                 const std::string& path,
+                 const std::string& label,
+                 bool defaultVal)
+{
+    const auto raw = tree.get_optional<std::string>(path);
+    if (!raw)
+    {
+        return defaultVal;
+    }
+    if (*raw == "true" || *raw == "1")
+    {
+        return true;
+    }
+    if (*raw == "false" || *raw == "0")
+    {
+        return false;
+    }
+    throw std::runtime_error(label + " = '" + *raw + "' is not 'true', 'false', '1' or '0'");
 }
 
 // Parse "auth,authpriv,*" → deduplicated vector<int>; empty vector = all (wildcard)
@@ -380,7 +452,8 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
     // 2000000000" is two billion stat calls in both. The cap is the viewer's
     // existing sentinel for max_files = 0, so the two ends agree on how deep a
     // chain can ever be.
-    outCfg.maxFiles = sec.get<int>("max_files", outCfg.maxFiles);
+    outCfg.maxFiles =
+        requireInt(sec, "max_files", "[output." + name + "] max_files", outCfg.maxFiles);
     if (outCfg.maxFiles < 0 || outCfg.maxFiles > kMaxFilesLimit)
     {
         throw std::runtime_error("[output." + name + "] max_files must be between 0 and " +
@@ -388,7 +461,10 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
     }
 
     outCfg.facilities       = parseFacilities(sec.get<std::string>("facility", "*"));
-    outCfg.includeMalformed = sec.get<bool>("include_malformed", outCfg.includeMalformed);
+    outCfg.includeMalformed = requireBool(sec,
+                                          "include_malformed",
+                                          "[output." + name + "] include_malformed",
+                                          outCfg.includeMalformed);
 
     return outCfg;
 }
@@ -453,7 +529,8 @@ Config loadConfig(const std::string& path)
     requireAddress("[server] host", cfg.host);
 
     {
-        const int port = requireInt(tree, "server.udp_port", static_cast<int>(cfg.udpPort));
+        const int port =
+            requireInt(tree, "server.udp_port", "[server] udp_port", static_cast<int>(cfg.udpPort));
         if (port < 0 || port > 65535)
         {
             throw std::runtime_error("Invalid udp_port: " + std::to_string(port));
@@ -474,7 +551,7 @@ Config loadConfig(const std::string& path)
         // return 0. 256 is far past anything useful for an I/O-bound server and
         // still nowhere near a thread limit.
         constexpr int kMaxWorkers = 256;
-        const int w               = requireInt(tree, "server.workers", cfg.workers);
+        const int w = requireInt(tree, "server.workers", "[server] workers", cfg.workers);
         if (w <= 0 || w > kMaxWorkers)
         {
             throw std::runtime_error("workers must be between 1 and " +
@@ -540,13 +617,14 @@ Config loadConfig(const std::string& path)
         auto& f = *fwdNode;
         requireKnownKeys(
             "forwarding", f, {"enabled", "host", "port", "facility", "max_message_size"});
-        cfg.forwarding.enabled = f.get<bool>("enabled", false);
-        cfg.forwarding.host    = f.get<std::string>("host", "");
-        cfg.forwarding.maxMessageSize =
-            f.get<uint32_t>("max_message_size", cfg.forwarding.maxMessageSize);
+        cfg.forwarding.enabled        = requireBool(f, "enabled", "[forwarding] enabled", false);
+        cfg.forwarding.host           = f.get<std::string>("host", "");
+        cfg.forwarding.maxMessageSize = requireUint32(
+            f, "max_message_size", "[forwarding] max_message_size", cfg.forwarding.maxMessageSize);
         cfg.forwarding.facilities = parseFacilities(f.get<std::string>("facility", "*"));
 
-        const int port = requireInt(f, "port", static_cast<int>(cfg.forwarding.port));
+        const int port =
+            requireInt(f, "port", "[forwarding] port", static_cast<int>(cfg.forwarding.port));
         if (port <= 0 || port > 65535)
         {
             throw std::runtime_error("Invalid forwarding port: " + std::to_string(port));

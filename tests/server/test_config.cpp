@@ -885,14 +885,28 @@ BOOST_AUTO_TEST_CASE(semicolon_and_hash_are_part_of_the_value)
     BOOST_TEST(cfg.outputs[0].jsonlFile == ABS "/tmp/semi;colon.jsonl");
 }
 
-BOOST_AUTO_TEST_CASE(trailing_comment_is_not_an_integer_so_max_files_defaults)
+BOOST_AUTO_TEST_CASE(trailing_comment_on_max_files_is_a_config_error)
 {
-    // The same line read by the web-viewer's max_files handling. Neither end
-    // parses it, so both fall back to the default rather than disagreeing about
-    // how deep to rotate.
+    // Boost's INI parser keeps the whole value, which is what makes a `#` or `;`
+    // legal in a path. The cost is that an inline comment ends up in the value,
+    // and `7 ; keep 7 generations` is not a number.
+    //
+    // It used to fall back to the default of 10, which the web viewer did too,
+    // so at least the two ends agreed. Somebody who wrote that line expecting
+    // the comment to be stripped is better told than quietly given a different
+    // rotation depth — the same argument as for any other unparseable value.
     TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_files=7 ; keep 7 generations\n");
-    Config cfg = loadConfig(tmp.path);
-    BOOST_TEST(cfg.outputs[0].maxFiles == 10);
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for max_files with an inline comment");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[output.m] max_files") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("7 ; keep 7 generations") != std::string::npos, "message: " << what);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(path_with_spaces)
@@ -1162,6 +1176,145 @@ BOOST_AUTO_TEST_CASE(duplicate_output_section_name_throws)
                  "[output.main]\n"
                  "text_file = " ABS "/tmp/b.log\n");
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Unparseable values ──────────────────────────────────────────────────────
+//
+// property_tree's get<T>(path, default) returns the default on a translation
+// failure as well as on an absent key, so an unparseable value was accepted
+// silently while an unknown *key* was a hard error — the two halves of the same
+// guarantee disagreeing. A misspelled key and a misspelled value are the same
+// operator mistake with the same consequence.
+
+BOOST_AUTO_TEST_SUITE(unparseable_values)
+
+namespace
+{
+
+// Assert that loading fails and that the message names the section and key
+// (together, as they appear in the file) and the value that could not be read.
+// Naming all three is the point: the operator has to be able to find the line.
+void expectRejected(const std::string& content,
+                    const std::string& sectionAndKey,
+                    const std::string& value)
+{
+    TempFile tmp(content);
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for " + sectionAndKey + " = " + value);
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find(sectionAndKey) != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find(value) != std::string::npos, "message: " << what);
+    }
+}
+
+const std::string kOutputPrefix = "[output.main]\ntext_file=" ABS "/tmp/f\n";
+const std::string kForwardPrefix =
+    "[output.main]\ntext_file=" ABS "/tmp/f\n\n[forwarding]\nhost = 127.0.0.1\n";
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(max_files_not_a_number_is_rejected)
+{
+    // Silently 10 before this, while "max_sise = 100MB" — a typo one character
+    // away — was already a startup failure naming the section and the key.
+    expectRejected(kOutputPrefix + "max_files = abc\n", "[output.main] max_files", "abc");
+}
+
+BOOST_AUTO_TEST_CASE(include_malformed_not_a_bool_is_rejected)
+{
+    // Silently true before this, so a sink asked to drop malformed datagrams
+    // kept writing them.
+    expectRejected(
+        kOutputPrefix + "include_malformed = yess\n", "[output.main] include_malformed", "yess");
+}
+
+BOOST_AUTO_TEST_CASE(max_message_size_not_a_number_is_rejected)
+{
+    // "2k" is the mistake worth expecting here: max_size takes a unit suffix
+    // and max_message_size does not.
+    expectRejected(
+        kForwardPrefix + "max_message_size = 2k\n", "[forwarding] max_message_size", "2k");
+}
+
+BOOST_AUTO_TEST_CASE(negative_max_message_size_is_rejected)
+{
+    // std::stoul accepts a leading '-' and wraps, so this would otherwise have
+    // become 4294967295 — a truncation limit of four gigabytes, which is no
+    // limit at all.
+    expectRejected(
+        kForwardPrefix + "max_message_size = -1\n", "[forwarding] max_message_size", "-1");
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_enabled_not_a_bool_is_rejected)
+{
+    // Not in the original report, and the worst of the four: the default is
+    // false, so a misspelt value turned forwarding off and said nothing. The
+    // section is otherwise complete and correct.
+    expectRejected(kForwardPrefix + "enabled = yess\n", "[forwarding] enabled", "yess");
+}
+
+BOOST_AUTO_TEST_CASE(the_accepted_bool_spellings_are_exactly_boosts)
+{
+    // true / false / 1 / 0, which is the set property_tree's own translator
+    // took. yes/no/on/off would be a larger promise than this fix needs, and
+    // the documentation would have to carry it.
+    for (const std::string& yes : {"true", "1"})
+    {
+        TempFile tmp(kOutputPrefix + "include_malformed = " + yes + "\n");
+        BOOST_TEST(loadConfig(tmp.path).outputs[0].includeMalformed, "spelling: " << yes);
+    }
+    for (const std::string& no : {"false", "0"})
+    {
+        TempFile tmp(kOutputPrefix + "include_malformed = " + no + "\n");
+        BOOST_TEST(!loadConfig(tmp.path).outputs[0].includeMalformed, "spelling: " << no);
+    }
+
+    for (const std::string& spelled : {"TRUE", "True", "yes", "on"})
+    {
+        TempFile tmp(kOutputPrefix + "include_malformed = " + spelled + "\n");
+        BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_enabled_accepts_the_same_spellings)
+{
+    TempFile on(kForwardPrefix + "enabled = 1\n");
+    BOOST_TEST(loadConfig(on.path).forwarding.enabled);
+
+    TempFile off(kForwardPrefix + "enabled = false\n");
+    BOOST_TEST(!loadConfig(off.path).forwarding.enabled);
+}
+
+BOOST_AUTO_TEST_CASE(a_valid_value_still_loads)
+{
+    // The check must not have turned a working config into an error: every key
+    // this touches, set to something ordinary.
+    TempFile tmp(kOutputPrefix + "max_files = 3\ninclude_malformed = false\n" +
+                 "\n[forwarding]\nenabled = true\nhost = 127.0.0.1\nport = 5514\n"
+                 "max_message_size = 4096\n");
+    Config cfg = loadConfig(tmp.path);
+
+    BOOST_TEST(cfg.outputs[0].maxFiles == 3);
+    BOOST_TEST(!cfg.outputs[0].includeMalformed);
+    BOOST_TEST(cfg.forwarding.enabled);
+    BOOST_TEST(cfg.forwarding.maxMessageSize == 4096u);
+}
+
+BOOST_AUTO_TEST_CASE(integer_errors_name_the_section_too)
+{
+    // The three keys that already rejected non-integers named only the key —
+    // "Invalid integer value for 'port'" left the operator to find which
+    // section it came from. They go through the same reader now.
+    expectRejected("[server]\nudp_port = abc\n\n" + kOutputPrefix, "[server] udp_port", "abc");
+    expectRejected("[server]\nworkers = 4x\n\n" + kOutputPrefix, "[server] workers", "4x");
+    expectRejected(kForwardPrefix + "port = 514x\n", "[forwarding] port", "514x");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

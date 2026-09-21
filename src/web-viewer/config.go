@@ -129,10 +129,23 @@ func loadConfig(configPath string) (Config, error) {
 		case "jsonl_file":
 			current.jsonlFile = val
 		case "max_files":
-			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
-				current.maxFiles = n
-				current.maxFilesSet = true
+			// Rejected rather than ignored, to agree with the server. minilog's
+			// own loader refuses to start on a max_files it cannot read, on the
+			// grounds that a misspelled value is the same operator mistake as a
+			// misspelled key — so a config with one in it describes a server
+			// that is not running and a sink with nothing to show. Taking the
+			// default here instead would be this tool quietly disagreeing with
+			// the component that owns the file about how deep the chain goes.
+			//
+			// "7 ; keep 7 generations" lands here: a value runs to the end of
+			// its line, which is what makes a '#' or ';' legal in a path.
+			n, err := strconv.Atoi(val)
+			if err != nil || n < 0 {
+				return Config{}, fmt.Errorf(
+					"[output.%s] max_files = %q is not a whole number", current.name, val)
 			}
+			current.maxFiles = n
+			current.maxFilesSet = true
 		}
 	}
 	if err := scanner.Err(); err != nil {

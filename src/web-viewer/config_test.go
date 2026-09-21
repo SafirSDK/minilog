@@ -315,23 +315,48 @@ func TestLoadConfig_SectionNameWithWhitespace(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_MaxFiles_TrailingComment_FallsBackToDefault(t *testing.T) {
-	// "7 ; keep 7 generations" is not a number, so the value is ignored and the
-	// default applies. Boost does the same thing with the same line in the
-	// server — ptree::get<int>(path, default) returns the default when the
-	// value will not translate — so both ends rotate to the same depth.
+func TestLoadConfig_MaxFiles_TrailingComment_IsAnError(t *testing.T) {
+	// "7 ; keep 7 generations" is not a number: a value runs to the end of its
+	// line, which is what makes a '#' or ';' legal in a path.
+	//
+	// Both ends used to fall back to the default here, so at least they agreed.
+	// The server rejects it now — a misspelled value is the same operator
+	// mistake as a misspelled key — and the viewer follows, because taking the
+	// default would be this tool quietly disagreeing about rotation depth with
+	// the component that owns the file.
 	dir := t.TempDir()
 	p := writeConfig(t, dir, `[output.main]
 jsonl_file = /var/log/syslog.jsonl
 max_files = 7 ; keep 7 generations
 `)
-	cfg, err := loadConfig(p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := loadConfig(p)
+	if err == nil {
+		t.Fatal("want an error for max_files with an inline comment, got nil")
 	}
-	sinks := cfg.Sinks
-	if sinks[0].MaxFiles != 10 {
-		t.Errorf("MaxFiles: want 10 (default), got %d", sinks[0].MaxFiles)
+	for _, want := range []string{"[output.main] max_files", "7 ; keep 7 generations"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestLoadConfig_MaxFiles_NotANumber_IsAnError(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "[output.main]\njsonl_file = /var/log/s.jsonl\nmax_files = abc\n")
+	_, err := loadConfig(p)
+	if err == nil {
+		t.Fatal("want an error for max_files = abc, got nil")
+	}
+}
+
+func TestLoadConfig_MaxFiles_Negative_IsAnError(t *testing.T) {
+	// Negative was already ignored rather than accepted; it is now said out
+	// loud, like every other value the chain depth cannot come from.
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "[output.main]\njsonl_file = /var/log/s.jsonl\nmax_files = -1\n")
+	_, err := loadConfig(p)
+	if err == nil {
+		t.Fatal("want an error for max_files = -1, got nil")
 	}
 }
 

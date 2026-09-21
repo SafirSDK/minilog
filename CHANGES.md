@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Changed
+
+- **A config value that cannot be read is a startup error.** Making an unrecognised *key* a hard
+  error left the other half of the same guarantee undone: `boost::property_tree`'s
+  `get<T>(path, default)` returns the default on a failed translation as well as on an absent key,
+  so `max_files = abc` was silently 10, `include_malformed = yess` silently `true`,
+  `[forwarding] enabled = yess` silently off and `max_message_size = -1` silently 4294967295 —
+  while `max_sise = 100MB`, a typo one character away, already failed the start naming the section
+  and the key. A misspelled key and a misspelled value are the same operator mistake with the same
+  consequence: a running server doing something other than what the file says. All four now fail
+  the start, naming the section, the key and the value, as `[server] udp_port`,
+  `[server] workers` and `[forwarding] port` already did — those three name their section now too,
+  instead of only the key.
+
+  `include_malformed` and `[forwarding] enabled` accept `true`, `false`, `1` and `0`, which is
+  exactly what property_tree's own translator took; `yes`, `on` and `True` are errors rather than
+  guesses, and the accepted set is documented in the README and `minilog.conf.example`.
+
+  The known cost, accepted: `max_files = 10 ; ten generations` is a startup failure rather than a
+  silent fall-back to the default. Values run to the end of their line — that is what makes a `#`
+  or `;` legal in a log path — so somebody who wrote that expecting the comment to be stripped is
+  better told than quietly given a different rotation depth. The web viewer rejects the same line
+  for the same reason, rather than taking the default and disagreeing about how deep the chain
+  goes with the component that owns the file.
+
 ### Fixed
 
 - **Resolving the forwarding destination no longer holds up startup.** `Forwarder`'s constructor
@@ -95,8 +120,8 @@
   traffic yet, so the viewer showed an empty pane and no error. `#` is a legal filename character
   on NTFS and ext4 alike. Values now run to the end of the line in the viewer as well; `;` and `#`
   still start a comment at the beginning of a line. One consequence worth knowing: a trailing
-  `max_files = 10 ; ten generations` is not a number to either end, so both fall back to the
-  default of 10 rather than disagreeing about how deep to rotate.
+  `max_files = 10 ; ten generations` is not a number to either end, and both now reject it — see
+  the entry below.
 
 - **The web viewer no longer holds half-open connections open forever.** `http.Server` was built
   with only `Addr` and `Handler`, and Go applies no timeouts by default, so a client that

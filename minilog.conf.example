@@ -79,6 +79,11 @@ max_size = 100MB
 ; 0 = keep them all, up to that limit. Each generation costs a filesystem check
 ; on every rotation, and one per HTTP request in the web viewer, which is why
 ; there is a limit at all.
+;
+; Note that a value runs to the end of its line: ';' and '#' start a comment at
+; the beginning of a line only, so that a log path may contain either character.
+; "max_files = 10 ; ten generations" is therefore not a number, and is a config
+; error rather than a silent fall-back to the default.
 max_files = 10
 
 ; Comma-separated list of syslog facility names to accept, or * for all.
@@ -90,6 +95,8 @@ facility = *
 
 ; Set to false to silently discard messages that could not be parsed
 ; (proto = UNKNOWN). Useful to suppress binary noise on UDP port 514.
+; Accepted spellings are true, false, 1 and 0. Anything else is a config error
+; rather than a silent default, the same as a key minilog does not know.
 include_malformed = true
 
 
@@ -131,6 +138,7 @@ port = 9514
 [forwarding]
 
 ; Set to true to forward received messages to another syslog endpoint.
+; Accepted spellings are true, false, 1 and 0. Anything else is a config error.
 enabled = false
 
 ; Destination hostname or IP address (IPv4 or IPv6). A name is resolved once,

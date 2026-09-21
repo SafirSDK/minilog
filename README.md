@@ -268,17 +268,23 @@ service and every later message routed to it is dropped. The failure is reported
 sinks and the forwarder keep running, and the process stays up. A closed sink is not reopened
 automatically, so restart minilog once the underlying storage problem is fixed.
 
-**An unrecognised key is a config error.** minilog rejects a key it does not know in `[server]`,
-`[output.*]`, `[forwarding]` or `[web_viewer]`, naming the section, the key and the valid ones.
-`max_sise = 100MB` used to leave the size at its default and `enabeld = true` used to leave
-forwarding off, with a running server doing something other than what the file said. Sections
-minilog does not know are ignored, so another tool can keep its own settings in this file.
+**An unrecognised key is a config error, and so is a value that cannot be read.** minilog rejects
+a key it does not know in `[server]`, `[output.*]`, `[forwarding]` or `[web_viewer]`, naming the
+section, the key and the valid ones. `max_sise = 100MB` used to leave the size at its default and
+`enabeld = true` used to leave forwarding off, with a running server doing something other than
+what the file said. A misspelled *value* is the same mistake with the same consequence, so it
+fails the same way: `max_files = abc`, `include_malformed = yess` and `max_message_size = 2k` are
+startup errors naming the section, the key and the value. The booleans — `include_malformed` and
+`[forwarding] enabled` — accept `true`, `false`, `1` and `0`, and nothing else; `yes`, `on` and
+`True` are errors rather than guesses. Sections minilog does not know are ignored, so another
+tool can keep its own settings in this file.
 
 **Comments start a line; values run to the end of one.** `;` and `#` introduce a comment only as
 the first character of a line. After a `=` they are ordinary characters, so
 `jsonl_file = C:\logs\build#3.jsonl` names a file with a `#` in it, and
-`max_files = 10 ; ten generations` is not the number 10. All three programs that read this file —
-minilog, the cli-viewer and the web-viewer — read it that way.
+`max_files = 10 ; ten generations` is not the number 10 — it is a config error, in the server and
+in the web viewer alike. All three programs that read this file — minilog, the cli-viewer and the
+web-viewer — read it that way.
 
 See [`minilog.conf.example`](minilog.conf.example) for a fully commented example.
 
@@ -311,7 +317,7 @@ a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\
 | `max_size` | `0` (no rotation) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB`. `0` disables rotation; a value that overflows 64 bits is a config error rather than silently becoming `0` |
 | `max_files` | `10` | Rotated generations to keep, 0–1000. `0` = keep them all, up to that limit. Each generation costs a filesystem check on every rotation and, in the web viewer, on every request |
 | `facility` | `*` | Comma-separated facility names to accept. `*` = all |
-| `include_malformed` | `true` | Write unrecognised (UNKNOWN) datagrams |
+| `include_malformed` | `true` | Write unrecognised (UNKNOWN) datagrams. `true`, `false`, `1` or `0` |
 
 Rotated filenames insert a generation number before the extension:
 `syslog.log` → `syslog.1.log`, `syslog.2.log`, …
@@ -330,11 +336,11 @@ Read by `minilog-web-viewer` only; minilog itself ignores the section. See
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `enabled` | `false` | Enable UDP forwarding |
+| `enabled` | `false` | Enable UDP forwarding. `true`, `false`, `1` or `0` |
 | `host` | — | Destination hostname or IP address (IPv4 or IPv6). Resolved once at startup; see below |
 | `port` | `514` | Destination UDP port |
 | `facility` | `*` | Facilities to forward |
-| `max_message_size` | `2048` | Truncate messages longer than this (bytes); appends `... [TRUNCATED: N bytes]` |
+| `max_message_size` | `2048` | Truncate messages longer than this (bytes); appends `... [TRUNCATED: N bytes]`. `0` = no limit; no unit suffix |
 
 The destination is resolved once, when minilog starts, and the address found is used for the
 lifetime of the process — re-resolving per message would put a name lookup on the hot path, and a
