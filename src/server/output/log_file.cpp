@@ -256,13 +256,12 @@ LogFile::LogFile(boost::asio::io_context& ioc, OutputConfig cfg)
 {
 }
 
-LogFile::~LogFile()
-{
-    // Do not call closeFiles() here — it would race with strand work that may
-    // still be queued.  The std::ofstream members close themselves on
-    // destruction.  For an explicit close, use close() which posts to the
-    // strand.
-}
+// Deliberately trivial, and defaulted rather than left empty so that it reads as
+// a decision: closeFiles() must not be called here, because it would race with
+// strand work that may still be queued.  The std::ofstream members close
+// themselves on destruction.  For an explicit close, use close(), which posts to
+// the strand.
+LogFile::~LogFile() = default;
 
 bool LogFile::openAtStartup()
 {

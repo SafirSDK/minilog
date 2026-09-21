@@ -186,9 +186,11 @@ int runServer(const std::string& configPath)
 
 } // namespace
 
-// NOLINTNEXTLINE(bugprone-exception-escape) — io_context ctor can theoretically throw
-// service_already_exists, but only if the same service is registered twice, which never happens
-// here.
+// The io_context constructor can theoretically throw service_already_exists, but only if the same
+// service is registered twice, which never happens here. The directive goes on the line directly
+// above main: NOLINTNEXTLINE means the next *line*, so with the explanation between the two it
+// suppressed a comment and the warning stood.
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main(int argc, char* argv[])
 {
     po::options_description desc("Options");

@@ -59,6 +59,35 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
 
+  # ─── Go formatting (gofmt) ──────────────────────────────────────────────────
+  gofmt:
+    name: gofmt check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/web-viewer/go.mod
+          cache: false
+
+      # The C++ side has had a clang-format gate from the start and the Go side
+      # had nothing, so two test files sat unformatted without anything saying
+      # so. gofmt exits 0 whether or not it found something and merely lists the
+      # files it would rewrite, so the check is "did it name a file", not its
+      # exit status.
+      - name: Check formatting
+        working-directory: src/web-viewer
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt would rewrite:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
   # ─── Linux (GCC) ────────────────────────────────────────────────────────────
   linux:
     name: Linux (GCC)

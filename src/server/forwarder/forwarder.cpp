@@ -123,6 +123,7 @@ void Forwarder::useEndpoint(const boost::asio::ip::udp::endpoint& endpoint)
     // where nothing else can be touching the forwarder yet, so the same code is
     // safe on both paths.
     boost::system::error_code ec;
+    // NOLINTNEXTLINE(bugprone-unused-return-value) — open(ec) returns void
     m_socket.open(endpoint.protocol(), ec);
     if (ec)
     {

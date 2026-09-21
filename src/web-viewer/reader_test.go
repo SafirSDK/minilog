@@ -488,7 +488,7 @@ func TestReadForward_BlankLinesSkipped(t *testing.T) {
 	}
 	// The second line's offset must skip over the blank line byte.
 	l0Len := int64(len(makeLine("first", "info", "daemon")) + 1) // +1 for \n
-	blankLen := int64(1)                             // the blank \n
+	blankLen := int64(1)                                         // the blank \n
 	expectedOff1 := l0Len + blankLen
 	if offsets[1] != expectedOff1 {
 		t.Errorf("offset[1]: want %d (past blank), got %d", expectedOff1, offsets[1])

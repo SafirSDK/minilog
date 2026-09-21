@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <system_error>
@@ -383,20 +384,32 @@ void requireKnownKeys(const std::string& section,
                       const boost::property_tree::ptree& sec,
                       const std::set<std::string>& known)
 {
+    // The loop finds the offending key; the message is built after it. Building
+    // it in the loop body was the same work — the throw leaves on the first bad
+    // key, so it ran at most once — but a concatenation chain inside a loop is
+    // indistinguishable from a per-iteration one to a reader or an analyser.
+    std::optional<std::string> unknown;
     for (const auto& [key, unused] : sec)
     {
         (void)unused;
         if (known.find(key) == known.end())
         {
-            std::string valid;
-            for (const auto& k : known)
-            {
-                valid += (valid.empty() ? "" : ", ") + k;
-            }
-            throw std::runtime_error("Unknown key '" + key + "' in [" + section +
-                                     "]. Valid keys are: " + valid);
+            unknown = key;
+            break;
         }
     }
+    if (!unknown.has_value())
+    {
+        return;
+    }
+
+    std::string valid;
+    for (const auto& k : known)
+    {
+        valid += (valid.empty() ? "" : ", ") + k;
+    }
+    throw std::runtime_error("Unknown key '" + *unknown + "' in [" + section +
+                             "]. Valid keys are: " + valid);
 }
 
 OutputConfig parseOutput(const std::string& name, const boost::property_tree::ptree& sec)

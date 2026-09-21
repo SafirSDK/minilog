@@ -97,3 +97,13 @@ CheckOptions:
   # value parameters (too noisy with Boost.Asio completion handlers).
   - key: misc-const-correctness.WarnPointersAsValues
     value: false
+
+  # misc-non-private-member-variables-in-classes: what the check is for is a
+  # class that keeps some state private and exposes the rest, where the public
+  # half can be changed behind the invariants the private half maintains. A
+  # struct whose members are *all* public is not that; it is a data holder, and
+  # in minilog those are private nested types (Admission's State and Charge)
+  # reached only through the enclosing class. Flagging them asked for six
+  # accessors that would encapsulate nothing.
+  - key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
+    value: true

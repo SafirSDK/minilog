@@ -475,7 +475,7 @@ func TestHandler_Lines_TotalField_EqualsFileSize(t *testing.T) {
 func TestHandler_Lines_FacilityFilter(t *testing.T) {
 	dir := t.TempDir()
 	sink := makeSink(t, dir, "main", []string{
-		makeLine("keep", "info", "auth"), // facility auth
+		makeLine("keep", "info", "auth"),   // facility auth
 		makeLine("drop", "info", "daemon"), // facility daemon
 	})
 	ts := newTestServer(t, []Sink{sink})
@@ -652,9 +652,9 @@ func TestHandler_Search_WithFilters(t *testing.T) {
 	// Combine facility + exclude filters through the HTTP layer.
 	dir := t.TempDir()
 	sink := makeSink(t, dir, "main", []string{
-		makeLine("target auth", "info", "auth"),   // facility 4, passes all
+		makeLine("target auth", "info", "auth"),     // facility 4, passes all
 		makeLine("target daemon", "info", "daemon"), // facility daemon, rejected by fac=auth
-		makeLine("target debug", "info", "auth"),  // facility auth but excluded by exc=debug
+		makeLine("target debug", "info", "auth"),    // facility auth but excluded by exc=debug
 	})
 	ts := newTestServer(t, []Sink{sink})
 	defer ts.Close()

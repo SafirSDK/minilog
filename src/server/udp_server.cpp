@@ -96,8 +96,8 @@ void UdpServer::stop()
                           // and runIoContext re-enters run() after a handler
                           // exception, so shutdown would never finish.
                           boost::system::error_code ec;
-                          m_socket.close(
-                              ec); // NOLINT(bugprone-unused-return-value) — close(ec) returns void
+                          // NOLINTNEXTLINE(bugprone-unused-return-value) — close(ec) returns void
+                          m_socket.close(ec);
 
                           // A pending re-arm is outstanding work, and run() does
                           // not return while there is any. Without this, a
