@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.25)
 project(minilog VERSION 1.4.0 LANGUAGES CXX)
 
+# What the packages are called and what the web viewer reports as its version.
+# project(VERSION) takes numbers only, so a prerelease marker such as "-beta2"
+# cannot live there; it is appended from this variable instead. Nothing sets it
+# by default — a local build is "1.4.0" — and CI derives it from the tag it is
+# building (v1.4.0-beta2 → "-beta2"), after checking that the tag's numeric
+# part is the version above.
+set(MINILOG_VERSION_SUFFIX "" CACHE STRING
+    "Appended to the project version in package names, e.g. -beta2")
+set(MINILOG_PACKAGE_VERSION "${PROJECT_VERSION}${MINILOG_VERSION_SUFFIX}")
+
 # Scale factor for stress test message counts.
 # Full load (100) is used in normal builds.  Instrumented builds (coverage,
 # sanitizers) should use a smaller value (e.g. 10) so tests complete in time.
@@ -143,7 +153,7 @@ if(GO_EXECUTABLE)
         COMMAND "${GO_EXECUTABLE}" build
             -v
             -mod vendor
-            -ldflags "-X main.version=${PROJECT_VERSION}"
+            -ldflags "-X main.version=${MINILOG_PACKAGE_VERSION}"
             -o "${_web_viewer_bin}"
             ./
         DEPENDS ${_web_viewer_go_sources}
@@ -204,7 +214,7 @@ if(WIN32)
             COMMAND "${ISCC}"
                 "/DSourceDir=$<TARGET_FILE_DIR:minilog>"
                 "/DConfigDir=${CMAKE_SOURCE_DIR}/installer"
-                "/DAppVersion=${PROJECT_VERSION}"
+                "/DAppVersion=${MINILOG_PACKAGE_VERSION}"
                 "/DOutputDir=${CMAKE_BINARY_DIR}"
                 ${_iscc_web_viewer_args}
                 "${CMAKE_SOURCE_DIR}/installer/setup.iss"
@@ -231,7 +241,7 @@ if(WIN32)
 
     add_custom_target(package-zip
         COMMAND "${CMAKE_COMMAND}"
-            "-DVERSION=${PROJECT_VERSION}"
+            "-DVERSION=${MINILOG_PACKAGE_VERSION}"
             "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
             "-DOUTPUT_DIR=${CMAKE_BINARY_DIR}"
             "-DSERVER_EXE=$<TARGET_FILE:minilog>"

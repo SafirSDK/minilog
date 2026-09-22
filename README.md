@@ -132,6 +132,9 @@ cmake --build --preset windows-release --target package-zip
 ```
 
 Both land in `build\windows-release`, and a tagged CI build attaches both to the GitHub release.
+A prerelease tag such as `v1.4.0-beta2` puts its suffix into the file names
+(`minilog-1.4.0-beta2-setup.exe`) and into the web viewer's `/version`; locally, configure with
+`-DMINILOG_VERSION_SUFFIX=-beta2` for the same effect.
 
 ### Running the installer from another installer or a script
 

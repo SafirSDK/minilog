@@ -40,7 +40,9 @@ full further down; this is the list to check a deployment against before upgradi
   for validating the result before registering anything, `--stop` for upgrading in place. The
   README has a **Windows deployment without the installer** section walking through it, and CI
   exercises the archive the same way — a real install from it, on paths the installer never uses.
-  `cmake --build --preset windows-release --target package-zip` builds it.
+  `cmake --build --preset windows-release --target package-zip` builds it. A prerelease build
+  carries its tag's suffix in both file names — `minilog-1.4.0-beta2-setup.exe` — and in the web
+  viewer's `/version`, where it used to be indistinguishable from the final release.
 
 - **`minilog --check <config-path>` validates a config and the machine it will run on.** minilog
   never creates directories and never adjusts permissions, so its correctness depends on facts about

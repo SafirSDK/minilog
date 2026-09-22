@@ -211,6 +211,10 @@ Before tagging a release, verify all of the following:
    git push origin master develop --tags
    ```
    The tag push triggers the Windows build and uploads both `minilog-<version>-setup.exe` and
-   `minilog-<version>-win64.zip` to the GitHub Release. The zip's file list lives in three places
+   `minilog-<version>-win64.zip` to the GitHub Release. A prerelease tag is `v<version>-<suffix>`
+   (`v1.4.0-beta2`); the suffix is not committed anywhere — CI takes it from the tag and passes
+   it as `MINILOG_VERSION_SUFFIX`, so the files come out as `minilog-1.4.0-beta2-*` and the web
+   viewer's `/version` says the same. The build fails if the tag's numeric part is not the
+   `CMakeLists.txt` version. The three version numbers above stay plain `x.y.z` for a beta. The zip's file list lives in three places
    that must agree: `cmake/package_zip.cmake`, `tests/installer/test_zip_install.py`
    (`EXPECTED_FILES`) and the table in the README's "Windows deployment without the installer".

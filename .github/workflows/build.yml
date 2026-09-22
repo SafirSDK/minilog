@@ -275,8 +275,29 @@ jobs:
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
+      # A tag v1.4.0-beta2 names the packages minilog-1.4.0-beta2-*; a tag
+      # v1.4.0 and an untagged build name them minilog-1.4.0-*. The numeric part
+      # of the tag has to be the version in CMakeLists.txt, or the release would
+      # carry files whose names and contents disagree about what version it is.
+      - name: Derive the package version from the tag
+        id: version
+        shell: bash
+        run: |
+          project=$(sed -nE 's/^project\(minilog VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
+          suffix=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [[ "$tag" != "$project" && "$tag" != "$project"-* ]]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match project version $project in CMakeLists.txt"
+              exit 1
+            fi
+            suffix="${tag#"$project"}"
+          fi
+          echo "package version: $project$suffix"
+          echo "suffix=$suffix" >> "$GITHUB_OUTPUT"
+
       - name: Configure
-        run: cmake --preset windows-release
+        run: cmake --preset windows-release "-DMINILOG_VERSION_SUFFIX=${{ steps.version.outputs.suffix }}"
 
       - name: Build
         run: cmake --build --preset windows-release
