@@ -351,7 +351,7 @@ void LogFile::failSink(const std::string& reason)
         return;
     }
 
-    const auto decision = m_recovery.onFailure(reason, std::chrono::steady_clock::now());
+    const auto decision = m_recovery.onFailure(std::chrono::steady_clock::now());
 
     if (decision.report)
     {
@@ -365,14 +365,10 @@ void LogFile::failSink(const std::string& reason)
             // The count is of attempts to reopen, so it says the sink is being
             // retried as well as that it is still down — which is what an
             // operator reading this a day into an outage needs to know.
-            std::string message = "minilog: sink '" + m_cfg.name + "' still closed after " +
-                                  std::to_string(decision.closedFor.count()) + " s: " + reason +
-                                  " (" + std::to_string(decision.suppressed) +
-                                  " failed attempt(s) to reopen it since the last report";
-            // Said explicitly, because the line names one reason and a bare count
-            // would otherwise claim the other attempts failed the same way.
-            message += decision.varied ? ", not all with this error)" : ")";
-            osLogError(message);
+            osLogError("minilog: sink '" + m_cfg.name + "' still closed after " +
+                       std::to_string(decision.closedFor.count()) + " s: " + reason + " (" +
+                       std::to_string(decision.suppressed) +
+                       " failed attempt(s) to reopen it since the last report)");
         }
     }
 

@@ -115,27 +115,19 @@ void Forwarder::useEndpoint(const boost::asio::ip::udp::endpoint& endpoint)
     // The protocol comes from the endpoint rather than being assumed to be
     // IPv4, which is what makes an IPv6 destination work at all.
     //
-    // Opened with an error_code because this runs on the io_context for a name:
-    // a throw there would escape into runIoContext and be reported as an
-    // unhandled handler exception, which says nothing about forwarding. Retried
-    // like a failed lookup, since whatever exhausted the descriptors may not
-    // still be doing so. For an IP literal this runs in the constructor instead,
-    // where nothing else can be touching the forwarder yet, so the same code is
-    // safe on both paths.
+    // Opened with an error_code because this runs on the io_context for a name,
+    // where a throw would escape into runIoContext and say nothing about
+    // forwarding. Failing here means descriptor exhaustion, in practice; it is
+    // treated like a failed lookup — reported once, retried — because whatever
+    // exhausted the descriptors may not still be doing so.
     boost::system::error_code ec;
     // NOLINTNEXTLINE(bugprone-unused-return-value) — open(ec) returns void
     m_socket.open(endpoint.protocol(), ec);
     if (ec)
     {
-        // Gated on its own flag, not on m_failureReported. A destination that
-        // failed to resolve and then resolved into a descriptor limit has two
-        // things wrong with it, and sharing the flag made the second one silent —
-        // leaving forwarding off with the log saying only that a name could not
-        // be resolved, which by then it can.
-        if (!m_openFailureReported)
+        if (!m_failureReported)
         {
-            m_openFailureReported = true;
-            m_failureReported     = true;
+            m_failureReported = true;
             osLogError("minilog: cannot open a forwarding socket for [forwarding] host " +
                        describe(m_cfg) + ": " + ec.message() +
                        ". Forwarding is off and will be retried in the background; the rest of "

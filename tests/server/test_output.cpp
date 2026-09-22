@@ -1082,7 +1082,7 @@ BOOST_AUTO_TEST_CASE(the_failure_that_closes_a_sink_is_reported_at_once)
     SinkRecovery recovery;
     const auto now = std::chrono::steady_clock::now();
 
-    const auto decision = recovery.onFailure("write failed", now);
+    const auto decision = recovery.onFailure(now);
 
     BOOST_TEST(decision.report);
     BOOST_TEST(decision.firstFailure);
@@ -1094,13 +1094,13 @@ BOOST_AUTO_TEST_CASE(failed_reopens_within_the_interval_are_silent)
 {
     SinkRecovery recovery;
     const auto now = std::chrono::steady_clock::now();
-    recovery.onFailure("open failed", now);
+    recovery.onFailure(now);
 
     for (int i = 0; i < 20; ++i)
     {
         // Same instant every time: nothing here may depend on the test being
         // slow enough for the report interval to elapse.
-        const auto decision = recovery.onFailure("open failed", now);
+        const auto decision = recovery.onFailure(now);
         BOOST_TEST(!decision.report, "attempt " << i << " was reported");
     }
 }
@@ -1109,53 +1109,35 @@ BOOST_AUTO_TEST_CASE(a_summary_is_reported_once_the_interval_has_passed)
 {
     SinkRecovery recovery;
     const auto start = std::chrono::steady_clock::now();
-    recovery.onFailure("open failed", start);
-    recovery.onFailure("open failed", start);
-    recovery.onFailure("open failed", start);
+    recovery.onFailure(start);
+    recovery.onFailure(start);
+    recovery.onFailure(start);
 
-    const auto decision = recovery.onFailure("open failed", start + SinkRecovery::kReportInterval);
+    const auto decision = recovery.onFailure(start + SinkRecovery::kReportInterval);
 
     BOOST_TEST(decision.report);
     BOOST_TEST(!decision.firstFailure);
     // The failure that closed the sink was reported on its own, so it is not in
     // the count: the two silent attempts after it, plus this one.
     BOOST_TEST(decision.suppressed == 3u);
-    BOOST_TEST(!decision.varied);
     BOOST_TEST(decision.closedFor.count() == SinkRecovery::kReportInterval.count());
-}
-
-BOOST_AUTO_TEST_CASE(a_summary_covering_two_reasons_says_so)
-{
-    // The line names one reason, so a bare count would claim the attempts it
-    // covers all failed that way.
-    SinkRecovery recovery;
-    const auto start = std::chrono::steady_clock::now();
-    recovery.onFailure("open failed", start);
-    recovery.onFailure("open failed", start);
-    recovery.onFailure("cannot determine size", start);
-
-    const auto decision = recovery.onFailure("open failed", start + SinkRecovery::kReportInterval);
-
-    BOOST_TEST(decision.report);
-    BOOST_TEST(decision.varied);
 }
 
 BOOST_AUTO_TEST_CASE(the_report_clock_restarts_after_each_summary)
 {
     SinkRecovery recovery;
     const auto start = std::chrono::steady_clock::now();
-    recovery.onFailure("open failed", start);
+    recovery.onFailure(start);
 
-    const auto first = recovery.onFailure("open failed", start + SinkRecovery::kReportInterval);
+    const auto first = recovery.onFailure(start + SinkRecovery::kReportInterval);
     BOOST_REQUIRE(first.report);
 
     // One tick later is not another interval.
-    const auto tooSoon = recovery.onFailure(
-        "open failed", start + SinkRecovery::kReportInterval + std::chrono::seconds{1});
+    const auto tooSoon =
+        recovery.onFailure(start + SinkRecovery::kReportInterval + std::chrono::seconds{1});
     BOOST_TEST(!tooSoon.report);
 
-    const auto second =
-        recovery.onFailure("open failed", start + (2 * SinkRecovery::kReportInterval));
+    const auto second = recovery.onFailure(start + (2 * SinkRecovery::kReportInterval));
     BOOST_TEST(second.report);
     // Only what happened since the previous summary, which is the point of the
     // count: the two above.
@@ -1167,8 +1149,8 @@ BOOST_AUTO_TEST_CASE(recovery_reports_the_length_of_the_outage)
 {
     SinkRecovery recovery;
     const auto start = std::chrono::steady_clock::now();
-    recovery.onFailure("open failed", start);
-    recovery.onFailure("open failed", start + std::chrono::seconds{30});
+    recovery.onFailure(start);
+    recovery.onFailure(start + std::chrono::seconds{30});
 
     const auto outage = recovery.onRecovered(start + std::chrono::seconds{60});
 
@@ -1185,10 +1167,10 @@ BOOST_AUTO_TEST_CASE(a_sink_that_fails_again_after_recovering_starts_a_new_outag
     // measured from a fault that has already been fixed.
     SinkRecovery recovery;
     const auto start = std::chrono::steady_clock::now();
-    recovery.onFailure("open failed", start);
+    recovery.onFailure(start);
     recovery.onRecovered(start + std::chrono::seconds{10});
 
-    const auto decision = recovery.onFailure("write failed", start + std::chrono::seconds{11});
+    const auto decision = recovery.onFailure(start + std::chrono::seconds{11});
 
     BOOST_TEST(decision.report);
     BOOST_TEST(decision.firstFailure);

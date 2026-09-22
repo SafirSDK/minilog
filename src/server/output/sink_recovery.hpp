@@ -17,7 +17,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <string>
 
 namespace minilog
 {
@@ -68,17 +67,13 @@ public:
         // Failed reopen attempts folded into this report, this one included.
         // Zero on the first failure, which has nothing to summarise.
         uint64_t suppressed = 0;
-        // Whether those folded failures all gave the reported reason. Only
-        // meaningful when suppressed is non-zero — a bare count would otherwise
-        // claim the others were the same failure as the one being named.
-        bool varied = false;
         // How long the sink has been closed. Zero for the first failure.
         std::chrono::seconds closedFor{0};
     };
 
     // Record a failure — either the one closing the sink or a reopen attempt
     // that failed — and say whether to report it.
-    Decision onFailure(const std::string& reason, std::chrono::steady_clock::time_point now)
+    Decision onFailure(std::chrono::steady_clock::time_point now)
     {
         Decision decision;
 
@@ -96,24 +91,14 @@ public:
 
         ++m_failures;
         ++m_unreported;
-        // Only occurrences waiting to be summarised can vary: a reason differing
-        // from one already reported and from nothing else does not make the next
-        // summary a mixed one.
-        if (m_unreported > 1 && reason != m_reason)
-        {
-            m_varied = true;
-        }
-        m_reason = reason;
 
         if (now - m_lastReport >= kReportInterval)
         {
             decision.report     = true;
             decision.suppressed = m_unreported;
-            decision.varied     = m_varied;
             decision.closedFor =
                 std::chrono::duration_cast<std::chrono::seconds>(now - m_closedSince);
             m_unreported = 0;
-            m_varied     = false;
             m_lastReport = now;
         }
         return decision;
@@ -152,8 +137,6 @@ public:
 
         m_failures   = 0;
         m_unreported = 0;
-        m_varied     = false;
-        m_reason.clear();
         return outage;
     }
 
@@ -172,12 +155,8 @@ private:
     // Zero means the sink is open, which is what makes the first failure
     // distinguishable from a failed reopen without a separate flag.
     uint64_t m_failures = 0;
-    // Failures waiting to be summarised, and whether they gave one reason or
-    // several.
+    // Failures waiting to be summarised.
     uint64_t m_unreported = 0;
-    bool m_varied         = false;
-    // The most recent reason, kept only to notice that it changed.
-    std::string m_reason;
     // Both are only read while m_failures is non-zero, and both are set before
     // it becomes so — so neither needs to mean anything for an open sink.
     std::chrono::steady_clock::time_point m_closedSince;

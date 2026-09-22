@@ -135,11 +135,6 @@ private:
     // success reads: recovering from a reported outage is not the same event as
     // the first lookup simply finishing after a few datagrams had arrived.
     bool m_failureReported = false;
-    // Whether the socket-open failure in particular was reported. Kept apart
-    // from m_failureReported so that a lookup which fails and then succeeds into
-    // a descriptor limit still says so: the two failures are different faults
-    // with different fixes, and one flag for both silenced the second.
-    bool m_openFailureReported = false;
 };
 
 } // namespace minilog
