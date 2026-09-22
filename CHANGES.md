@@ -188,6 +188,12 @@ full further down; this is the list to check a deployment against before upgradi
 
 ### Changed
 
+- **The shipped `minilog.conf` explains itself (#45).** The default config the installer and the zip
+  lay down carried one comment, on `[web_viewer]`. Every key now has a line or two saying what it
+  is and what the accepted values are, and the header points at the README's Configuration section
+  for the full account. The values are unchanged, and an existing installed config is not touched —
+  the installer only writes the file when there is none.
+
 - **A sink closed by a filesystem error now reopens itself.** Isolating a storage fault to the one
   sink that hit it left "restart minilog to get that sink back" as the only way out, and the
   triggers are mostly transient: a network path that blips, a backup agent holding a handle for a
