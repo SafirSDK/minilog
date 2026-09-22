@@ -302,6 +302,10 @@ BOOST_AUTO_TEST_CASE(an_existing_writable_log_file_is_left_exactly_as_it_was)
         f << "existing content\n";
     }
 
+    // Measured rather than asserted as a literal: this is a text-mode stream, so
+    // the line is a byte longer on Windows.
+    const auto sizeBefore = fs::file_size(logFile);
+
     const auto report = preflight(configPath, ServiceState::NotInstalled);
     BOOST_TEST(allFindings(report) == "");
 
@@ -309,15 +313,16 @@ BOOST_AUTO_TEST_CASE(an_existing_writable_log_file_is_left_exactly_as_it_was)
     std::string content;
     std::getline(f, content);
     BOOST_TEST(content == "existing content");
-    BOOST_TEST(fs::file_size(logFile) == 17U);
+    BOOST_TEST(fs::file_size(logFile) == sizeBefore);
 }
 
+#ifndef _WIN32
+
+// A path that cannot be reached is not a path that is absent: one needs an ACL
+// fixed, the other needs a directory created. POSIX only — there is no portable
+// way to make a directory unsearchable.
 BOOST_AUTO_TEST_CASE(a_log_path_whose_parent_cannot_be_searched_is_not_called_missing)
 {
-    // A path that cannot be reached is not a path that is absent: one needs an
-    // ACL fixed, the other needs a directory created. Only a POSIX case here —
-    // there is no portable way to make a directory unsearchable.
-#ifndef _WIN32
     if (!canDenyAccess())
     {
         return;
@@ -339,10 +344,7 @@ BOOST_AUTO_TEST_CASE(a_log_path_whose_parent_cannot_be_searched_is_not_called_mi
     BOOST_TEST(report.failed());
     BOOST_TEST(mentions(report, Finding::Level::Error, "cannot inspect log directory"));
     BOOST_TEST(!mentions(report, Finding::Level::Error, "does not exist"));
-#endif
 }
-
-#ifndef _WIN32
 
 BOOST_AUTO_TEST_CASE(an_unwritable_log_directory_says_it_is_not_writable)
 {
