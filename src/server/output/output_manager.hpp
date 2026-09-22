@@ -47,7 +47,8 @@ public:
 private:
     struct Sink
     {
-        std::vector<int> facilities; // empty = wildcard (matches all)
+        std::vector<int> facilities;         // empty = wildcard (matches all)
+        std::vector<int> excludedFacilities; // taken away from the above
         std::unique_ptr<LogFile> file;
     };
 

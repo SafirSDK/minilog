@@ -234,36 +234,71 @@ bool requireBool(const boost::property_tree::ptree& tree,
     throw std::runtime_error(label + " = '" + *raw + "' is not 'true', 'false', '1' or '0'");
 }
 
-// Parse "auth,authpriv,*" → deduplicated vector<int>; empty vector = all (wildcard)
-std::vector<int> parseFacilities(const std::string& raw)
+// Split a comma-separated facility list into trimmed, lower-cased tokens.
+std::vector<std::string> facilityTokens(const std::string& raw)
 {
+    std::vector<std::string> tokens;
     if (raw.empty())
     {
-        return {};
+        return tokens;
     }
-
-    std::vector<std::string> tokens;
     boost::algorithm::split(tokens, raw, boost::algorithm::is_any_of(","));
-
-    std::vector<int> result;
     for (auto& token : tokens)
     {
         boost::algorithm::trim(token);
         boost::algorithm::to_lower(token);
+    }
+    return tokens;
+}
+
+int facilityCode(const std::string& token)
+{
+    auto it = kFacilityNames.find(token);
+    if (it == kFacilityNames.end())
+    {
+        throw std::runtime_error("Unknown facility name: '" + token + "'");
+    }
+    return it->second;
+}
+
+void appendUnique(std::vector<int>& list, int code)
+{
+    if (std::find(list.begin(), list.end(), code) == list.end())
+    {
+        list.push_back(code);
+    }
+}
+
+// Parse "auth,authpriv,*" → deduplicated vector<int>; empty vector = all (wildcard)
+std::vector<int> parseFacilities(const std::string& raw)
+{
+    std::vector<int> result;
+    for (const auto& token : facilityTokens(raw))
+    {
         if (token == "*")
         {
             return {}; // wildcard → empty = all
         }
-        auto it = kFacilityNames.find(token);
-        if (it == kFacilityNames.end())
+        appendUnique(result, facilityCode(token));
+    }
+    return result;
+}
+
+// Parse an exclude_facility value: the same names, but no wildcard. "Everything
+// except everything" is a sink that can never match, which is a mistake to
+// refuse, not a configuration to honour. `label` names the key for the message.
+std::vector<int> parseExcludedFacilities(const std::string& raw, const std::string& label)
+{
+    std::vector<int> result;
+    for (const auto& token : facilityTokens(raw))
+    {
+        if (token == "*")
         {
-            throw std::runtime_error("Unknown facility name: '" + token + "'");
+            throw std::runtime_error(label + " cannot be '*': that would exclude every message. "
+                                             "Remove the section instead, or name the facilities "
+                                             "to leave out");
         }
-        const int code = it->second;
-        if (std::find(result.begin(), result.end(), code) == result.end())
-        {
-            result.push_back(code);
-        }
+        appendUnique(result, facilityCode(token));
     }
     return result;
 }
@@ -414,10 +449,15 @@ void requireKnownKeys(const std::string& section,
 
 OutputConfig parseOutput(const std::string& name, const boost::property_tree::ptree& sec)
 {
-    requireKnownKeys(
-        "output." + name,
-        sec,
-        {"text_file", "jsonl_file", "max_size", "max_files", "facility", "include_malformed"});
+    requireKnownKeys("output." + name,
+                     sec,
+                     {"text_file",
+                      "jsonl_file",
+                      "max_size",
+                      "max_files",
+                      "facility",
+                      "exclude_facility",
+                      "include_malformed"});
 
     OutputConfig outCfg;
     outCfg.name      = name;
@@ -473,7 +513,9 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
                                  std::to_string(kMaxFilesLimit) + " (0 = keep all, up to that)");
     }
 
-    outCfg.facilities       = parseFacilities(sec.get<std::string>("facility", "*"));
+    outCfg.facilities         = parseFacilities(sec.get<std::string>("facility", "*"));
+    outCfg.excludedFacilities = parseExcludedFacilities(
+        sec.get<std::string>("exclude_facility", ""), "[output." + name + "] exclude_facility");
     outCfg.includeMalformed = requireBool(sec,
                                           "include_malformed",
                                           "[output." + name + "] include_malformed",
@@ -629,12 +671,16 @@ Config loadConfig(const std::string& path)
     {
         auto& f = *fwdNode;
         requireKnownKeys(
-            "forwarding", f, {"enabled", "host", "port", "facility", "max_message_size"});
+            "forwarding",
+            f,
+            {"enabled", "host", "port", "facility", "exclude_facility", "max_message_size"});
         cfg.forwarding.enabled        = requireBool(f, "enabled", "[forwarding] enabled", false);
         cfg.forwarding.host           = f.get<std::string>("host", "");
         cfg.forwarding.maxMessageSize = requireUint32(
             f, "max_message_size", "[forwarding] max_message_size", cfg.forwarding.maxMessageSize);
-        cfg.forwarding.facilities = parseFacilities(f.get<std::string>("facility", "*"));
+        cfg.forwarding.facilities         = parseFacilities(f.get<std::string>("facility", "*"));
+        cfg.forwarding.excludedFacilities = parseExcludedFacilities(
+            f.get<std::string>("exclude_facility", ""), "[forwarding] exclude_facility");
 
         const int port =
             requireInt(f, "port", "[forwarding] port", static_cast<int>(cfg.forwarding.port));

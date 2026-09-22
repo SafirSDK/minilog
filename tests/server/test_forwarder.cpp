@@ -534,6 +534,25 @@ BOOST_AUTO_TEST_CASE(no_facility_on_message_forwarded_by_wildcard_filter)
     BOOST_CHECK_EQUAL(rx.receive(), "malformed msg");
 }
 
+BOOST_AUTO_TEST_CASE(excluded_facility_is_not_forwarded_and_the_rest_is)
+{
+    Receiver rx;
+    boost::asio::io_context ioc;
+    auto cfg               = makeConfig(rx.port(), true, {}); // wildcard ...
+    cfg.excludedFacilities = {19};                            // ... minus local3 (#44)
+    Forwarder fwd(ioc, cfg);
+    BOOST_REQUIRE(waitResolved(ioc, fwd));
+
+    fwd.forward(makeMsg("local3 msg", 19));
+    fwd.forward(makeMsg("local4 msg", 20));
+    fwd.forward(makeMsg("malformed msg")); // no facility: exclusions cannot name it
+    drain(ioc);
+
+    BOOST_CHECK_EQUAL(rx.receive(), "local4 msg");
+    BOOST_CHECK_EQUAL(rx.receive(), "malformed msg");
+    BOOST_CHECK(rx.receive().empty());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Truncation ───────────────────────────────────────────────────────────────

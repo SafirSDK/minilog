@@ -23,8 +23,9 @@ OutputManager::OutputManager(boost::asio::io_context& ioc, const Config& cfg)
     for (const auto& outCfg : cfg.outputs)
     {
         Sink sink;
-        sink.facilities = outCfg.facilities;
-        sink.file       = std::make_unique<LogFile>(ioc, outCfg);
+        sink.facilities         = outCfg.facilities;
+        sink.excludedFacilities = outCfg.excludedFacilities;
+        sink.file               = std::make_unique<LogFile>(ioc, outCfg);
         m_sinks.push_back(std::move(sink));
     }
 }
@@ -48,7 +49,7 @@ void OutputManager::dispatch(const SyslogMessage& msg)
 {
     for (auto& sink : m_sinks)
     {
-        if (facilityMatches(sink.facilities, msg.facility))
+        if (facilityMatches(sink.facilities, sink.excludedFacilities, msg.facility))
         {
             sink.file->write(msg);
         }

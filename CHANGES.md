@@ -31,6 +31,15 @@ full further down; this is the list to check a deployment against before upgradi
 
 ### New
 
+- **`exclude_facility` says "all but these" (#44).** A new key in `[output.*]` and `[forwarding]`
+  takes facility names out of whatever `facility` accepts, so `facility = *` with
+  `exclude_facility = local3` is a sink for everything except local3. Until now that took listing
+  the other 23 names — and that list, being a list rather than the wildcard, also silently dropped
+  every datagram that has no facility because it parsed as neither RFC. An exclusion cannot name
+  what such a datagram lacks, so those still arrive and `include_malformed` alone decides their
+  fate. `exclude_facility = *` is a config error, since it describes a sink that can never match;
+  excluding a facility that `facility` does not accept anyway is accepted and changes nothing.
+
 - **A zip archive for installing without the installer.** Every release now ships
   `minilog-<version>-win64.zip` beside `minilog-<version>-setup.exe`. It holds the two executables,
   the server's debug symbols, the default config, the CLI viewer and its config, and the

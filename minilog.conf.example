@@ -93,6 +93,12 @@ max_files = 10
 ;          logaudit=audit, logalert=alert
 facility = *
 
+; Facility names to leave out of what `facility` accepts. With facility = *
+; this is "everything except these"; listing the other names instead would
+; also drop datagrams that have no facility at all (see include_malformed).
+; * is not allowed here. Absent or empty excludes nothing.
+;exclude_facility = local3
+
 ; Set to false to silently discard messages that could not be parsed
 ; (proto = UNKNOWN). Useful to suppress binary noise on UDP port 514.
 ; Accepted spellings are true, false, 1 and 0. Anything else is a config error
@@ -158,7 +164,8 @@ host = 10.0.0.5
 ; Destination UDP port.
 port = 514
 
-; Facilities to forward. Same syntax as output.facility above.
+; Facilities to forward. Same syntax as output.facility above, and
+; exclude_facility works here too.
 facility = *
 
 ; Messages longer than this many bytes are truncated before forwarding.

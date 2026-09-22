@@ -34,12 +34,13 @@ inline constexpr int kMaxFilesLimit = 1000;
 
 struct OutputConfig
 {
-    std::string name;            // section name, e.g. "main"
-    std::string textFile;        // empty = not configured
-    std::string jsonlFile;       // empty = not configured
-    uint64_t maxSize = 0;        // bytes; 0 = no rotation (the documented default)
-    int maxFiles     = 10;       // 0 = keep every generation, up to kMaxFilesLimit
-    std::vector<int> facilities; // empty = all (wildcard)
+    std::string name;                    // section name, e.g. "main"
+    std::string textFile;                // empty = not configured
+    std::string jsonlFile;               // empty = not configured
+    uint64_t maxSize = 0;                // bytes; 0 = no rotation (the documented default)
+    int maxFiles     = 10;               // 0 = keep every generation, up to kMaxFilesLimit
+    std::vector<int> facilities;         // empty = all (wildcard)
+    std::vector<int> excludedFacilities; // removed from whatever `facilities` accepts
     bool includeMalformed = true;
 };
 
@@ -49,7 +50,8 @@ struct ForwardingConfig
     std::string host;
     uint16_t port           = 514;
     uint32_t maxMessageSize = 2048;
-    std::vector<int> facilities; // empty = all
+    std::vector<int> facilities;         // empty = all
+    std::vector<int> excludedFacilities; // removed from whatever `facilities` accepts
 };
 
 struct Config
@@ -71,19 +73,28 @@ struct Config
 // Throws std::runtime_error on parse or validation failure.
 Config loadConfig(const std::string& path);
 
-// Returns true if msgFacility is accepted by the filter.
-// An empty filter is a wildcard and accepts every message.
-inline bool facilityMatches(const std::vector<int>& filter, const std::optional<int>& msgFacility)
+// Returns true if msgFacility passes the `facility` list and is not on the
+// `exclude_facility` list. An empty `accepted` is the wildcard.
+//
+// A message with no facility — a datagram that parsed as neither RFC — reaches
+// wildcard sinks only, and the exclusion list has no say: it names facilities,
+// and such a message has none to be named by. Whether those messages are kept is
+// include_malformed's decision alone.
+inline bool facilityMatches(const std::vector<int>& accepted,
+                            const std::vector<int>& excluded,
+                            const std::optional<int>& msgFacility)
 {
-    if (filter.empty())
-    {
-        return true; // wildcard — matches everything
-    }
     if (!msgFacility)
     {
-        return false; // message has no facility; only wildcard sinks receive it
+        return accepted.empty();
     }
-    return std::find(filter.begin(), filter.end(), *msgFacility) != filter.end();
+    const auto contains = [](const std::vector<int>& list, int facility)
+    { return std::find(list.begin(), list.end(), facility) != list.end(); };
+    if (!accepted.empty() && !contains(accepted, *msgFacility))
+    {
+        return false;
+    }
+    return !contains(excluded, *msgFacility);
 }
 
 } // namespace minilog

@@ -681,6 +681,87 @@ BOOST_AUTO_TEST_CASE(unknown_protocol_reaches_only_wildcard)
     BOOST_CHECK(readAll(dir / "mail.log").empty());  // no facility → no match
 }
 
+// exclude_facility (#44). A wildcard sink minus some facilities: the excluded
+// ones stay out, everything else — including datagrams with no facility at all,
+// which an exclusion list cannot name — still arrives.
+namespace
+{
+
+Config makeExclusionConfig(const fs::path& base)
+{
+    Config cfg;
+    OutputConfig out;
+    out.name               = "main";
+    out.textFile           = (base / "main.log").string();
+    out.includeMalformed   = true;
+    out.excludedFacilities = {19, 0}; // local3, kern
+    cfg.outputs            = {out};
+    return cfg;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(excluded_facility_does_not_reach_a_wildcard_sink)
+{
+    auto cfg = makeExclusionConfig(dir);
+    OutputManager om(ioc, cfg);
+
+    auto msg     = rfc3164Msg("hello");
+    msg.facility = 19; // local3
+    ioc.restart();
+    om.dispatch(msg);
+    ioc.poll();
+
+    BOOST_CHECK(readAll(dir / "main.log").empty());
+}
+
+BOOST_AUTO_TEST_CASE(other_facilities_still_reach_a_sink_with_exclusions)
+{
+    auto cfg = makeExclusionConfig(dir);
+    OutputManager om(ioc, cfg);
+
+    auto msg     = rfc3164Msg("hello");
+    msg.facility = 20; // local4
+    ioc.restart();
+    om.dispatch(msg);
+    ioc.poll();
+
+    BOOST_CHECK(!readAll(dir / "main.log").empty());
+}
+
+BOOST_AUTO_TEST_CASE(unknown_protocol_still_reaches_a_wildcard_sink_with_exclusions)
+{
+    auto cfg = makeExclusionConfig(dir);
+    OutputManager om(ioc, cfg);
+
+    ioc.restart();
+    om.dispatch(unknownMsg("garbage")); // no facility: nothing to exclude it by
+    ioc.poll();
+
+    BOOST_CHECK(!readAll(dir / "main.log").empty());
+}
+
+BOOST_AUTO_TEST_CASE(exclusion_also_narrows_a_named_list)
+{
+    auto cfg                          = makeExclusionConfig(dir);
+    cfg.outputs[0].facilities         = {4, 19}; // auth, local3
+    cfg.outputs[0].excludedFacilities = {19};    // ... but not local3 after all
+    OutputManager om(ioc, cfg);
+
+    auto local3     = rfc3164Msg("local3");
+    local3.facility = 19;
+    auto auth       = rfc3164Msg("auth");
+    auth.facility   = 4;
+    ioc.restart();
+    om.dispatch(local3);
+    om.dispatch(auth);
+    ioc.poll();
+
+    const auto content = readAll(dir / "main.log");
+    BOOST_CHECK(content.find("auth") != std::string::npos);
+    BOOST_CHECK(content.find("local3") == std::string::npos);
+}
+
 BOOST_AUTO_TEST_CASE(include_malformed_false_blocks_unknown)
 {
     Config cfg;

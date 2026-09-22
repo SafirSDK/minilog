@@ -395,7 +395,15 @@ a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\
 | `max_size` | `0` (no rotation) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB`. `0` disables rotation; a value that overflows 64 bits is a config error rather than silently becoming `0` |
 | `max_files` | `10` | Rotated generations to keep, 0–1000. `0` = keep them all, up to that limit. Each generation costs a filesystem check on every rotation and, in the web viewer, on every request |
 | `facility` | `*` | Comma-separated facility names to accept. `*` = all |
+| `exclude_facility` | — | Comma-separated facility names to leave out of whatever `facility` accepts. `facility = *` with `exclude_facility = local3` is "everything except local3". `*` is not allowed here |
 | `include_malformed` | `true` | Write unrecognised (UNKNOWN) datagrams. `true`, `false`, `1` or `0` |
+
+A datagram that parsed as neither RFC has no facility, and only a sink whose `facility` is `*`
+receives it. `exclude_facility` cannot keep such a datagram out, since it has no facility to be
+named by; that is what `include_malformed` is for. This is also why "all but local3" is spelled
+with `exclude_facility` rather than by listing the other 23 names: an explicit list, however
+long, is not the wildcard, and would drop those datagrams too. Naming a facility in
+`exclude_facility` that `facility` does not accept anyway is harmless and changes nothing.
 
 Rotated filenames insert a generation number before the extension:
 `syslog.log` → `syslog.1.log`, `syslog.2.log`, …
@@ -418,6 +426,7 @@ Read by `minilog-web-viewer` only; minilog itself ignores the section. See
 | `host` | — | Destination hostname or IP address (IPv4 or IPv6). Resolved once at startup; see below |
 | `port` | `514` | Destination UDP port |
 | `facility` | `*` | Facilities to forward |
+| `exclude_facility` | — | Facilities not to forward, taken out of what `facility` accepts; same rules as in `[output.*]` |
 | `max_message_size` | `2048` | Truncate messages longer than this (bytes); appends `... [TRUNCATED: N bytes]`. `0` = no limit; no unit suffix |
 
 The destination is resolved once, when minilog starts, and the address found is used for the

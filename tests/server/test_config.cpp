@@ -428,6 +428,56 @@ BOOST_AUTO_TEST_CASE(empty_facility_value_defaults_to_wildcard)
     BOOST_TEST(loadConfig(tmp.path).outputs[0].facilities.empty());
 }
 
+// exclude_facility (#44): "everything except local3" without listing the other
+// 23 names — which would also, as a non-wildcard list, have dropped every
+// datagram that has no facility.
+BOOST_AUTO_TEST_CASE(exclude_facility_absent_excludes_nothing)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n");
+    BOOST_TEST(loadConfig(tmp.path).outputs[0].excludedFacilities.empty());
+}
+
+BOOST_AUTO_TEST_CASE(exclude_facility_parses_names_and_aliases)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "exclude_facility = local3, KERNEL, local3\n");
+    const auto out = loadConfig(tmp.path).outputs[0];
+    BOOST_TEST(out.facilities.empty());          // facility itself is still the wildcard
+    BOOST_REQUIRE(out.excludedFacilities.size() == 2);
+    BOOST_TEST(out.excludedFacilities[0] == 19); // local3
+    BOOST_TEST(out.excludedFacilities[1] == 0);  // kernel = kern
+}
+
+BOOST_AUTO_TEST_CASE(exclude_facility_alongside_a_named_list_is_accepted)
+{
+    // "auth, but not local3" excludes nothing auth would have matched. Settled
+    // in #44 as a no-op rather than an error: it is harmless, and it is what
+    // a generated config produces when the two keys come from different
+    // templates.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "facility = auth\nexclude_facility = local3\n");
+    const auto out = loadConfig(tmp.path).outputs[0];
+    BOOST_TEST(out.facilities == std::vector<int>{4});
+    BOOST_TEST(out.excludedFacilities == std::vector<int>{19});
+}
+
+BOOST_AUTO_TEST_CASE(exclude_facility_rejects_the_wildcard)
+{
+    // Excluding everything is a sink that can never match: refused, naming the key.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nexclude_facility = *\n");
+    BOOST_CHECK_EXCEPTION(
+        loadConfig(tmp.path),
+        std::runtime_error,
+        [](const std::runtime_error& e)
+        { return std::string(e.what()).find("[output.m] exclude_facility") != std::string::npos; });
+}
+
+BOOST_AUTO_TEST_CASE(exclude_facility_rejects_an_unknown_name)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nexclude_facility = local9\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Output section validation ────────────────────────────────────────────────
@@ -1021,6 +1071,27 @@ BOOST_AUTO_TEST_CASE(forwarding_facility_filter)
     BOOST_REQUIRE(facs.size() == 2);
     BOOST_TEST(facs[0] == 16);
     BOOST_TEST(facs[1] == 17);
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_exclude_facility)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nexclude_facility=local3\n");
+    const auto& fwd = loadConfig(tmp.path).forwarding;
+    BOOST_TEST(fwd.facilities.empty());
+    BOOST_TEST(fwd.excludedFacilities == std::vector<int>{19});
+}
+
+BOOST_AUTO_TEST_CASE(forwarding_exclude_facility_rejects_the_wildcard)
+{
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n"
+                 "[forwarding]\nexclude_facility=*\n");
+    BOOST_CHECK_EXCEPTION(loadConfig(tmp.path),
+                          std::runtime_error,
+                          [](const std::runtime_error& e) {
+                              return std::string(e.what()).find("[forwarding] exclude_facility") !=
+                                     std::string::npos;
+                          });
 }
 
 // Both host fields used to reach boost::asio::make_address unvalidated, where an

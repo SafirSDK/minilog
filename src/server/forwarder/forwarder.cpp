@@ -200,7 +200,7 @@ void Forwarder::doForward(const SyslogMessage& msg)
     {
         return;
     }
-    if (!facilityMatches(m_cfg.facilities, msg.facility))
+    if (!facilityMatches(m_cfg.facilities, m_cfg.excludedFacilities, msg.facility))
     {
         return;
     }
