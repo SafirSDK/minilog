@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.4.0 — 2026-09-22
 
 ### New
 
@@ -29,6 +29,113 @@
 
   What it does not claim is that remote senders can reach the port: that needs a datagram from a
   real sender, and no local test can show that a firewall rule exists.
+
+- **An unrecognised config key is now an error.** `loadConfig` read the keys it knew and ignored
+  everything else, so `max_sise = 100MB` left the size at its default, `enabeld = true` left
+  forwarding off and `faciltiy = auth` left the filter at the wildcard — a running server doing
+  something other than what the file said, with nothing anywhere to say so. An unknown key in
+  `[server]`, `[output.*]`, `[forwarding]` or `[web_viewer]` now fails the load, naming the
+  section, the key and the valid ones. Sections minilog does not know are still ignored, so the
+  file can carry another tool's settings; `[web_viewer]` is validated despite belonging to the web
+  viewer, because minilog is the only component that validates this file at all.
+  **Upgrading from v1.0.0 needs one edit:** that release's shipped `installer/minilog.conf`
+  carried `encoding = utf-8` in `[server]`, a key removed in v1.1.0, and the installer writes the
+  config `onlyifdoesntexist` — so an upgrade keeps the administrator's file verbatim and minilog
+  refuses to start until that line is deleted. Configs from v1.1.0 onward are unaffected.
+
+- **Security and cache headers on the web viewer.** Every response now carries a
+  `Content-Security-Policy` (`default-src 'none'`, `script-src`/`style-src`/`connect-src` at
+  `'self'`, `img-src 'self' data:`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The UI renders text a syslog
+  sender chose, so the escaping in `app.js` is the control and the policy is the backstop for what
+  it misses; the assets are all local and free of inline script, style and event handlers, which a
+  test now checks so that a later edit cannot quietly make the policy wrong. `data:` is allowed
+  for images because the search icon is an inline SVG. `no-store` also stops an upgraded viewer
+  serving the previous version's `app.js` from a browser cache — the asset URLs carry no version.
+
+- **`[forwarding] host` accepts a hostname.** It took an IP literal only —
+  `boost::asio::ip::make_address` does not resolve names — while the shipped example config
+  described the field as "hostname or IP address". Forwarding to a collector by name is the normal
+  deployment shape; hard-coding its address on every syslog host is what people are trying to
+  avoid. The destination is now resolved once, when minilog starts, and the address found is used
+  for the lifetime of the process: re-resolving per message would put a name lookup on the hot
+  path, and a collector that moves is rare enough to be worth a restart. A name that does not
+  resolve at startup is **not** a startup failure — minilog runs with forwarding off, reports it
+  once, and retries in the background with a growing delay (1 s, doubling to a minute), reporting
+  how many messages were dropped when it finally succeeds. A Windows `AUTO_START` service is
+  routinely running before DNS is, and losing the collector over an unreachable forwarding
+  destination would be worse than losing forwarding. Values that cannot be a host at all —
+  brackets, a space, a scheme, or a port appended — are still config errors at startup, because as
+  names they would never resolve and would be retried silently forever; `10.0.0.999` is among
+  them, since a hostname cannot have an all-numeric top-level label.
+
+- **IPv6 forwarding destinations now work.** The forwarding socket was opened as
+  `udp::v4()` regardless of the destination, so an IPv6 host passed config validation and then had
+  nothing to send through. It is opened from the resolved endpoint's protocol instead. Receiving
+  is unchanged and still IPv4.
+
+- **`--config` and `--viewer-config` for the cli-viewer.** It was the only component that could
+  not be told where its configuration lives: `minilog.exe` takes a path as an argument and
+  `minilog-web-viewer` has `--config`, but the cli-viewer had a fixed search order and nothing
+  else. That blocks deployments which put binaries and configuration inside an existing
+  application tree rather than the platform directories, leaving "launch it from the config
+  directory" or "keep a second copy of minilog.conf beside the script" — which then drifts. Both
+  flags override the search outright, and a path that does not exist is an error rather than a
+  quiet fall-back, because a typo in a deployment script would otherwise read some other
+  configuration's logs and say nothing. Giving neither flag behaves exactly as before. The
+  not-found message now lists the paths actually searched, including
+  `%ProgramData%\minilog\minilog.conf` — it used to name `C:\Program Files\minilog\minilog.conf`,
+  which is not one of them — and says that `--config` exists. Searching the current directory
+  first is deliberate and now documented as such: a shortcut's "Start in" field selects which
+  configuration the viewer picks up.
+
+- **`[web_viewer] host` and `port`, replacing the web viewer's `--addr` flag.** The listen address
+  was the one deployment fact that did not live in `minilog.conf` — it was a command-line flag,
+  frozen into the Windows service registration at install time and supplied by the installer, so
+  changing the port meant re-registering the service and editing `minilog.conf` did nothing. It is
+  now read from the viewer's own section of the same file, and `--addr` is gone; the service entry
+  is just `--config <path>`. Defaults are unchanged: an absent section still means every interface
+  on port 9514. An absent or empty `host` means every interface on **both** IPv4 and IPv6 —
+  writing `0.0.0.0` there would be IPv4 only, which is why the default is empty rather than an
+  address. minilog itself ignores the section, so no server change was needed. The installer no
+  longer takes a `WebViewerAddr` define: it reads the port back out of the config it has just
+  installed to build the Start Menu and desktop shortcut URLs, which is what makes them right on
+  an upgrade, where the config on disk is the administrator's with whatever port they chose. A
+  shortcut still cannot follow an edit made after the install, and the shipped config says so
+  where the edit happens.
+
+- **`[server] max_queue_bytes`** bounds the received-but-unwritten log held in memory; see the
+  entry under Fixed. Takes the same units as `max_size`, so `16MB` and `16777216` both work, and
+  defaults to 16 MB. `0` is rejected rather than meaning "unlimited".
+
+- **`--install` and `--uninstall` are now idempotent.** `--install` used to fail against a service
+  that already existed (`ERROR_SERVICE_EXISTS`, or an explicit check in the web viewer) and
+  `--uninstall` used to fail when there was none, which is why the installer ran `--uninstall` on
+  both executables with its errors deliberately swallowed. `--install` now updates an existing
+  registration — binary path, arguments, display name, description, recovery actions and Event Log
+  source — while leaving the start type and the service account alone, so an administrator who
+  bound the service to a specific account or set it to manual start keeps that across an upgrade.
+  It reports "installed" or "updated" and exits 0 either way; it never starts or stops anything.
+  `--uninstall` against an absent service exits 0. The installer now stops the services with
+  `--stop` before copying files instead of deregistering them, so a hand-tuned registration
+  survives an upgrade.
+
+- **`--stop` on both executables.** `minilog --stop` and `minilog-web-viewer --stop` stop the
+  service and wait until its process has genuinely exited, with `--timeout SECONDS` (default 30)
+  bounding the wait. This is what an upgrade needs between stopping the old build and copying the
+  new one: `sc stop` and PowerShell's `WaitForStatus('Stopped')` wait on SCM state, and a service
+  reports itself stopped before its process has released the executable file. Stopping a service
+  that is already stopped, or not registered, succeeds. The README documents the upgrade sequence.
+
+- **Windows service recovery actions.** `--install` now configures both services to be restarted
+  by the SCM 5 seconds after a failure, twice, before being left stopped, with the failure
+  counter resetting after 300 seconds without a failure. Previously a service that died stayed
+  dead until someone noticed.
+
+- **Event Log source for the web viewer.** `--install` registers a `minilog-web-viewer` Event Log
+  source and `--uninstall` removes it. A web viewer running as a service has no console, so its
+  startup failures previously left no trace at all; they are now written to the Windows Event
+  Log. Interactive runs still log to stderr.
 
 ### Changed
 
@@ -82,6 +189,53 @@
   better told than quietly given a different rotation depth. The web viewer rejects the same line
   for the same reason, rather than taking the default and disagreeing about how deep the chain
   goes with the component that owns the file.
+
+- **The README no longer claims IPv4-only.** It said "IPv6 is not supported" while
+  `make_address` accepted an IPv6 literal and `udp::endpoint` then bound an IPv6 socket — a
+  documented limitation the code did not implement, sitting directly above the Standards
+  conformance section. The documentation now says what is true: one socket, one address family at
+  a time, no dual-stack listener, and an IPv6 `host` binds an IPv6 socket but is exercised only by
+  a loopback smoke test, so treat it as unsupported. Behaviour is unchanged, and the smoke test is
+  new — it pins the path as working without claiming more than that. `minilog.conf.example` says
+  the same on `[server] host`.
+
+- **CI pins third-party actions to commit SHAs.** `ilammy/msvc-dev-cmd`, `softprops/action-gh-release`
+  and `codecov/codecov-action` were referenced by tag, which is a mutable pointer — the code those
+  jobs run could change with no change in the repository, and they hold `GITHUB_TOKEN` (release
+  upload) and `CODECOV_TOKEN` (coverage upload). Each is now a full SHA with the version in a
+  trailing comment, and the workflow says how to move one. `actions/*` are GitHub's own and stay on
+  tags.
+
+- **`text_file` and `jsonl_file` must now be absolute paths.** A relative path resolved against
+  whatever working directory the reading process happened to have, and the three programs that
+  read `minilog.conf` each had a different one: the server used its own CWD, the cli-viewer used
+  its own, and the web-viewer resolved against the config file's directory. One configuration
+  therefore named up to three different files. Under the Windows SCM the server's CWD is
+  `C:\Windows\System32`, so a relative path aimed at a system directory and left a dead sink
+  behind when the open failed — with nothing to say why. A relative path is now a config error
+  naming the section and the key, and the message says that environment variables are not
+  expanded, because `%ProgramData%\minilog\logs` is the next thing people try. UNC paths
+  (`\\server\share\logs`) remain valid on Windows. Both viewers now use the configured value
+  exactly as written, so there is no longer a resolution rule to keep three implementations
+  agreeing on. The shipped `installer/minilog.conf` and `minilog.conf.example` already used
+  absolute paths; a hand-written config with relative ones has to be corrected.
+
+- **An RFC 3164 message without a tag now has `app` unset instead of its first word.** This goes
+  with the parsing fix above. When no `tag:` is found the first word used to be taken as the app
+  name and removed from the message, so `<14>… myhost Connection reset by peer` was stored as
+  `app` = `Connection`, `message` = `reset by peer` — with no colon anywhere in it. Now `app` is
+  `null` and the message is whole. Both changes alter how existing inputs parse: stored JSONL
+  written before and after this release will differ in `app` and `message` for any message that
+  was not properly tagged, and the web viewer's app filter and the CLI viewer's patterns will see
+  a smaller, bounded set of app values. One case is knowingly left alone — a message opening with
+  a bare clock time (`10:30:45 disk is full`) has a colon before any space and is still read as a
+  tag.
+
+- **Output files are opened at startup, not on the first message.** An unwritable or missing log
+  directory is now a startup failure naming the path. Previously minilog started, reported itself
+  running — to the SCM as well — and the sink then died on the first message, with no non-zero
+  exit code and no recovery action. The side effect is that log files now appear as soon as
+  minilog starts, rather than when the first message arrives.
 
 ### Fixed
 
@@ -322,6 +476,7 @@
   so the notice cannot become the flood. Dropping is the right answer rather than a compromise —
   UDP syslog has no delivery guarantee and the kernel is already dropping silently when its own
   socket buffer fills — so there is deliberately no setting that removes the limit.
+
 - **An RFC 3164 message without a tag no longer has its text moved into `app`.** The tag was taken
   to end at the first colon anywhere in the message, so any colon in ordinary text ended it: an
   `IP:port`, a URL scheme, a clock time. `<14>… myhost user logged in from 10.0.0.1:22 ok` was
@@ -329,6 +484,7 @@
   sinks both. The tag now has to end before the first space, which is what RFC 3164 means by a
   single-token TAG, so real tags (`sshd:`, `sshd[123]:`, `%BGP-5-ADJCHANGE:`) are unaffected and a
   colon in the body is left where it is.
+
 - **A log file named twice in the config is now rejected instead of corrupting both outputs.**
   `text_file` and `jsonl_file` could be given the same path, in one section or across two, and the
   result was accepted and then wrong three ways over: raw text lines and JSON records were
@@ -338,6 +494,7 @@
   `max_size` before either tripped. Two sections on one path additionally rotated and wrote it from
   two threads at once. Config load now refuses it, naming the section and the path — or both
   sections. Paths are compared as written, which is what catches the same path typed twice.
+
 - **The web viewer's live tail no longer skips messages during a burst.** Each poll advanced its
   cursor to the end of the chain rather than past the lines it had just been given, and a response
   carries at most 200 lines. More than 200 matching lines arriving between two polls — they are
@@ -348,6 +505,7 @@
   than jumping to the end, which puts a ceiling of roughly 400 lines per second on what the live
   view can show; search, scrolling and the log itself are unaffected. Rotation is now detected
   against the previous response's end of chain, because the cursor no longer tracks it.
+
 - **The web viewer's tail view no longer loses log entries longer than 64 KB.** `ReadBackward`
   reads the rotation chain backwards in 64 KB chunks and treated the first byte of every chunk as
   the start of a line, so a record spanning a chunk boundary reached the browser as one fragment
@@ -358,6 +516,7 @@
   only once the newline preceding it has been found, so long entries appear in the tail view and in
   upward scrolling just as search and forward paging already showed them. A line over 1 MB — the
   ceiling the forward reader has always had — is skipped rather than buffered.
+
 - **The installer now removes its system `PATH` entry on uninstall.** The installer appends
   `{app}\tools` to the machine-wide `PATH`, and nothing ever took it out again: Inno does not
   revert a `{olddata}`-style append on its own, so every uninstall left a `PATH` entry pointing at
@@ -366,6 +525,7 @@
   install elsewhere left two. The uninstaller now reads `PATH` at uninstall time, removes only its
   own entry (tolerating case and a trailing backslash), and writes the result back only if it
   changed, leaving every other entry byte for byte in order.
+
 - **`--uninstall` now waits for the service to stop before deleting it.** Both implementations
   requested the stop and deleted immediately — the C++ one with no wait at all, the Go one with a
   flat 500 ms sleep. `ControlService` is asynchronous, and deleting a service that is still running
@@ -374,6 +534,7 @@
   itself to exit, and report a timeout instead of deleting anyway. This has not been seen in
   practice because services stop quickly under light load, which is what made it worth fixing: it
   would have shown up first on the busiest machine in an estate.
+
 - **`--install` no longer registers a service that cannot start.** The command line written into
   the service entry was built from `argv[0]` prepended with the working directory — which is not
   where the executable is when it was found through `PATH` — and from the config path exactly as
@@ -381,6 +542,7 @@
   `System32` at boot. Both were accepted by `CreateService`, so `--install` reported success and
   the failure surfaced only at the next start. The image path now comes from the OS, the config
   path is made absolute, and a config file that cannot be read is refused instead.
+
 - **An invalid `host` is now a config error, not a crash or a silent exit.** Neither `[server]
   host` nor `[forwarding] host` was validated, and both are passed to an address parser that does
   not resolve names. A hostname or typo in `[forwarding] host` aborted the process with `SIGABRT`;
@@ -390,6 +552,7 @@
   `minilog.conf.example` said "hostname or IP address" and now says IP address. An address with a
   port appended (`10.0.0.5:514`) is rejected too — the Windows address parser accepted it and
   silently discarded the port.
+
 - **A filesystem error no longer aborts the whole server.** Six `std::filesystem` calls on the
   write and rotation paths used the throwing overloads. An exception from any of them escaped the
   sink's strand handler and then `io_context::run()` on a worker thread, where it became
@@ -400,6 +563,7 @@
   restart minilog once the storage problem is fixed. A caught handler exception is reported as a
   failed run rather than a clean stop — surviving is not the same as being healthy, and on Windows
   it is what lets the service's recovery actions fire.
+
 - **Windows services now report failure to the SCM.** Both the server and the web viewer used to
   report every stop as a clean one with exit code 0, so a service that died on an invalid config
   or an unbindable port was indistinguishable from one stopped on purpose — and no recovery action
@@ -407,159 +571,6 @@
   actually succeeded, and reports a service-specific error with a non-zero exit code when it
   fails, visible in `sc query`. (`sc start` returns before startup resolves, so it still reports
   success; `net start` waits for the outcome.)
-
-### Changed
-
-- **The README no longer claims IPv4-only.** It said "IPv6 is not supported" while
-  `make_address` accepted an IPv6 literal and `udp::endpoint` then bound an IPv6 socket — a
-  documented limitation the code did not implement, sitting directly above the Standards
-  conformance section. The documentation now says what is true: one socket, one address family at
-  a time, no dual-stack listener, and an IPv6 `host` binds an IPv6 socket but is exercised only by
-  a loopback smoke test, so treat it as unsupported. Behaviour is unchanged, and the smoke test is
-  new — it pins the path as working without claiming more than that. `minilog.conf.example` says
-  the same on `[server] host`.
-
-- **CI pins third-party actions to commit SHAs.** `ilammy/msvc-dev-cmd`, `softprops/action-gh-release`
-  and `codecov/codecov-action` were referenced by tag, which is a mutable pointer — the code those
-  jobs run could change with no change in the repository, and they hold `GITHUB_TOKEN` (release
-  upload) and `CODECOV_TOKEN` (coverage upload). Each is now a full SHA with the version in a
-  trailing comment, and the workflow says how to move one. `actions/*` are GitHub's own and stay on
-  tags.
-
-- **`text_file` and `jsonl_file` must now be absolute paths.** A relative path resolved against
-  whatever working directory the reading process happened to have, and the three programs that
-  read `minilog.conf` each had a different one: the server used its own CWD, the cli-viewer used
-  its own, and the web-viewer resolved against the config file's directory. One configuration
-  therefore named up to three different files. Under the Windows SCM the server's CWD is
-  `C:\Windows\System32`, so a relative path aimed at a system directory and left a dead sink
-  behind when the open failed — with nothing to say why. A relative path is now a config error
-  naming the section and the key, and the message says that environment variables are not
-  expanded, because `%ProgramData%\minilog\logs` is the next thing people try. UNC paths
-  (`\\server\share\logs`) remain valid on Windows. Both viewers now use the configured value
-  exactly as written, so there is no longer a resolution rule to keep three implementations
-  agreeing on. The shipped `installer/minilog.conf` and `minilog.conf.example` already used
-  absolute paths; a hand-written config with relative ones has to be corrected.
-
-- **An RFC 3164 message without a tag now has `app` unset instead of its first word.** This goes
-  with the parsing fix above. When no `tag:` is found the first word used to be taken as the app
-  name and removed from the message, so `<14>… myhost Connection reset by peer` was stored as
-  `app` = `Connection`, `message` = `reset by peer` — with no colon anywhere in it. Now `app` is
-  `null` and the message is whole. Both changes alter how existing inputs parse: stored JSONL
-  written before and after this release will differ in `app` and `message` for any message that
-  was not properly tagged, and the web viewer's app filter and the CLI viewer's patterns will see
-  a smaller, bounded set of app values. One case is knowingly left alone — a message opening with
-  a bare clock time (`10:30:45 disk is full`) has a colon before any space and is still read as a
-  tag.
-- **Output files are opened at startup, not on the first message.** An unwritable or missing log
-  directory is now a startup failure naming the path. Previously minilog started, reported itself
-  running — to the SCM as well — and the sink then died on the first message, with no non-zero
-  exit code and no recovery action. The side effect is that log files now appear as soon as
-  minilog starts, rather than when the first message arrives.
-
-### New
-
-- **An unrecognised config key is now an error.** `loadConfig` read the keys it knew and ignored
-  everything else, so `max_sise = 100MB` left the size at its default, `enabeld = true` left
-  forwarding off and `faciltiy = auth` left the filter at the wildcard — a running server doing
-  something other than what the file said, with nothing anywhere to say so. An unknown key in
-  `[server]`, `[output.*]`, `[forwarding]` or `[web_viewer]` now fails the load, naming the
-  section, the key and the valid ones. Sections minilog does not know are still ignored, so the
-  file can carry another tool's settings; `[web_viewer]` is validated despite belonging to the web
-  viewer, because minilog is the only component that validates this file at all.
-  **Upgrading from v1.0.0 needs one edit:** that release's shipped `installer/minilog.conf`
-  carried `encoding = utf-8` in `[server]`, a key removed in v1.1.0, and the installer writes the
-  config `onlyifdoesntexist` — so an upgrade keeps the administrator's file verbatim and minilog
-  refuses to start until that line is deleted. Configs from v1.1.0 onward are unaffected.
-
-- **Security and cache headers on the web viewer.** Every response now carries a
-  `Content-Security-Policy` (`default-src 'none'`, `script-src`/`style-src`/`connect-src` at
-  `'self'`, `img-src 'self' data:`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The UI renders text a syslog
-  sender chose, so the escaping in `app.js` is the control and the policy is the backstop for what
-  it misses; the assets are all local and free of inline script, style and event handlers, which a
-  test now checks so that a later edit cannot quietly make the policy wrong. `data:` is allowed
-  for images because the search icon is an inline SVG. `no-store` also stops an upgraded viewer
-  serving the previous version's `app.js` from a browser cache — the asset URLs carry no version.
-
-- **`[forwarding] host` accepts a hostname.** It took an IP literal only —
-  `boost::asio::ip::make_address` does not resolve names — while the shipped example config
-  described the field as "hostname or IP address". Forwarding to a collector by name is the normal
-  deployment shape; hard-coding its address on every syslog host is what people are trying to
-  avoid. The destination is now resolved once, when minilog starts, and the address found is used
-  for the lifetime of the process: re-resolving per message would put a name lookup on the hot
-  path, and a collector that moves is rare enough to be worth a restart. A name that does not
-  resolve at startup is **not** a startup failure — minilog runs with forwarding off, reports it
-  once, and retries in the background with a growing delay (1 s, doubling to a minute), reporting
-  how many messages were dropped when it finally succeeds. A Windows `AUTO_START` service is
-  routinely running before DNS is, and losing the collector over an unreachable forwarding
-  destination would be worse than losing forwarding. Values that cannot be a host at all —
-  brackets, a space, a scheme, or a port appended — are still config errors at startup, because as
-  names they would never resolve and would be retried silently forever; `10.0.0.999` is among
-  them, since a hostname cannot have an all-numeric top-level label.
-
-- **IPv6 forwarding destinations now work.** The forwarding socket was opened as
-  `udp::v4()` regardless of the destination, so an IPv6 host passed config validation and then had
-  nothing to send through. It is opened from the resolved endpoint's protocol instead. Receiving
-  is unchanged and still IPv4.
-
-- **`--config` and `--viewer-config` for the cli-viewer.** It was the only component that could
-  not be told where its configuration lives: `minilog.exe` takes a path as an argument and
-  `minilog-web-viewer` has `--config`, but the cli-viewer had a fixed search order and nothing
-  else. That blocks deployments which put binaries and configuration inside an existing
-  application tree rather than the platform directories, leaving "launch it from the config
-  directory" or "keep a second copy of minilog.conf beside the script" — which then drifts. Both
-  flags override the search outright, and a path that does not exist is an error rather than a
-  quiet fall-back, because a typo in a deployment script would otherwise read some other
-  configuration's logs and say nothing. Giving neither flag behaves exactly as before. The
-  not-found message now lists the paths actually searched, including
-  `%ProgramData%\minilog\minilog.conf` — it used to name `C:\Program Files\minilog\minilog.conf`,
-  which is not one of them — and says that `--config` exists. Searching the current directory
-  first is deliberate and now documented as such: a shortcut's "Start in" field selects which
-  configuration the viewer picks up.
-
-- **`[web_viewer] host` and `port`, replacing the web viewer's `--addr` flag.** The listen address
-  was the one deployment fact that did not live in `minilog.conf` — it was a command-line flag,
-  frozen into the Windows service registration at install time and supplied by the installer, so
-  changing the port meant re-registering the service and editing `minilog.conf` did nothing. It is
-  now read from the viewer's own section of the same file, and `--addr` is gone; the service entry
-  is just `--config <path>`. Defaults are unchanged: an absent section still means every interface
-  on port 9514. An absent or empty `host` means every interface on **both** IPv4 and IPv6 —
-  writing `0.0.0.0` there would be IPv4 only, which is why the default is empty rather than an
-  address. minilog itself ignores the section, so no server change was needed. The installer no
-  longer takes a `WebViewerAddr` define: it reads the port back out of the config it has just
-  installed to build the Start Menu and desktop shortcut URLs, which is what makes them right on
-  an upgrade, where the config on disk is the administrator's with whatever port they chose. A
-  shortcut still cannot follow an edit made after the install, and the shipped config says so
-  where the edit happens.
-
-- **`[server] max_queue_bytes`** bounds the received-but-unwritten log held in memory; see the
-  entry under Fixed. Takes the same units as `max_size`, so `16MB` and `16777216` both work, and
-  defaults to 16 MB. `0` is rejected rather than meaning "unlimited".
-- **`--install` and `--uninstall` are now idempotent.** `--install` used to fail against a service
-  that already existed (`ERROR_SERVICE_EXISTS`, or an explicit check in the web viewer) and
-  `--uninstall` used to fail when there was none, which is why the installer ran `--uninstall` on
-  both executables with its errors deliberately swallowed. `--install` now updates an existing
-  registration — binary path, arguments, display name, description, recovery actions and Event Log
-  source — while leaving the start type and the service account alone, so an administrator who
-  bound the service to a specific account or set it to manual start keeps that across an upgrade.
-  It reports "installed" or "updated" and exits 0 either way; it never starts or stops anything.
-  `--uninstall` against an absent service exits 0. The installer now stops the services with
-  `--stop` before copying files instead of deregistering them, so a hand-tuned registration
-  survives an upgrade.
-- **`--stop` on both executables.** `minilog --stop` and `minilog-web-viewer --stop` stop the
-  service and wait until its process has genuinely exited, with `--timeout SECONDS` (default 30)
-  bounding the wait. This is what an upgrade needs between stopping the old build and copying the
-  new one: `sc stop` and PowerShell's `WaitForStatus('Stopped')` wait on SCM state, and a service
-  reports itself stopped before its process has released the executable file. Stopping a service
-  that is already stopped, or not registered, succeeds. The README documents the upgrade sequence.
-- **Windows service recovery actions.** `--install` now configures both services to be restarted
-  by the SCM 5 seconds after a failure, twice, before being left stopped, with the failure
-  counter resetting after 300 seconds without a failure. Previously a service that died stayed
-  dead until someone noticed.
-- **Event Log source for the web viewer.** `--install` registers a `minilog-web-viewer` Event Log
-  source and `--uninstall` removes it. A web viewer running as a service has no console, so its
-  startup failures previously left no trace at all; they are now written to the Windows Event
-  Log. Interactive runs still log to stderr.
 
 ## v1.3.0 — 2026-04-28
 
