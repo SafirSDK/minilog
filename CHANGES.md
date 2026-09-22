@@ -2,6 +2,33 @@
 
 ## v1.4.0 — 2026-09-22
 
+### Upgrading from 1.3.0
+
+Eight changes in this release alter existing behaviour rather than add to it. Each is described in
+full further down; this is the list to check a deployment against before upgrading.
+
+- **`text_file` and `jsonl_file` must be absolute paths.** A relative path is now a startup error.
+- **An unknown config key, or a value that cannot be read, is a startup error.** `max_sise = 100MB`,
+  `max_files = abc`, `include_malformed = yes` and `max_files = 10 ; ten generations` all fail the
+  start — a value runs to the end of its line, so there are no inline comments. Booleans accept
+  exactly `true`, `false`, `1` and `0`.
+- **An RFC 3164 message without a `tag:` now has `app` set to `null`** instead of its first word,
+  and a colon reached only after a space is message text, not a tag terminator. Records written
+  before and after the upgrade differ in `app` and `message` for such messages.
+- **The text sink escapes control characters.** C0, DEL and C1 are written as `\n`, `\r`, `\xNN` or
+  `\uNNNN`, and a literal backslash is doubled, so the file is no longer byte-for-byte the datagram.
+  The README's text-file section gives the exact rules.
+- **The web viewer's `--addr` flag is gone.** The listen address comes from a `[web_viewer]` section
+  (`host`, `port`; default every interface on 9514) in `minilog.conf`, and the installer's shortcuts
+  read the port from there. A deployment that passed `--addr` has to move the value into the config.
+- **`/search` no longer returns record text**, only an offset per match; the record is fetched
+  through `/lines`. The bundled UI is updated; anything else consuming the endpoint has to be.
+- **Datagrams arriving while a `[forwarding] host` *name* is still being resolved are not
+  forwarded.** The lookup no longer holds up the UDP bind, so the first few messages after a start
+  can miss forwarding — counted, and reported when the lookup finishes. An IP literal is unaffected.
+- **`--install` updates an existing registration instead of failing**, and `--uninstall` on an
+  unregistered service succeeds. Scripts that ran `--uninstall` before `--install` no longer need to.
+
 ### New
 
 - **`minilog --check <config-path>` validates a config and the machine it will run on.** minilog
@@ -370,20 +397,18 @@
   is right; for a persistent one it was a tight loop at 100% of a core writing one log line per
   iteration into the host's system log — which on a syslog collector is frequently relayed back
   into minilog, so the loop fed itself. The re-arm now waits, from 50 ms doubling to a second, and
-  further errors are counted rather than logged, with a summary at most once a minute that says
-  whether they were all the same error. The delay is monotonic and only a successful receive
-  resets it — a socket failing in two ways alternately is still a failing socket. An earlier
-  draft restarted the backoff whenever the error message changed, which two errors alternating
-  defeated completely: 100 such errors produced 100 log lines and never left the 50 ms delay,
-  where 100 identical ones produced one line. A second draft reported the first error after every
-  successful receive immediately, which a socket failing on every other receive defeated the same
-  way — 100 error/success pairs produced 100 error lines and 100 recovery lines, and a success
-  resets the delay, so it never left 50 ms either. The reporting interval therefore spans
-  successes, and only a streak that was reported gets a "receiving again after N consecutive
-  receive error(s)" line, counted across a mixed streak. A summary covering occurrences with a
-  successful receive among them says "failing intermittently" rather than "still failing", which
-  would claim nothing had been received since the last line. The delay still resets on a success: a
-  socket that just delivered a datagram should re-arm at once.
+  further errors are counted rather than logged, with a summary at most once a minute. The delay is
+  monotonic and only a successful receive resets it — a socket failing in two ways alternately is
+  still a failing socket, so the error message has no say in the backoff. An earlier draft
+  restarted the backoff whenever the error message changed, which two errors alternating defeated
+  completely: 100 such errors produced 100 log lines and never left the 50 ms delay, where 100
+  identical ones produced one line. A second draft reported the first error after every successful
+  receive immediately, which a socket failing on every other receive defeated the same way — 100
+  error/success pairs produced 100 error lines and 100 recovery lines, and a success resets the
+  delay, so it never left 50 ms either. The reporting interval therefore spans successes, and only
+  a streak that was reported gets a "receiving again after N consecutive receive error(s)" line.
+  The delay still resets on a success: a socket that just delivered a datagram should re-arm at
+  once.
 
 - **The cli-viewer no longer exits on a record it did not expect.** `record.get("message", "")`
   defaults only when the key is *absent*, so `"message": null` produced `None`, which reached

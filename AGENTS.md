@@ -154,6 +154,21 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   `inc` (include substrings), `exc` (exclude substrings).
 - Tests: `*_test.go` files in `src/web-viewer/`; run with `go test ./src/web-viewer/`.
 
+## CI flakes to watch — not to chase
+
+Noted as they turn up. A flake seen once is noise; the same one twice is a defect, and this list
+exists to tell the difference across context resets rather than re-diagnosing it each time. Remove
+an entry once its cause is found and fixed, or once it has gone a few releases without recurring.
+
+- **`test_binary.py::test_inflight_messages_complete_before_exit`, Windows.** Failed once as
+  `17 != 20` (run 35359400495, 2026-09-18, on the #35 commit, which touches nothing but the
+  installer and its test). Three of twenty datagrams sent in a tight loop never reached the log
+  before the shutdown signal; a re-run passed. This is the territory of #10 (admission control —
+  what happens to datagrams that arrive faster than they are processed), so if it recurs, record it
+  here and treat it as evidence about that path rather than as a test to loosen. The test allows
+  0.3 s between the last send and the signal, which is the first thing to look at if the admission
+  path turns out not to explain it.
+
 ## Release checklist
 
 Before tagging a release, verify all of the following:
