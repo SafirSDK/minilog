@@ -124,6 +124,15 @@ To build the installer (requires [Inno Setup](https://jrsoftware.org/isinfo.php)
 cmake --build --preset windows-release --target package
 ```
 
+To build the zip archive for [installing without the installer](#windows-deployment-without-the-installer)
+(needs nothing beyond the build itself):
+
+```
+cmake --build --preset windows-release --target package-zip
+```
+
+Both land in `build\windows-release`, and a tagged CI build attaches both to the GitHub release.
+
 ### Running the installer from another installer or a script
 
 Pass `/VERYSILENT` to suppress the wizard and install with defaults:
@@ -134,6 +143,10 @@ minilog-1.0.0-setup.exe /VERYSILENT
 
 For further command-line flags (component selection, install directory override, etc.) see the
 [Inno Setup documentation](https://jrsoftware.org/ishelp/index.php?topic=setupcmdline).
+
+A deployment that wants to place the files itself, or that cannot run a third-party installer,
+uses the zip archive instead — see [Windows deployment without the
+installer](#windows-deployment-without-the-installer).
 
 ## Development
 
@@ -509,6 +522,159 @@ docker compose up
 Log file paths in the config must match the container's volume mount. With the default `docker-compose.yml` the log directory is `/var/log/minilog/`, so use paths like `/var/log/minilog/syslog.log`.
 
 The Docker image contains only the syslog server. The web-viewer and cli-viewer are not included — run them on the host against the mounted log volume if needed.
+
+## Windows deployment without the installer
+
+Every release ships `minilog-<version>-win64.zip` beside the installer. It holds the same files
+the installer lays down, and nothing that needs an installer to work: the executables are
+statically linked, take every path they use from the command line or the config, and register
+themselves as services. Copy the files where the deployment says, write a config, and run the
+steps below. This is how minilog is meant to be rolled out as one component among others,
+into directories that are not its own.
+
+The archive contains one directory, `minilog-<version>\`:
+
+| File | What it is |
+|---|---|
+| `minilog.exe` | the syslog server |
+| `minilog-web-viewer.exe` | the web viewer |
+| `minilog.pdb` | debug symbols for `minilog.exe`; optional, but a crash dump is only readable with the `.pdb` of the exact build, so keep it beside the executable |
+| `minilog.conf` | the default configuration the installer ships; edit it, do not use it as is |
+| `minilog-cli-viewer.py` | the CLI viewer, a Python 3 script with no dependencies |
+| `minilog-cli-viewer.conf` | display preferences for the CLI viewer; optional |
+| `LICENSE`, `README.md`, `CHANGES.md` | this documentation |
+
+### Constraints to know before starting
+
+- **One minilog per machine.** The service names `minilog` and `minilog-web-viewer` are fixed.
+  A second copy cannot be registered alongside a first, and running `--install` from a new
+  location repoints the existing registration at the new executable — which also means that a
+  machine with the installer's minilog on it must have that uninstalled first, or the installer's
+  later uninstall will remove the hand-placed service.
+- **Both `--install` calls need an elevated prompt.** They write the service registration and an
+  Event Log source under `HKLM`, whatever account the service later runs as.
+- **The services run as LocalSystem and start automatically.** `--install` does not take an
+  account or a start type. Change either afterwards with `sc config`; a later `--install`
+  (an upgrade) leaves both as it finds them.
+- **minilog creates no directories.** The log directory is provisioned by whoever deploys it,
+  with an ACL that lets the service account write there.
+- **Paths in the config must be absolute, and environment variables are not expanded.** A config
+  generated per machine has to contain the expanded values.
+
+### Installing
+
+1. **Place the executables.** Any directory; the two need not share one. Nothing is read
+   relative to the executable except the web viewer's default config path, and that is
+   overridden below.
+
+2. **Write the config.** Start from the shipped `minilog.conf` and put it wherever the deployment
+   keeps configuration. Set `text_file` and `jsonl_file` in each `[output.*]` section to absolute
+   paths in the log directory of your choosing, and `[web_viewer] host` / `port` to where the
+   viewer should listen — an empty `host` is every interface. See [Configuration](#configuration)
+   for the rest. Both services read this one file.
+
+3. **Create the log directory** named by those paths. Grant the service account write access if
+   it is somewhere LocalSystem cannot already write.
+
+4. **Open the firewall** for inbound UDP on the syslog port, and for TCP on the viewer's port if
+   it is to be reached from other machines. No local check can verify this, so it is listed here
+   rather than by `--check`:
+
+   ```
+   netsh advfirewall firewall add rule name="minilog syslog" dir=in action=allow protocol=UDP localport=514
+   netsh advfirewall firewall add rule name="minilog web viewer" dir=in action=allow protocol=TCP localport=9514
+   ```
+
+5. **Validate**, before anything is registered:
+
+   ```
+   D:\deploy\bin\minilog.exe --check D:\deploy\etc\minilog.conf
+   ```
+
+   It reports every problem in one run and exits non-zero if any is an error — a missing log
+   directory, an unwritable one, a taken port, an unresolvable forwarding host. Fix and re-run
+   until it exits zero. The `--check` section under Usage above lists everything it looks at.
+
+6. **Register both services**, from an elevated prompt, giving the config path in full:
+
+   ```
+   D:\deploy\bin\minilog.exe --install D:\deploy\etc\minilog.conf
+   D:\deploy\bin\minilog-web-viewer.exe --install --config D:\deploy\etc\minilog.conf
+   ```
+
+   Each records its own location as the OS reports it and the config path made absolute, sets
+   the recovery actions (two restarts 5 s apart, reset after 300 s), and registers its Event Log
+   source. Neither starts the service. A config the server cannot read is refused here rather
+   than at the next boot.
+
+7. **Start them** with `net start`, which waits for the outcome where `sc start` does not:
+
+   ```
+   net start minilog
+   net start minilog-web-viewer
+   ```
+
+   A failed start says so on the console, and the reason is in the Application event log under
+   the source `minilog` or `minilog-web-viewer`. Then send a datagram (see [Sending a test
+   message](#sending-a-test-message)), confirm it lands in the log file, and open
+   `http://<host>:9514/` in a browser.
+
+8. **The CLI viewer**, if wanted, needs a Python 3 interpreter and a pointer to the config, since
+   its own search looks only in the current directory, `%ProgramData%\minilog` and beside the
+   script:
+
+   ```
+   python D:\deploy\bin\minilog-cli-viewer.py --config D:\deploy\etc\minilog.conf
+   ```
+
+   A shortcut whose "Start in" field is the config directory does the same without the flag. The
+   installer also puts this script on the system `PATH` and creates Start Menu and desktop
+   shortcuts to the viewer URL; a manual deployment does either as it sees fit.
+
+### Command-line options
+
+Both executables take the same service verbs. Everything else the services need comes from the
+config file, so there is nothing to pass at start time and nothing else to keep in step.
+
+| `minilog.exe` | `minilog-web-viewer.exe` | Effect |
+|---|---|---|
+| `--check <config>` | — | validate the config and this machine, then exit; see above |
+| `--install <config>` | `--install --config <config>` | register as a service, or update an existing registration; does not start it |
+| `--stop` | `--stop` | stop the service and wait until its *process* has exited |
+| `--uninstall` | `--uninstall` | stop as above, then remove the service and its Event Log source; succeeds if nothing is registered |
+| `--timeout <seconds>` | `--timeout <seconds>` | how long `--stop` and `--uninstall` wait for the process; default 30, running out is an error |
+| `<config>` | `--config <config>` | run in the foreground with this config; what the SCM runs, and useful for a first try at a console |
+
+The web viewer's `--config` defaults to `minilog.conf` beside its own executable; the server has
+no default and always takes the path as its positional argument.
+
+### Upgrading
+
+```
+D:\deploy\bin\minilog.exe --stop
+D:\deploy\bin\minilog-web-viewer.exe --stop
+                                             copy the new executables over the old ones
+D:\deploy\bin\minilog.exe --install D:\deploy\etc\minilog.conf
+D:\deploy\bin\minilog-web-viewer.exe --install --config D:\deploy\etc\minilog.conf
+net start minilog
+net start minilog-web-viewer
+```
+
+`--stop` returns only once the process is gone, which is what lets the copy succeed; `sc stop`
+and PowerShell's `WaitForStatus('Stopped')` return earlier than that. Re-running `--install` is
+harmless when nothing moved and required when something did — it refreshes the executable path,
+the Event Log message file and the recovery actions, and leaves the start type and account as
+they are. Read the **Upgrading from** notes at the top of `CHANGES.md` for the release first:
+some releases change what a config must contain.
+
+### Removing
+
+```
+D:\deploy\bin\minilog-web-viewer.exe --uninstall
+D:\deploy\bin\minilog.exe --uninstall
+```
+
+Then delete the files. The config and the logs are yours and are never touched.
 
 ## Linux deployment (systemd)
 

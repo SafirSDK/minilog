@@ -210,4 +210,7 @@ Before tagging a release, verify all of the following:
    git checkout master && git merge --ff-only develop
    git push origin master develop --tags
    ```
-   The tag push triggers the Windows installer build and GitHub Release upload.
+   The tag push triggers the Windows build and uploads both `minilog-<version>-setup.exe` and
+   `minilog-<version>-win64.zip` to the GitHub Release. The zip's file list lives in three places
+   that must agree: `cmake/package_zip.cmake`, `tests/installer/test_zip_install.py`
+   (`EXPECTED_FILES`) and the table in the README's "Windows deployment without the installer".

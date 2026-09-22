@@ -34,6 +34,9 @@ ignore = [
 "tests/installer/test_installer.py" = [
     "SIM112",  # Capitalized environment variable (Windows uses PascalCase)
 ]
+"tests/installer/test_zip_install.py" = [
+    "SIM112",  # Capitalized environment variable (Windows uses PascalCase)
+]
 "minilog-cli-viewer.py" = [
     "SIM112",  # Capitalized environment variable (Windows uses PascalCase)
 ]

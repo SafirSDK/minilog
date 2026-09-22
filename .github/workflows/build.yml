@@ -284,6 +284,9 @@ jobs:
       - name: Build installer
         run: cmake --build --preset windows-release --target package
 
+      - name: Build zip archive
+        run: cmake --build --preset windows-release --target package-zip
+
       - name: Test
         env:
           BOOST_TEST_LOG_LEVEL: test_suite
@@ -295,6 +298,14 @@ jobs:
           $exe = Get-Item "build/windows-release/minilog-*-setup.exe" | Select-Object -First 1
           python tests/installer/test_installer.py $exe.FullName
 
+      # After the installer test, which leaves both services unregistered: the
+      # two register the same service names.
+      - name: Test zip archive
+        shell: pwsh
+        run: |
+          $zip = Get-Item "build/windows-release/minilog-*-win64.zip" | Select-Object -First 1
+          python tests/installer/test_zip_install.py $zip.FullName
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v6
         with:
@@ -302,11 +313,20 @@ jobs:
           path: build/windows-release/minilog-*-setup.exe
           if-no-files-found: error
 
-      - name: Publish installer to GitHub Release
+      - name: Upload zip archive artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: minilog-zip
+          path: build/windows-release/minilog-*-win64.zip
+          if-no-files-found: error
+
+      - name: Publish installer and zip archive to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          files: build/windows-release/minilog-*-setup.exe
+          files: |
+            build/windows-release/minilog-*-setup.exe
+            build/windows-release/minilog-*-win64.zip
           prerelease: ${{ contains(github.ref, '-') }}
 
   # ─── Linux (Clang, libFuzzer) ────────────────────────────────────────────

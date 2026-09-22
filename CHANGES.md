@@ -31,6 +31,17 @@ full further down; this is the list to check a deployment against before upgradi
 
 ### New
 
+- **A zip archive for installing without the installer.** Every release now ships
+  `minilog-<version>-win64.zip` beside `minilog-<version>-setup.exe`. It holds the two executables,
+  the server's debug symbols, the default config, the CLI viewer and its config, and the
+  documentation — the same files the installer lays down, for a deployment that places them itself
+  and keeps its config and logs wherever it keeps such things. Much of this release exists to make
+  that work: `--install` recording the real executable path and an absolute config path, `--check`
+  for validating the result before registering anything, `--stop` for upgrading in place. The
+  README has a **Windows deployment without the installer** section walking through it, and CI
+  exercises the archive the same way — a real install from it, on paths the installer never uses.
+  `cmake --build --preset windows-release --target package-zip` builds it.
+
 - **`minilog --check <config-path>` validates a config and the machine it will run on.** minilog
   never creates directories and never adjusts permissions, so its correctness depends on facts about
   the host that nothing verified: the log directory existing, its ACL allowing writes, the UDP port

@@ -213,4 +213,32 @@ if(WIN32)
             VERBATIM
         )
     endif()
+
+    # -----------------------------------------------------------------------
+    # Zip archive for installing without the installer. Needs no Inno Setup:
+    # the files are staged and archived by cmake/package_zip.cmake, which is
+    # also where the list of what goes in lives.
+    # -----------------------------------------------------------------------
+    set(_zip_deps minilog)
+    set(_zip_optional_args "")
+    if(GO_EXECUTABLE)
+        list(APPEND _zip_deps minilog-web-viewer)
+        list(APPEND _zip_optional_args "-DWEB_VIEWER_EXE=${_web_viewer_bin}")
+    endif()
+    if(MSVC)
+        list(APPEND _zip_optional_args "-DSERVER_PDB=$<TARGET_PDB_FILE:minilog>")
+    endif()
+
+    add_custom_target(package-zip
+        COMMAND "${CMAKE_COMMAND}"
+            "-DVERSION=${PROJECT_VERSION}"
+            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DOUTPUT_DIR=${CMAKE_BINARY_DIR}"
+            "-DSERVER_EXE=$<TARGET_FILE:minilog>"
+            ${_zip_optional_args}
+            -P "${CMAKE_SOURCE_DIR}/cmake/package_zip.cmake"
+        DEPENDS ${_zip_deps}
+        COMMENT "Building zip archive..."
+        VERBATIM
+    )
 endif()
