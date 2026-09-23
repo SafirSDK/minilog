@@ -764,7 +764,10 @@ it usable in a pipeline. Empty lines are skipped.
 | `--rfc3164` | off | send `<PRI>Mmm dd hh:mm:ss HOST APP[PID]: MSG` instead of RFC 5424 |
 | `-h`, `--help`, `--version` | | |
 
-Names are case-insensitive. The default format is RFC 5424 with a local timestamp carrying its UTC
+Names are case-insensitive. A `--host` name that resolves to several addresses is sent to the first
+one the resolver returns — on a dual-stack machine `localhost` is usually `::1` — so if minilog
+listens on IPv4 only, give the address rather than the name. The default format is RFC 5424 with a
+local timestamp carrying its UTC
 offset (`2026-09-23T14:07:31.123456+02:00`), no structured data, and `-` for a field not given.
 Header fields must be single words of printable ASCII, since that is how the receiver takes the
 header apart; the message itself may contain anything, and minilog escapes or replaces what it

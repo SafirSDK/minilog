@@ -8,6 +8,7 @@ flags:
   server:
     paths:
       - src/server/
+      - src/send/
     carryforward: true
   web-viewer:
     paths:

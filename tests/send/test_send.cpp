@@ -212,6 +212,8 @@ BOOST_AUTO_TEST_CASE(port_range)
     BOOST_CHECK_THROW(parse({"--port", "65536", "m"}), UsageError);
     BOOST_CHECK_THROW(parse({"--port", "syslog", "m"}), UsageError);
     BOOST_CHECK_THROW(parse({"--port", "-1", "m"}), UsageError);
+    BOOST_CHECK_THROW(parse({"--port", "", "m"}), UsageError);
+    BOOST_CHECK_THROW(parse({"-f", "", "m"}), UsageError);
 }
 
 BOOST_AUTO_TEST_CASE(unknown_option_is_a_usage_error)

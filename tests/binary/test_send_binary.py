@@ -21,9 +21,9 @@ import time
 import unittest
 from pathlib import Path
 
-# The server-side helpers (free port, readiness, shutdown) live beside this file.
+# The server-side helpers (process flags, shutdown) live beside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_binary import _POPEN_FLAGS, free_port, terminate, wait_for_port  # noqa: E402
+from test_binary import _POPEN_FLAGS, terminate  # noqa: E402
 
 SERVER: str = ""  # set from argv before test discovery
 SEND: str = ""
@@ -35,13 +35,58 @@ EXIT_USAGE = 2
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def write_config(d: Path, port: int) -> Path:
+def family(host: str) -> int:
+    return socket.AF_INET6 if ":" in host else socket.AF_INET
+
+
+def free_port(host: str) -> int:
+    """Return an ephemeral UDP port that is currently unused on *host*."""
+    with socket.socket(family(host), socket.SOCK_DGRAM) as s:
+        s.bind((host, 0))
+        return s.getsockname()[1]
+
+
+def wait_for_listener(host: str, port: int, timeout: float = 5.0) -> bool:
+    """Block until a process has bound UDP *host*:*port* (server is ready).
+
+    test_binary.wait_for_port does the same for 127.0.0.1 only; the server
+    here may be on ::1, see test_localhost_by_name.
+    """
+    deadline = time.monotonic() + timeout
+    # On Windows, SO_EXCLUSIVEADDRUSE creates a race: the probe socket can
+    # briefly hold the port between the server's open() and bind() calls.  A
+    # short initial wait lets the server complete its bind before probing.
+    if sys.platform == "win32":
+        time.sleep(0.3)
+    while time.monotonic() < deadline:
+        with socket.socket(family(host), socket.SOCK_DGRAM) as probe:
+            try:
+                probe.bind((host, port))
+            except OSError:
+                return True  # Cannot bind — server owns it.
+        time.sleep(0.02)
+    return False
+
+
+def first_resolved(name: str) -> str:
+    """The address minilog-send will send to for *name*.
+
+    Asio's resolver is getaddrinfo with AI_ADDRCONFIG, and the tool takes the
+    first result; this is the same call, so the test can put the server where
+    the datagram is going to go.  On a dual-stack machine that is ::1 for
+    "localhost", not 127.0.0.1.
+    """
+    infos = socket.getaddrinfo(name, None, type=socket.SOCK_DGRAM, flags=socket.AI_ADDRCONFIG)
+    return infos[0][4][0]
+
+
+def write_config(d: Path, host: str, port: int) -> Path:
     conf = d / "minilog.conf"
     conf.write_text(
         "\n".join(
             [
                 "[server]",
-                "host = 127.0.0.1",
+                f"host = {host}",
                 f"udp_port = {port}",
                 "workers = 1",
                 "",
@@ -83,14 +128,17 @@ def run_send(*args: str, stdin: str | None = None) -> subprocess.CompletedProces
 class ServerFixture:
     """A minilog listening on an ephemeral port, writing JSONL into a tempdir."""
 
+    def __init__(self, host: str = "127.0.0.1"):
+        self.host = host
+
     def __enter__(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self._tmp.name)
-        self.port = free_port()
+        self.port = free_port(self.host)
         self.jsonl = self.dir / "syslog.jsonl"
-        conf = write_config(self.dir, self.port)
+        conf = write_config(self.dir, self.host, self.port)
         self.proc = subprocess.Popen([SERVER, str(conf)], **_POPEN_FLAGS)
-        if not wait_for_port(self.port):
+        if not wait_for_listener(self.host, self.port):
             self.proc.kill()
             raise AssertionError("server did not start in time")
         return self
@@ -156,6 +204,12 @@ class TestCommandLine(unittest.TestCase):
         self.assertEqual(r.returncode, EXIT_USAGE)
         self.assertIn("app", r.stderr)
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "a Windows command line is capped at 32767 characters, below the datagram "
+        "limit, so an oversize argv message cannot exist there; the stdin path is "
+        "covered by test_stdin_stops_at_the_first_line_that_cannot_be_sent",
+    )
     def test_oversize_message_is_refused_before_anything_is_sent(self):
         # Port 1 is nothing anybody listens on; the point is that the size check
         # happens first, so no resolution or socket is involved in the failure.
@@ -302,7 +356,10 @@ class TestAgainstServer(unittest.TestCase):
         self.assertEqual(rec["message"], "- -v --looks-like-a-flag")
 
     def test_localhost_by_name(self):
-        with ServerFixture() as srv:
+        """A name goes to the first address it resolves to, so the server is
+        bound there -- ::1 on a dual-stack machine, where a server on 127.0.0.1
+        would never see the datagram.  The README says as much."""
+        with ServerFixture(host=first_resolved("localhost")) as srv:
             r = srv.send("--host", "localhost", "by name")
             self.assertEqual(r.returncode, 0, r.stderr)
             (rec,) = wait_for_records(srv.jsonl, 1)
