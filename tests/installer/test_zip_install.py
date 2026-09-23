@@ -56,16 +56,16 @@ from test_installer import (
 # the deployment says, and a test that used the installer's locations would not
 # show that.
 
-ROOT       = Path(os.environ.get("SystemDrive", "C:") + "\\") / "minilog-zip-test"
-BIN_DIR    = ROOT / "bin"
-ETC_DIR    = ROOT / "etc"
-LOG_DIR    = ROOT / "var" / "logs"
-EXE_PATH   = BIN_DIR / "minilog.exe"
-WEB_EXE    = BIN_DIR / "minilog-web-viewer.exe"
-SEND_EXE   = BIN_DIR / "minilog-send.exe"
-VIEWER_PY  = BIN_DIR / "minilog-cli-viewer.py"
-CONFIG     = ETC_DIR / "minilog.conf"
-LOG_FILE   = LOG_DIR / "syslog.log"
+ROOT = Path(os.environ.get("SystemDrive", "C:") + "\\") / "minilog-zip-test"
+BIN_DIR = ROOT / "bin"
+ETC_DIR = ROOT / "etc"
+LOG_DIR = ROOT / "var" / "logs"
+EXE_PATH = BIN_DIR / "minilog.exe"
+WEB_EXE = BIN_DIR / "minilog-web-viewer.exe"
+SEND_EXE = BIN_DIR / "minilog-send.exe"
+VIEWER_PY = BIN_DIR / "minilog-cli-viewer.py"
+CONFIG = ETC_DIR / "minilog.conf"
+LOG_FILE = LOG_DIR / "syslog.log"
 
 # What the archive contains, and nothing else. Kept in step with
 # cmake/package_zip.cmake and the README's table by hand; this test is what
@@ -119,6 +119,7 @@ def run_check() -> subprocess.CompletedProcess:
 
 # ─── Test 1: contents ─────────────────────────────────────────────────────────
 
+
 def test_contents(archive: Path) -> str:
     print("\n=== Test 1: Archive contents ===")
     version = archive_version(archive)
@@ -127,17 +128,22 @@ def test_contents(archive: Path) -> str:
     with zipfile.ZipFile(archive) as zf:
         names = [n for n in zf.namelist() if not n.endswith("/")]
 
-    check(all(n.startswith(top) for n in names),
-          f"Every entry is under {top} (got {sorted(names)[:3]}...)")
-    files = {n[len(top):] for n in names if n.startswith(top)}
+    check(
+        all(n.startswith(top) for n in names),
+        f"Every entry is under {top} (got {sorted(names)[:3]}...)",
+    )
+    files = {n[len(top) :] for n in names if n.startswith(top)}
     check("/" not in "".join(files), "No subdirectories inside the archive")
-    check(files == EXPECTED_FILES,
-          f"Archive holds exactly the documented files "
-          f"(missing {sorted(EXPECTED_FILES - files)}, extra {sorted(files - EXPECTED_FILES)})")
+    check(
+        files == EXPECTED_FILES,
+        f"Archive holds exactly the documented files "
+        f"(missing {sorted(EXPECTED_FILES - files)}, extra {sorted(files - EXPECTED_FILES)})",
+    )
     return top
 
 
 # ─── Test 2: install ──────────────────────────────────────────────────────────
+
 
 def test_install(archive: Path, top: str) -> None:
     print("\n=== Test 2: Install from the archive ===")
@@ -154,49 +160,66 @@ def test_install(archive: Path, top: str) -> None:
         with zipfile.ZipFile(archive) as zf:
             zf.extractall(tmp)
         src = Path(tmp) / top.rstrip("/")
-        for name in ("minilog.exe", "minilog.pdb", "minilog-web-viewer.exe", "minilog-send.exe",
-                     "minilog-cli-viewer.py"):
+        for name in (
+            "minilog.exe",
+            "minilog.pdb",
+            "minilog-web-viewer.exe",
+            "minilog-send.exe",
+            "minilog-cli-viewer.py",
+        ):
             shutil.copy2(src / name, BIN_DIR / name)
         for name in ("minilog.conf", "minilog-cli-viewer.conf"):
             shutil.copy2(src / name, ETC_DIR / name)
 
     retarget_logs(CONFIG, LOG_DIR)
-    check(str(LOG_DIR) in CONFIG.read_text(encoding="utf-8"),
-          f"Config rewritten to log under {LOG_DIR}")
+    check(
+        str(LOG_DIR) in CONFIG.read_text(encoding="utf-8"),
+        f"Config rewritten to log under {LOG_DIR}",
+    )
 
     # The log directory does not exist yet, and minilog never creates one.
     # --check is what tells an administrator that before the service is
     # registered and fails silently into a dead sink.
     result = run_check()
     check(result.returncode != 0, "--check fails while the log directory is missing")
-    check("does not exist" in result.stdout,
-          f"--check says the directory is missing (stdout: {result.stdout.strip()[:200]})")
+    check(
+        "does not exist" in result.stdout,
+        f"--check says the directory is missing (stdout: {result.stdout.strip()[:200]})",
+    )
 
     LOG_DIR.mkdir(parents=True)
     result = run_check()
-    check(result.returncode == 0,
-          f"--check passes once the directory exists (stdout: {result.stdout.strip()[:200]})")
+    check(
+        result.returncode == 0,
+        f"--check passes once the directory exists (stdout: {result.stdout.strip()[:200]})",
+    )
 
     result = service_cmd(EXE_PATH, "--install", str(CONFIG))
-    check(result.returncode == 0,
-          f"`minilog --install` succeeds (stderr: {result.stderr.strip()})")
+    check(result.returncode == 0, f"`minilog --install` succeeds (stderr: {result.stderr.strip()})")
     result = service_cmd(WEB_EXE, "--install", "--config", str(CONFIG))
-    check(result.returncode == 0,
-          f"`minilog-web-viewer --install` succeeds (stderr: {result.stderr.strip()})")
+    check(
+        result.returncode == 0,
+        f"`minilog-web-viewer --install` succeeds (stderr: {result.stderr.strip()})",
+    )
 
-    check(service_binary_path(ti.SERVICE_NAME) == f'"{EXE_PATH}" "{CONFIG}"',
-          f"'{ti.SERVICE_NAME}' registered from {BIN_DIR} with the config in {ETC_DIR} "
-          f"(got {service_binary_path(ti.SERVICE_NAME)})")
+    check(
+        service_binary_path(ti.SERVICE_NAME) == f'"{EXE_PATH}" "{CONFIG}"',
+        f"'{ti.SERVICE_NAME}' registered from {BIN_DIR} with the config in {ETC_DIR} "
+        f"(got {service_binary_path(ti.SERVICE_NAME)})",
+    )
     web_cmdline = service_binary_path(ti.WEB_SERVICE)
-    check(str(WEB_EXE) in web_cmdline and str(CONFIG) in web_cmdline,
-          f"'{ti.WEB_SERVICE}' registered from {BIN_DIR} with the config in {ETC_DIR} "
-          f"(got {web_cmdline})")
-    check(service_start_type(ti.SERVICE_NAME) == "AUTO_START",
-          f"'{ti.SERVICE_NAME}' is AUTO_START")
-    check(event_source_registered(ti.SERVICE_NAME),
-          f"Event Log source '{ti.SERVICE_NAME}' registered")
-    check(event_source_registered(ti.WEB_SERVICE),
-          f"Event Log source '{ti.WEB_SERVICE}' registered")
+    check(
+        str(WEB_EXE) in web_cmdline and str(CONFIG) in web_cmdline,
+        f"'{ti.WEB_SERVICE}' registered from {BIN_DIR} with the config in {ETC_DIR} "
+        f"(got {web_cmdline})",
+    )
+    check(service_start_type(ti.SERVICE_NAME) == "AUTO_START", f"'{ti.SERVICE_NAME}' is AUTO_START")
+    check(
+        event_source_registered(ti.SERVICE_NAME), f"Event Log source '{ti.SERVICE_NAME}' registered"
+    )
+    check(
+        event_source_registered(ti.WEB_SERVICE), f"Event Log source '{ti.WEB_SERVICE}' registered"
+    )
     check_recovery_actions(ti.SERVICE_NAME)
     check_recovery_actions(ti.WEB_SERVICE)
 
@@ -207,6 +230,7 @@ def test_install(archive: Path, top: str) -> None:
 
 
 # ─── Test 3: smoke ────────────────────────────────────────────────────────────
+
 
 def test_smoke() -> None:
     print("\n=== Test 3: Services work from where they were put ===")
@@ -221,8 +245,10 @@ def test_smoke() -> None:
         check=False,
         timeout=15,
     )
-    check(result.returncode == 0,
-          f"`minilog-send.exe --port 514 ... {marker}` exits 0 (stderr: {result.stderr.strip()})")
+    check(
+        result.returncode == 0,
+        f"`minilog-send.exe --port 514 ... {marker}` exits 0 (stderr: {result.stderr.strip()})",
+    )
     check(result.stdout == "", "minilog-send.exe prints nothing on success")
     time.sleep(2)
 
@@ -231,9 +257,11 @@ def test_smoke() -> None:
         text = LOG_FILE.read_text(encoding="utf-8", errors="replace")
         check(marker in text, "Sent message appears in syslog.log")
         check("minilog-ci" in text, "Sent message carries the --app given to minilog-send.exe")
-    check(not (ti.LOG_DIR / "syslog.log").exists() or
-          marker not in (ti.LOG_DIR / "syslog.log").read_text(encoding="utf-8", errors="replace"),
-          "Nothing was written to the installer's default log directory")
+    check(
+        not (ti.LOG_DIR / "syslog.log").exists()
+        or marker not in (ti.LOG_DIR / "syslog.log").read_text(encoding="utf-8", errors="replace"),
+        "Nothing was written to the installer's default log directory",
+    )
 
     check(web_viewer_responds(), "Web viewer /sinks endpoint returns a JSON array")
 
@@ -246,29 +274,37 @@ def test_smoke() -> None:
         check=False,
         timeout=15,
     )
-    check(result.returncode == 0,
-          f"`minilog-cli-viewer.py --config {CONFIG} --show-all` succeeds "
-          f"(stderr: {result.stderr.strip()})")
+    check(
+        result.returncode == 0,
+        f"`minilog-cli-viewer.py --config {CONFIG} --show-all` succeeds "
+        f"(stderr: {result.stderr.strip()})",
+    )
     check(marker in result.stdout, "CLI viewer shows the message from the redirected log")
 
 
 # ─── Test 4: remove ───────────────────────────────────────────────────────────
+
 
 def test_remove() -> None:
     print("\n=== Test 4: Remove ===")
 
     check(service_cmd(EXE_PATH, "--stop").returncode == 0, "`minilog --stop` succeeds")
     check(service_cmd(WEB_EXE, "--stop").returncode == 0, "`minilog-web-viewer --stop` succeeds")
-    check(service_cmd(WEB_EXE, "--uninstall").returncode == 0,
-          "`minilog-web-viewer --uninstall` succeeds")
+    check(
+        service_cmd(WEB_EXE, "--uninstall").returncode == 0,
+        "`minilog-web-viewer --uninstall` succeeds",
+    )
     check(service_cmd(EXE_PATH, "--uninstall").returncode == 0, "`minilog --uninstall` succeeds")
 
     check(wait_service_absent(ti.SERVICE_NAME), f"'{ti.SERVICE_NAME}' gone from the SCM")
     check(wait_service_absent(ti.WEB_SERVICE), f"'{ti.WEB_SERVICE}' gone from the SCM")
-    check(not event_source_registered(ti.SERVICE_NAME),
-          f"Event Log source '{ti.SERVICE_NAME}' removed")
-    check(not event_source_registered(ti.WEB_SERVICE),
-          f"Event Log source '{ti.WEB_SERVICE}' removed")
+    check(
+        not event_source_registered(ti.SERVICE_NAME),
+        f"Event Log source '{ti.SERVICE_NAME}' removed",
+    )
+    check(
+        not event_source_registered(ti.WEB_SERVICE), f"Event Log source '{ti.WEB_SERVICE}' removed"
+    )
 
     # --stop waits for the processes to exit, which is what makes this possible.
     try:
@@ -279,6 +315,7 @@ def test_remove() -> None:
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

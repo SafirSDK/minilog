@@ -49,8 +49,7 @@ def check(path: Path) -> bool:
     for opening, closing in PAIRS.items():
         if text.count(opening) != text.count(closing):
             print(
-                f"{path}: {text.count(opening)} '{opening}' vs "
-                f"{text.count(closing)} '{closing}'",
+                f"{path}: {text.count(opening)} '{opening}' vs {text.count(closing)} '{closing}'",
                 file=sys.stderr,
             )
             ok = False

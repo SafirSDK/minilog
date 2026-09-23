@@ -804,6 +804,7 @@ Using Python:
 
 ```python
 import socket
+
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.sendto(b"<14>Mar 15 12:00:00 myhost app[99]: hello", ("127.0.0.1", 514))
 ```

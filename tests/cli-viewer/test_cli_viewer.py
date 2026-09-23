@@ -124,7 +124,11 @@ class _Acc:
 def _viewer(args, cwd):
     """Start the viewer and return (proc, stdout_acc, stderr_acc)."""
     proc = subprocess.Popen(
-        args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        args,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     return proc, _Acc(proc.stdout), _Acc(proc.stderr)
 
@@ -162,7 +166,8 @@ class TestConfigDiscovery(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, _, acc_err = _viewer(
-                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir
+            )
             stderr = _wait(acc_err, "Reading")
             _stop(proc)
 
@@ -174,7 +179,10 @@ class TestConfigDiscovery(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = subprocess.run(
                 [sys.executable, VIEWER],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("minilog.conf not found", result.stderr)
@@ -189,7 +197,8 @@ class TestConfigDiscovery(unittest.TestCase):
             write_viewer_config(tmpdir, columns="message")
 
             proc, _, acc_err = _viewer(
-                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir
+            )
             stderr = _wait(acc_err, "Found viewer config:")
             _stop(proc)
 
@@ -211,7 +220,8 @@ class TestConfigDiscovery(unittest.TestCase):
             # cwd deliberately has no minilog.conf in it.
             proc, _, acc_err = _viewer(
                 [sys.executable, VIEWER, "--config", str(conf), "--no-color", "--verbose"],
-                cwd=run_dir)
+                cwd=run_dir,
+            )
             stderr = _wait(acc_err, "Reading")
             _stop(proc)
 
@@ -233,7 +243,8 @@ class TestConfigDiscovery(unittest.TestCase):
 
             proc, _, acc_err = _viewer(
                 [sys.executable, VIEWER, "--config", str(conf), "--no-color", "--verbose"],
-                cwd=tmpdir)
+                cwd=tmpdir,
+            )
             stderr = _wait(acc_err, "Reading")
             _stop(proc)
 
@@ -255,7 +266,10 @@ class TestConfigDiscovery(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--config", str(missing)],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not found", result.stderr)
@@ -273,8 +287,16 @@ class TestConfigDiscovery(unittest.TestCase):
             viewer_conf = write_viewer_config(prefs_dir, columns="message")
 
             proc, _, acc_err = _viewer(
-                [sys.executable, VIEWER, "--viewer-config", str(viewer_conf),
-                 "--no-color", "--verbose"], cwd=tmpdir)
+                [
+                    sys.executable,
+                    VIEWER,
+                    "--viewer-config",
+                    str(viewer_conf),
+                    "--no-color",
+                    "--verbose",
+                ],
+                cwd=tmpdir,
+            )
             stderr = _wait(acc_err, "Found viewer config:")
             _stop(proc)
 
@@ -292,7 +314,10 @@ class TestConfigDiscovery(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--viewer-config", str(missing)],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not found", result.stderr)
@@ -303,7 +328,10 @@ class TestConfigDiscovery(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = subprocess.run(
                 [sys.executable, VIEWER],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertIn("--config", result.stderr)
 
@@ -331,7 +359,10 @@ class TestMalformedRecords(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color", *(extra_args or [])],
-                cwd=tmpdir, capture_output=True, text=True, timeout=10,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             self.assertEqual(result.returncode, 0, f"stderr: {result.stderr}")
             return result.stdout, result.stderr
@@ -354,10 +385,12 @@ class TestMalformedRecords(unittest.TestCase):
         return json.dumps(record)
 
     def test_null_message_does_not_end_the_session(self):
-        stdout, _ = self._show_all([
-            self._record(message=None),
-            self._record(message="after the null"),
-        ])
+        stdout, _ = self._show_all(
+            [
+                self._record(message=None),
+                self._record(message="after the null"),
+            ]
+        )
         self.assertIn("after the null", stdout)
 
     def test_null_message_survives_a_filter(self):
@@ -370,25 +403,31 @@ class TestMalformedRecords(unittest.TestCase):
         self.assertIn("wanted", stdout)
 
     def test_numeric_facility_does_not_end_the_session(self):
-        stdout, _ = self._show_all([
-            self._record(facility=3, severity=6),
-            self._record(message="after the numbers"),
-        ])
+        stdout, _ = self._show_all(
+            [
+                self._record(facility=3, severity=6),
+                self._record(message="after the numbers"),
+            ]
+        )
         self.assertIn("after the numbers", stdout)
 
     def test_non_string_fields_do_not_end_the_session(self):
-        stdout, _ = self._show_all([
-            self._record(hostname=["a", "b"], app={"x": 1}, pid=7, rcv=12345),
-            self._record(message="after the odd types"),
-        ])
+        stdout, _ = self._show_all(
+            [
+                self._record(hostname=["a", "b"], app={"x": 1}, pid=7, rcv=12345),
+                self._record(message="after the odd types"),
+            ]
+        )
         self.assertIn("after the odd types", stdout)
 
     def test_truncated_last_line_does_not_end_the_session(self):
         # How a rotated file normally ends when it is read mid-write.
-        stdout, _ = self._show_all([
-            self._record(message="complete"),
-            '{"rcv": "2026-03-29T12:00:00Z", "mess',
-        ])
+        stdout, _ = self._show_all(
+            [
+                self._record(message="complete"),
+                '{"rcv": "2026-03-29T12:00:00Z", "mess',
+            ]
+        )
         self.assertIn("complete", stdout)
 
 
@@ -451,7 +490,8 @@ class TestOutputSection(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, _, acc_err = _viewer(
-                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir
+            )
             stderr = _wait(acc_err, "Reading")
             _stop(proc)
 
@@ -465,12 +505,12 @@ class TestOutputSection(unittest.TestCase):
             jsonl = tmpdir / "auth.jsonl"
             jsonl.touch()
             conf = tmpdir / "minilog.conf"
-            conf.write_text(
-                f"[server]\nhost = 127.0.0.1\n\n[output.auth]\njsonl_file = {jsonl}\n")
+            conf.write_text(f"[server]\nhost = 127.0.0.1\n\n[output.auth]\njsonl_file = {jsonl}\n")
 
             proc, _, acc_err = _viewer(
-                [sys.executable, VIEWER, "--output-section", "auth",
-                 "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--output-section", "auth", "--no-color", "--verbose"],
+                cwd=tmpdir,
+            )
             stderr = _wait(acc_err, "Reading")
             _stop(proc)
 
@@ -487,7 +527,10 @@ class TestOutputSection(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--output-section", "nonexistent"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not found", result.stderr)
@@ -506,8 +549,9 @@ class TestFiltering(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--exclude", "skip_this",
-                 "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--exclude", "skip_this", "--no-color", "--verbose"],
+                cwd=tmpdir,
+            )
             _wait(acc_err, "Reading")
 
             with open(jsonl, "a") as f:
@@ -531,8 +575,9 @@ class TestFiltering(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--include", "error",
-                 "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--include", "error", "--no-color", "--verbose"],
+                cwd=tmpdir,
+            )
             _wait(acc_err, "Reading")
 
             with open(jsonl, "a") as f:
@@ -556,8 +601,18 @@ class TestFiltering(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--include", "error", "--exclude", "test",
-                 "--no-color", "--verbose"], cwd=tmpdir)
+                [
+                    sys.executable,
+                    VIEWER,
+                    "--include",
+                    "error",
+                    "--exclude",
+                    "test",
+                    "--no-color",
+                    "--verbose",
+                ],
+                cwd=tmpdir,
+            )
             _wait(acc_err, "Reading")
 
             with open(jsonl, "a") as f:
@@ -581,8 +636,18 @@ class TestFiltering(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--exclude", "debug", "--exclude", "test",
-                 "--no-color", "--verbose"], cwd=tmpdir)
+                [
+                    sys.executable,
+                    VIEWER,
+                    "--exclude",
+                    "debug",
+                    "--exclude",
+                    "test",
+                    "--no-color",
+                    "--verbose",
+                ],
+                cwd=tmpdir,
+            )
             _wait(acc_err, "Reading")
 
             with open(jsonl, "a") as f:
@@ -609,8 +674,9 @@ class TestFiltering(unittest.TestCase):
             write_viewer_config(tmpdir, exclude="config_exclude")
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--exclude", "cli_exclude",
-                 "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--exclude", "cli_exclude", "--no-color", "--verbose"],
+                cwd=tmpdir,
+            )
             stderr = _wait(acc_err, "Reading")
 
             with open(jsonl, "a") as f:
@@ -643,7 +709,8 @@ class TestColumnSelection(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir
+            )
             _wait(acc_err, "Reading")
 
             with open(jsonl, "a") as f:
@@ -666,7 +733,8 @@ class TestColumnSelection(unittest.TestCase):
             write_viewer_config(tmpdir, columns="message")
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--no-color", "--verbose"], cwd=tmpdir
+            )
             stderr = _wait(acc_err, "Columns: message")
 
             with open(jsonl, "a") as f:
@@ -696,7 +764,10 @@ class TestTailBehavior(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
 
             lines = [line for line in result.stdout.split("\n") if "Message" in line]
@@ -715,8 +786,7 @@ class TestTailBehavior(unittest.TestCase):
                 for i in range(1, 16):
                     write_jsonl_record(f, f"Message {i}")
 
-            proc, acc_out, _ = _viewer(
-                [sys.executable, VIEWER, "--no-color"], cwd=tmpdir)
+            proc, acc_out, _ = _viewer([sys.executable, VIEWER, "--no-color"], cwd=tmpdir)
             stdout = _wait(acc_out, "Message 15")
             _stop(proc)
 
@@ -737,7 +807,8 @@ class TestTailBehavior(unittest.TestCase):
                     write_jsonl_record(f, f"Message {i}")
 
             proc, acc_out, _ = _viewer(
-                [sys.executable, VIEWER, "--lines", "3", "--no-color"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--lines", "3", "--no-color"], cwd=tmpdir
+            )
             stdout = _wait(acc_out, "Message 15")
             _stop(proc)
 
@@ -758,8 +829,8 @@ class TestTailBehavior(unittest.TestCase):
                     write_jsonl_record(f, f"Message {i}")
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--lines", "0", "--no-color", "--verbose"],
-                cwd=tmpdir)
+                [sys.executable, VIEWER, "--lines", "0", "--no-color", "--verbose"], cwd=tmpdir
+            )
             _wait(acc_err, "Reading")
             time.sleep(0.3)
             stdout = acc_out.text
@@ -780,7 +851,8 @@ class TestTailBehavior(unittest.TestCase):
                     write_jsonl_record(f, f"Message {i}")
 
             proc, acc_out, _ = _viewer(
-                [sys.executable, VIEWER, "--lines", "20", "--no-color"], cwd=tmpdir)
+                [sys.executable, VIEWER, "--lines", "20", "--no-color"], cwd=tmpdir
+            )
             stdout = _wait(acc_out, "Message 5")
             _stop(proc)
 
@@ -802,9 +874,15 @@ class TestUnknownProto(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             record = {
-                "rcv": "2026-03-29T12:00:00Z", "src": "10.0.0.1", "proto": "UNKNOWN",
-                "facility": None, "severity": None, "hostname": None,
-                "app": None, "pid": None, "msgid": None,
+                "rcv": "2026-03-29T12:00:00Z",
+                "src": "10.0.0.1",
+                "proto": "UNKNOWN",
+                "facility": None,
+                "severity": None,
+                "hostname": None,
+                "app": None,
+                "pid": None,
+                "msgid": None,
                 "message": "malformed syslog payload",
             }
             with open(jsonl, "w") as f:
@@ -812,7 +890,10 @@ class TestUnknownProto(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertIn("malformed syslog payload", result.stdout)
 
@@ -824,9 +905,15 @@ class TestUnknownProto(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             record = {
-                "rcv": "2026-03-29T12:00:00Z", "src": "10.0.0.1", "proto": "UNKNOWN",
-                "facility": None, "severity": None, "hostname": None,
-                "app": None, "pid": None, "msgid": None,
+                "rcv": "2026-03-29T12:00:00Z",
+                "src": "10.0.0.1",
+                "proto": "UNKNOWN",
+                "facility": None,
+                "severity": None,
+                "hostname": None,
+                "app": None,
+                "pid": None,
+                "msgid": None,
                 "message": "raw payload",
             }
             with open(jsonl, "w") as f:
@@ -834,7 +921,10 @@ class TestUnknownProto(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertNotIn("None", result.stdout)
             self.assertIn("raw payload", result.stdout)
@@ -847,9 +937,15 @@ class TestUnknownProto(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             base = {
-                "rcv": "2026-03-29T12:00:00Z", "src": "10.0.0.1", "proto": "UNKNOWN",
-                "facility": None, "severity": None, "hostname": None,
-                "app": None, "pid": None, "msgid": None,
+                "rcv": "2026-03-29T12:00:00Z",
+                "src": "10.0.0.1",
+                "proto": "UNKNOWN",
+                "facility": None,
+                "severity": None,
+                "hostname": None,
+                "app": None,
+                "pid": None,
+                "msgid": None,
             }
             with open(jsonl, "w") as f:
                 f.write(json.dumps({**base, "message": "keep this"}) + "\n")
@@ -857,7 +953,10 @@ class TestUnknownProto(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color", "--exclude", "drop"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertIn("keep this", result.stdout)
             self.assertNotIn("drop this", result.stdout)
@@ -881,7 +980,10 @@ class TestShowAllWithFilters(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color", "--exclude", "skip"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertIn("keep message", result.stdout)
             self.assertNotIn("skip message", result.stdout)
@@ -901,7 +1003,10 @@ class TestShowAllWithFilters(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color", "--include", "error"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertIn("error occurred", result.stdout)
             self.assertNotIn("info event", result.stdout)
@@ -921,8 +1026,8 @@ class TestLogRotation(unittest.TestCase):
             write_server_config(tmpdir, jsonl)
 
             proc, acc_out, acc_err = _viewer(
-                [sys.executable, VIEWER, "--lines", "0", "--no-color", "--verbose"],
-                cwd=tmpdir)
+                [sys.executable, VIEWER, "--lines", "0", "--no-color", "--verbose"], cwd=tmpdir
+            )
             _wait(acc_err, "Reading")
 
             with open(jsonl, "a") as f:
@@ -952,7 +1057,10 @@ class TestLogRotation(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--lines", "-1", "--no-color"],
-                cwd=tmpdir, capture_output=True, text=True, timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("non-negative", result.stderr)
@@ -1059,7 +1167,11 @@ class TestNoRawControlCharsReachStdout(unittest.TestCase):
 
             result = subprocess.run(
                 [sys.executable, VIEWER, "--show-all", "--no-color"],
-                cwd=tmpdir, capture_output=True, text=True, encoding="utf-8", timeout=5,
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=5,
             )
             return result.stdout
 
@@ -1081,9 +1193,7 @@ class TestNoRawControlCharsReachStdout(unittest.TestCase):
         return record
 
     def test_esc_in_message_does_not_reach_the_terminal(self):
-        stdout = self._show_all(
-            self._record(message="\x1b[2J\x1b[1;31mFAKE ALERT\x1b[0m")
-        )
+        stdout = self._show_all(self._record(message="\x1b[2J\x1b[1;31mFAKE ALERT\x1b[0m"))
         self.assertNotIn("\x1b", stdout)
         self.assertIn("\\x1B[2J", stdout)
         self.assertIn("FAKE ALERT", stdout)

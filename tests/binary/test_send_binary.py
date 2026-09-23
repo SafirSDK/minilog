@@ -300,12 +300,18 @@ class TestAgainstServer(unittest.TestCase):
     def test_every_flag_shows_up_in_the_record(self):
         with ServerFixture() as srv:
             r = srv.send(
-                "--facility", "local3",
-                "--severity", "error",
-                "--app", "deploy",
-                "--hostname", "web01",
-                "--pid", "77",
-                "--msgid", "STEP3",
+                "--facility",
+                "local3",
+                "--severity",
+                "error",
+                "--app",
+                "deploy",
+                "--hostname",
+                "web01",
+                "--pid",
+                "77",
+                "--msgid",
+                "STEP3",
                 "release 1.4 rolled out",
             )
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -332,11 +338,16 @@ class TestAgainstServer(unittest.TestCase):
         with ServerFixture() as srv:
             r = srv.send(
                 "--rfc3164",
-                "-f", "daemon",
-                "-s", "warning",
-                "-a", "backup",
-                "--hostname", "nas",
-                "--pid", "4242",
+                "-f",
+                "daemon",
+                "-s",
+                "warning",
+                "-a",
+                "backup",
+                "--hostname",
+                "nas",
+                "--pid",
+                "4242",
                 "nightly backup finished",
             )
             self.assertEqual(r.returncode, 0, r.stderr)

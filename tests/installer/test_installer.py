@@ -42,25 +42,25 @@ from pathlib import Path
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
-PROGRAM_FILES  = Path(os.environ["ProgramFiles"])
-PROGRAM_DATA   = Path(os.environ["ProgramData"])
-APP_DIR        = PROGRAM_FILES / "minilog"
-TOOLS_DIR      = APP_DIR / "tools"
-DATA_DIR       = PROGRAM_DATA / "minilog"
-EXE_PATH       = APP_DIR / "minilog.exe"
+PROGRAM_FILES = Path(os.environ["ProgramFiles"])
+PROGRAM_DATA = Path(os.environ["ProgramData"])
+APP_DIR = PROGRAM_FILES / "minilog"
+TOOLS_DIR = APP_DIR / "tools"
+DATA_DIR = PROGRAM_DATA / "minilog"
+EXE_PATH = APP_DIR / "minilog.exe"
 WEB_VIEWER_EXE = APP_DIR / "minilog-web-viewer.exe"
-VIEWER_PATH    = TOOLS_DIR / "minilog-cli-viewer.py"
-SEND_PATH      = TOOLS_DIR / "minilog-send.exe"
-CONFIG_PATH    = DATA_DIR / "minilog.conf"
-VIEWER_CONFIG  = DATA_DIR / "minilog-cli-viewer.conf"
-LOG_DIR        = DATA_DIR / "logs"
-LOG_FILE       = LOG_DIR / "syslog.log"
-SERVICE_NAME   = "minilog"
-WEB_SERVICE    = "minilog-web-viewer"
+VIEWER_PATH = TOOLS_DIR / "minilog-cli-viewer.py"
+SEND_PATH = TOOLS_DIR / "minilog-send.exe"
+CONFIG_PATH = DATA_DIR / "minilog.conf"
+VIEWER_CONFIG = DATA_DIR / "minilog-cli-viewer.conf"
+LOG_DIR = DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "syslog.log"
+SERVICE_NAME = "minilog"
+WEB_SERVICE = "minilog-web-viewer"
 # The default in src/web-viewer/config.go, which is also what the installer's
 # shortcuts are built from when the config does not name one.
 WEB_VIEWER_PORT = 9514
-CONFIG_BACKUP  = DATA_DIR / "minilog.conf.installer-test-backup"
+CONFIG_BACKUP = DATA_DIR / "minilog.conf.installer-test-backup"
 
 # The installer's Start Menu and desktop shortcuts. An admin install puts
 # {autoprograms} and {autodesktop} in the all-users locations.
@@ -72,7 +72,7 @@ SHORTCUT_GLOB = "minilog Web Viewer.*"
 
 # Placed after minilog's own entry so the removal has to cope with an entry in
 # the middle of the list, and so any damage to a neighbour is visible.
-PATH_SENTINEL  = r"C:\minilog-installer-test-sentinel"
+PATH_SENTINEL = r"C:\minilog-installer-test-sentinel"
 
 EVENTLOG_KEY = r"HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application"
 ENVIRONMENT_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
@@ -86,7 +86,7 @@ ERROR_SERVICE_SPECIFIC_ERROR = 1066
 
 # Recovery configuration both services are installed with.
 EXPECTED_RESTART_DELAYS = ["5000", "5000"]
-EXPECTED_RESET_PERIOD   = 300
+EXPECTED_RESET_PERIOD = 300
 
 # A pending restart action fires 5 s after the failure, so a service seen STOPPED
 # for longer than that has no restart left queued.
@@ -114,8 +114,7 @@ def check(condition: bool, message: str) -> None:
         failed += 1
 
 
-def run_installer(path: Path, app_dir: Path | None = None,
-                  components: str | None = None) -> None:
+def run_installer(path: Path, app_dir: Path | None = None, components: str | None = None) -> None:
     args = [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES"]
     if app_dir is not None:
         args.append(f"/DIR={app_dir}")
@@ -170,8 +169,7 @@ def read_system_path() -> str:
 
 
 def write_system_path(value: str) -> None:
-    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, ENVIRONMENT_KEY, 0,
-                        winreg.KEY_SET_VALUE) as key:
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, ENVIRONMENT_KEY, 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, value)
 
 
@@ -377,8 +375,7 @@ def service_exit_codes(name: str = SERVICE_NAME) -> tuple[int, int]:
     out = sc("query", name).stdout
     win32 = re.search(r"WIN32_EXIT_CODE\s*:\s*(\d+)", out)
     specific = re.search(r"SERVICE_EXIT_CODE\s*:\s*(\d+)", out)
-    return (int(win32.group(1)) if win32 else -1,
-            int(specific.group(1)) if specific else -1)
+    return (int(win32.group(1)) if win32 else -1, int(specific.group(1)) if specific else -1)
 
 
 def event_source_message_file(source: str) -> str:
@@ -438,39 +435,46 @@ def check_recovery_actions(name: str) -> None:
     out = sc("qfailure", name).stdout
 
     reset = re.search(r"RESET_PERIOD \(in seconds\)\s*:\s*(\d+)", out)
-    check(reset is not None and int(reset.group(1)) == EXPECTED_RESET_PERIOD,
-          f"{name}: failure counter resets after {EXPECTED_RESET_PERIOD} s")
+    check(
+        reset is not None and int(reset.group(1)) == EXPECTED_RESET_PERIOD,
+        f"{name}: failure counter resets after {EXPECTED_RESET_PERIOD} s",
+    )
 
     delays = re.findall(r"RESTART -- Delay = (\d+) milliseconds", out)
-    check(delays == EXPECTED_RESTART_DELAYS,
-          f"{name}: restart actions {EXPECTED_RESTART_DELAYS} ms (got {delays})")
+    check(
+        delays == EXPECTED_RESTART_DELAYS,
+        f"{name}: restart actions {EXPECTED_RESTART_DELAYS} ms (got {delays})",
+    )
 
     # Without this flag the SCM would act only on an outright crash, never on the
     # non-zero exit code the services report when they fail to start.
-    flag = re.search(r"FAILURE_ACTIONS_ON_NONCRASH_FAILURES\s*:\s*(\w+)",
-                     sc("qfailureflag", name).stdout)
-    check(flag is not None and flag.group(1).upper() == "TRUE",
-          f"{name}: recovery actions also fire on non-crash failures")
+    flag = re.search(
+        r"FAILURE_ACTIONS_ON_NONCRASH_FAILURES\s*:\s*(\w+)", sc("qfailureflag", name).stdout
+    )
+    check(
+        flag is not None and flag.group(1).upper() == "TRUE",
+        f"{name}: recovery actions also fire on non-crash failures",
+    )
 
 
 # ─── Test 1: Clean install ────────────────────────────────────────────────────
+
 
 def test_clean_install(installer: Path) -> None:
     print("\n=== Test 1: Clean install ===")
     run_installer(installer)
 
-    check(EXE_PATH.exists(),    f"minilog.exe present at {APP_DIR}")
-    check(TOOLS_DIR.exists(),   f"Tools directory created at {TOOLS_DIR}")
-    check(path_has(TOOLS_DIR),  f"{TOOLS_DIR} added to the system PATH")
+    check(EXE_PATH.exists(), f"minilog.exe present at {APP_DIR}")
+    check(TOOLS_DIR.exists(), f"Tools directory created at {TOOLS_DIR}")
+    check(path_has(TOOLS_DIR), f"{TOOLS_DIR} added to the system PATH")
     check(VIEWER_PATH.exists(), f"minilog-cli-viewer.py present at {TOOLS_DIR}")
-    check(LOG_DIR.exists(),     f"Log directory created at {LOG_DIR}")
+    check(LOG_DIR.exists(), f"Log directory created at {LOG_DIR}")
     check(CONFIG_PATH.exists(), f"Config file present at {DATA_DIR}")
     check(VIEWER_CONFIG.exists(), f"Viewer config file present at {DATA_DIR}")
-    check(service_exists(),                       f"Service '{SERVICE_NAME}' registered")
-    check(service_start_type() == "AUTO_START",   "Service start type is AUTO_START")
-    check(wait_service_running(),                  "Service is Running")
-    check(event_source_registered(SERVICE_NAME),
-          f"Event Log source '{SERVICE_NAME}' registered")
+    check(service_exists(), f"Service '{SERVICE_NAME}' registered")
+    check(service_start_type() == "AUTO_START", "Service start type is AUTO_START")
+    check(wait_service_running(), "Service is Running")
+    check(event_source_registered(SERVICE_NAME), f"Event Log source '{SERVICE_NAME}' registered")
     check_recovery_actions(SERVICE_NAME)
     check_shortcuts_point_at(WEB_VIEWER_PORT)
 
@@ -509,24 +513,27 @@ def test_clean_install(installer: Path) -> None:
             check=False,
             timeout=15,
         )
-        check(result.returncode == 0,
-              f"minilog-send.exe sends to the installed service (stderr: {result.stderr.strip()})")
+        check(
+            result.returncode == 0,
+            f"minilog-send.exe sends to the installed service (stderr: {result.stderr.strip()})",
+        )
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            if LOG_FILE.exists() and marker in LOG_FILE.read_text(encoding="utf-8",
-                                                                   errors="replace"):
+            if LOG_FILE.exists() and marker in LOG_FILE.read_text(
+                encoding="utf-8", errors="replace"
+            ):
                 break
             time.sleep(0.2)
-        check(LOG_FILE.exists() and marker in LOG_FILE.read_text(encoding="utf-8",
-                                                                  errors="replace"),
-              "Message sent with minilog-send.exe appears in syslog.log")
+        check(
+            LOG_FILE.exists() and marker in LOG_FILE.read_text(encoding="utf-8", errors="replace"),
+            "Message sent with minilog-send.exe appears in syslog.log",
+        )
 
     # Web viewer checks
     check(WEB_VIEWER_EXE.exists(), f"minilog-web-viewer.exe present at {APP_DIR}")
     check(service_exists(WEB_SERVICE), f"Service '{WEB_SERVICE}' registered")
     check(wait_service_running(WEB_SERVICE), f"Service '{WEB_SERVICE}' is Running")
-    check(event_source_registered(WEB_SERVICE),
-          f"Event Log source '{WEB_SERVICE}' registered")
+    check(event_source_registered(WEB_SERVICE), f"Event Log source '{WEB_SERVICE}' registered")
     check_recovery_actions(WEB_SERVICE)
 
     # Verify the web viewer responds to HTTP requests
@@ -536,8 +543,10 @@ def test_clean_install(installer: Path) -> None:
 
 # ─── Test 2: --install records paths the SCM can actually use ─────────────────
 
-def install_server(*args: str, cwd: Path | None = None,
-                   exe: str | None = None) -> subprocess.CompletedProcess:
+
+def install_server(
+    *args: str, cwd: Path | None = None, exe: str | None = None
+) -> subprocess.CompletedProcess:
     """Run `minilog --install`, optionally by bare name through PATH.
 
     Passing exe="minilog" leaves argv[0] as the unqualified name, which is how
@@ -569,24 +578,29 @@ def test_install_paths() -> None:
     print("\n=== Test 2: --install records usable paths ===")
 
     expected = f'"{EXE_PATH}" "{CONFIG_PATH}"'
-    check(service_binary_path() == expected,
-          f"Installer registered {expected} (got {service_binary_path()})")
+    check(
+        service_binary_path() == expected,
+        f"Installer registered {expected} (got {service_binary_path()})",
+    )
 
     # Re-register the way an administrator would once {app} is on PATH: bare
     # executable name, relative config path, working directory somewhere else.
     remove_server_service()
     result = install_server("minilog.conf", cwd=DATA_DIR, exe="minilog")
-    check(result.returncode == 0,
-          f"`minilog --install minilog.conf` via PATH succeeds (stderr: {result.stderr.strip()})")
-    check(service_binary_path() == expected,
-          "Service registered with the real image path and an absolute config path "
-          f"(got {service_binary_path()})")
+    check(
+        result.returncode == 0,
+        f"`minilog --install minilog.conf` via PATH succeeds (stderr: {result.stderr.strip()})",
+    )
+    check(
+        service_binary_path() == expected,
+        "Service registered with the real image path and an absolute config path "
+        f"(got {service_binary_path()})",
+    )
     check(service_start_type() == "AUTO_START", "Re-registered service is AUTO_START")
 
     # The point of recording those paths correctly: the service can start from
     # them, with the System32 working directory the SCM gives it.
-    check(net_start(SERVICE_NAME).returncode == 0,
-          "Service started from the registered paths")
+    check(net_start(SERVICE_NAME).returncode == 0, "Service started from the registered paths")
     check(wait_service_running(), "Service is Running again after re-registration")
 
     # A config that cannot be read would produce a service that fails at every
@@ -594,8 +608,10 @@ def test_install_paths() -> None:
     remove_server_service()
     result = install_server(str(DATA_DIR / "no-such-file.conf"))
     check(result.returncode != 0, "--install rejects a config file it cannot read")
-    check("no-such-file.conf" in result.stderr,
-          f"--install names the unreadable config (stderr: {result.stderr.strip()})")
+    check(
+        "no-such-file.conf" in result.stderr,
+        f"--install names the unreadable config (stderr: {result.stderr.strip()})",
+    )
     check(not service_exists(), "Nothing is registered after a rejected --install")
 
     # Leave the service as the installer left it, for the tests that follow.
@@ -605,6 +621,7 @@ def test_install_paths() -> None:
 
 
 # ─── Test 3: UDP smoke test ───────────────────────────────────────────────────
+
 
 def test_udp_smoke() -> None:
     print("\n=== Test 3: UDP smoke test ===")
@@ -624,6 +641,7 @@ def test_udp_smoke() -> None:
 
 
 # ─── Test 4: SCM recovery after a crash ───────────────────────────────────────
+
 
 def test_recovery_restart() -> None:
     print("\n=== Test 4: SCM restarts the service after a crash ===")
@@ -655,21 +673,22 @@ def test_recovery_restart() -> None:
 
 # ─── Test 5: Startup failure is reported, not hidden ──────────────────────────
 
+
 def check_failed_start(name: str) -> None:
     """Start `name`, expecting it to fail and to say so to the SCM."""
     result = net_start(name)
-    check(result.returncode != 0,
-          f"`net start {name}` fails instead of reporting success")
+    check(result.returncode != 0, f"`net start {name}` fails instead of reporting success")
 
     # `sc query` reports the last status, so read it only once the service has
     # reached STOPPED — a start still pending reports an exit code of 0.
     check(wait_service_stopped(name), f"{name}: reaches STOPPED after a failed start")
 
     win32, specific = service_exit_codes(name)
-    check(win32 == ERROR_SERVICE_SPECIFIC_ERROR,
-          f"{name}: WIN32_EXIT_CODE is {ERROR_SERVICE_SPECIFIC_ERROR} (got {win32})")
-    check(specific != 0,
-          f"{name}: SERVICE_EXIT_CODE is non-zero (got {specific})")
+    check(
+        win32 == ERROR_SERVICE_SPECIFIC_ERROR,
+        f"{name}: WIN32_EXIT_CODE is {ERROR_SERVICE_SPECIFIC_ERROR} (got {win32})",
+    )
+    check(specific != 0, f"{name}: SERVICE_EXIT_CODE is non-zero (got {specific})")
 
 
 def test_failed_start() -> None:
@@ -688,15 +707,21 @@ def test_failed_start() -> None:
         # Reporting failure to the SCM says *that* the viewer failed; the Event
         # Log is the only place a service with no console says *why*.
         messages = event_log_messages(WEB_SERVICE)
-        check(any("config" in m.lower() for m in messages),
-              f"'{WEB_SERVICE}' named the config as the cause in the Event Log")
+        check(
+            any("config" in m.lower() for m in messages),
+            f"'{WEB_SERVICE}' named the config as the cause in the Event Log",
+        )
 
         # Exhaust the queued restart attempts while the config is still missing,
         # so none of them can succeed behind the next case once it is restored.
-        check(wait_service_settled(SERVICE_NAME),
-              f"'{SERVICE_NAME}' stays stopped once its restarts are used up")
-        check(wait_service_settled(WEB_SERVICE),
-              f"'{WEB_SERVICE}' stays stopped once its restarts are used up")
+        check(
+            wait_service_settled(SERVICE_NAME),
+            f"'{SERVICE_NAME}' stays stopped once its restarts are used up",
+        )
+        check(
+            wait_service_settled(WEB_SERVICE),
+            f"'{WEB_SERVICE}' stays stopped once its restarts are used up",
+        )
     finally:
         CONFIG_BACKUP.replace(CONFIG_PATH)
 
@@ -707,11 +732,15 @@ def test_failed_start() -> None:
         check_failed_start(WEB_SERVICE)
 
         messages = event_log_messages(WEB_SERVICE)
-        check(any(UNBINDABLE_ADDR in m for m in messages),
-              f"'{WEB_SERVICE}' named the unbindable address in the Event Log")
+        check(
+            any(UNBINDABLE_ADDR in m for m in messages),
+            f"'{WEB_SERVICE}' named the unbindable address in the Event Log",
+        )
 
-        check(wait_service_settled(WEB_SERVICE),
-              f"'{WEB_SERVICE}' stays stopped while its address is unbindable")
+        check(
+            wait_service_settled(WEB_SERVICE),
+            f"'{WEB_SERVICE}' stays stopped while its address is unbindable",
+        )
     finally:
         # An empty host is "every interface", which is what the shipped config
         # says and what the removed --addr default did.
@@ -720,13 +749,17 @@ def test_failed_start() -> None:
     # Leave both services as the upgrade test expects to find them.
     sc("start", SERVICE_NAME)
     sc("start", WEB_SERVICE)
-    check(wait_service_running(SERVICE_NAME),
-          f"'{SERVICE_NAME}' starts again once the config is back")
-    check(wait_service_running(WEB_SERVICE),
-          f"'{WEB_SERVICE}' starts again once its address is bindable")
+    check(
+        wait_service_running(SERVICE_NAME), f"'{SERVICE_NAME}' starts again once the config is back"
+    )
+    check(
+        wait_service_running(WEB_SERVICE),
+        f"'{WEB_SERVICE}' starts again once its address is bindable",
+    )
 
 
 # ─── Test 6: --stop and --uninstall wait for the process ──────────────────────
+
 
 def service_cmd(exe: Path, *args: str) -> subprocess.CompletedProcess:
     """Run one of the executables' service subcommands."""
@@ -773,15 +806,18 @@ def check_stop_releases_the_image(exe: Path, name: str) -> None:
 
     pid = service_pid(name)
     result = service_cmd(exe, "--stop")
-    check(result.returncode == 0,
-          f"`{exe.name} --stop` succeeds (stderr: {result.stderr.strip()})")
+    check(result.returncode == 0, f"`{exe.name} --stop` succeeds (stderr: {result.stderr.strip()})")
     check(service_state(name) == "STOPPED", f"'{name}' is STOPPED as soon as --stop returns")
-    check(pid != 0 and not process_alive(pid),
-          f"'{name}' process {pid} has exited as soon as --stop returns")
+    check(
+        pid != 0 and not process_alive(pid),
+        f"'{name}' process {pid} has exited as soon as --stop returns",
+    )
     check(can_overwrite(exe), f"{exe.name} can be overwritten once --stop has returned")
 
-    check(service_cmd(exe, "--stop").returncode == 0,
-          f"`{exe.name} --stop` on an already stopped service succeeds")
+    check(
+        service_cmd(exe, "--stop").returncode == 0,
+        f"`{exe.name} --stop` on an already stopped service succeeds",
+    )
 
 
 def test_stop_waits() -> None:
@@ -798,24 +834,33 @@ def test_stop_waits() -> None:
     check(net_start(SERVICE_NAME).returncode == 0, f"'{SERVICE_NAME}' starts again after --stop")
     pid = service_pid()
     result = service_cmd(EXE_PATH, "--uninstall")
-    check(result.returncode == 0,
-          f"`minilog --uninstall` of a running service succeeds (stderr: {result.stderr.strip()})")
-    check(pid != 0 and not process_alive(pid),
-          f"Service process {pid} has exited as soon as --uninstall returns")
+    check(
+        result.returncode == 0,
+        f"`minilog --uninstall` of a running service succeeds (stderr: {result.stderr.strip()})",
+    )
+    check(
+        pid != 0 and not process_alive(pid),
+        f"Service process {pid} has exited as soon as --uninstall returns",
+    )
     check(not service_exists(), "Service is gone as soon as --uninstall returns")
 
-    check(service_cmd(EXE_PATH, "--stop").returncode == 0,
-          "`minilog --stop` against an unregistered service succeeds")
+    check(
+        service_cmd(EXE_PATH, "--stop").returncode == 0,
+        "`minilog --stop` against an unregistered service succeeds",
+    )
 
     # The proof that the deletion was real rather than pending: re-registering
     # immediately would fail with ERROR_SERVICE_MARKED_FOR_DELETE otherwise.
     result = install_server(str(CONFIG_PATH))
-    check(result.returncode == 0,
-          f"--install straight after --uninstall succeeds (stderr: {result.stderr.strip()})")
+    check(
+        result.returncode == 0,
+        f"--install straight after --uninstall succeeds (stderr: {result.stderr.strip()})",
+    )
     check(net_start(SERVICE_NAME).returncode == 0, "Service starts again after re-registration")
 
 
 # ─── Test 7: --install over an existing registration updates it ───────────────
+
 
 def test_reregister() -> None:
     print("\n=== Test 7: --install updates an existing registration ===")
@@ -824,11 +869,14 @@ def test_reregister() -> None:
     check(service_exists(), "Service registered before the re-registration test")
     first = install_server(str(CONFIG_PATH))
     second = install_server(str(CONFIG_PATH))
-    check(first.returncode == 0 and second.returncode == 0,
-          "--install run twice in succession succeeds both times")
-    check("updated" in (second.stdout + second.stderr).lower(),
-          f"--install reports an update rather than an install "
-          f"(stderr: {second.stderr.strip()})")
+    check(
+        first.returncode == 0 and second.returncode == 0,
+        "--install run twice in succession succeeds both times",
+    )
+    check(
+        "updated" in (second.stdout + second.stderr).lower(),
+        f"--install reports an update rather than an install (stderr: {second.stderr.strip()})",
+    )
 
     # What an administrator may have changed by hand must survive an upgrade.
     # LocalService is a built-in account with no password, so this is a change
@@ -836,16 +884,22 @@ def test_reregister() -> None:
     sc("config", SERVICE_NAME, "start=", "demand")
     sc("config", SERVICE_NAME, "obj=", "NT AUTHORITY\\LocalService")
     check(service_start_type() == "DEMAND_START", "Start type set to manual for the test")
-    check(service_account() == "NT AUTHORITY\\LocalService",
-          "Account set to LocalService for the test")
+    check(
+        service_account() == "NT AUTHORITY\\LocalService",
+        "Account set to LocalService for the test",
+    )
 
     result = install_server(str(CONFIG_PATH))
-    check(result.returncode == 0,
-          f"--install over a hand-configured service succeeds (stderr: {result.stderr.strip()})")
+    check(
+        result.returncode == 0,
+        f"--install over a hand-configured service succeeds (stderr: {result.stderr.strip()})",
+    )
     check(service_start_type() == "DEMAND_START", "Manual start type survives --install")
     check(service_account() == "NT AUTHORITY\\LocalService", "Service account survives --install")
-    check(service_binary_path() == f'"{EXE_PATH}" "{CONFIG_PATH}"',
-          f"Binary path is still updated (got {service_binary_path()})")
+    check(
+        service_binary_path() == f'"{EXE_PATH}" "{CONFIG_PATH}"',
+        f"Binary path is still updated (got {service_binary_path()})",
+    )
     check_recovery_actions(SERVICE_NAME)
 
     # An upgrade that moves the executable must leave neither the registration
@@ -856,41 +910,59 @@ def test_reregister() -> None:
     moved_exe.write_bytes(EXE_PATH.read_bytes())
     try:
         result = install_server(str(CONFIG_PATH), exe=str(moved_exe))
-        check(result.returncode == 0,
-              f"--install from a moved executable succeeds (stderr: {result.stderr.strip()})")
-        check(service_binary_path() == f'"{moved_exe}" "{CONFIG_PATH}"',
-              f"Registration points at the moved executable (got {service_binary_path()})")
-        check(event_source_message_file(SERVICE_NAME) == str(moved_exe),
-              "Event Log source points at the moved executable "
-              f"(got {event_source_message_file(SERVICE_NAME)})")
+        check(
+            result.returncode == 0,
+            f"--install from a moved executable succeeds (stderr: {result.stderr.strip()})",
+        )
+        check(
+            service_binary_path() == f'"{moved_exe}" "{CONFIG_PATH}"',
+            f"Registration points at the moved executable (got {service_binary_path()})",
+        )
+        check(
+            event_source_message_file(SERVICE_NAME) == str(moved_exe),
+            "Event Log source points at the moved executable "
+            f"(got {event_source_message_file(SERVICE_NAME)})",
+        )
     finally:
         # Put the installed executable back in charge before restoring the
         # service to the state the later tests expect.
         install_server(str(CONFIG_PATH))
         moved_exe.unlink(missing_ok=True)
 
-    check(event_source_message_file(SERVICE_NAME) == str(EXE_PATH),
-          "Event Log source points at the installed executable again")
+    check(
+        event_source_message_file(SERVICE_NAME) == str(EXE_PATH),
+        "Event Log source points at the installed executable again",
+    )
 
     sc("config", SERVICE_NAME, "start=", "auto")
     sc("config", SERVICE_NAME, "obj=", "LocalSystem")
     check(service_start_type() == "AUTO_START", "Start type restored to AUTO_START")
 
     # --uninstall against a service that is not there is the state it asks for.
-    check(service_cmd(WEB_VIEWER_EXE, "--stop").returncode == 0,
-          f"'{WEB_SERVICE}' stopped before deregistering it")
-    check(service_cmd(WEB_VIEWER_EXE, "--uninstall").returncode == 0,
-          f"`minilog-web-viewer --uninstall` removes '{WEB_SERVICE}'")
-    check(service_cmd(WEB_VIEWER_EXE, "--uninstall").returncode == 0,
-          "`minilog-web-viewer --uninstall` against an absent service succeeds")
+    check(
+        service_cmd(WEB_VIEWER_EXE, "--stop").returncode == 0,
+        f"'{WEB_SERVICE}' stopped before deregistering it",
+    )
+    check(
+        service_cmd(WEB_VIEWER_EXE, "--uninstall").returncode == 0,
+        f"`minilog-web-viewer --uninstall` removes '{WEB_SERVICE}'",
+    )
+    check(
+        service_cmd(WEB_VIEWER_EXE, "--uninstall").returncode == 0,
+        "`minilog-web-viewer --uninstall` against an absent service succeeds",
+    )
     check(service_cmd(EXE_PATH, "--uninstall").returncode == 0, f"'{SERVICE_NAME}' deregistered")
-    check(service_cmd(EXE_PATH, "--uninstall").returncode == 0,
-          "`minilog --uninstall` against an absent service succeeds")
+    check(
+        service_cmd(EXE_PATH, "--uninstall").returncode == 0,
+        "`minilog --uninstall` against an absent service succeeds",
+    )
 
     # Leave both services as the upgrade test expects to find them.
     check(install_server(str(CONFIG_PATH)).returncode == 0, f"'{SERVICE_NAME}' re-registered")
-    check(service_cmd(WEB_VIEWER_EXE, "--install", "--config", str(CONFIG_PATH)).returncode == 0,
-          f"'{WEB_SERVICE}' re-registered")
+    check(
+        service_cmd(WEB_VIEWER_EXE, "--install", "--config", str(CONFIG_PATH)).returncode == 0,
+        f"'{WEB_SERVICE}' re-registered",
+    )
     sc("start", SERVICE_NAME)
     sc("start", WEB_SERVICE)
     check(wait_service_running(SERVICE_NAME), f"'{SERVICE_NAME}' running again")
@@ -898,6 +970,7 @@ def test_reregister() -> None:
 
 
 # ─── Test 8: Upgrade install (config not overwritten) ─────────────────────────
+
 
 def test_upgrade(installer: Path) -> None:
     print("\n=== Test 8: Upgrade install ===")
@@ -920,8 +993,10 @@ def test_upgrade(installer: Path) -> None:
     content = CONFIG_PATH.read_text(encoding="utf-8")
     check(sentinel in content, "Config not overwritten on upgrade")
     check_shortcuts_point_at(moved_port)
-    check(web_viewer_responds(moved_port),
-          f"'{WEB_SERVICE}' listens on the port the upgraded config names")
+    check(
+        web_viewer_responds(moved_port),
+        f"'{WEB_SERVICE}' listens on the port the upgraded config names",
+    )
 
     # Put the port back for the tests that follow.
     set_web_viewer_address("", WEB_VIEWER_PORT)
@@ -931,6 +1006,7 @@ def test_upgrade(installer: Path) -> None:
 
 
 # ─── Test 9: an upgrade that drops the web viewer component ───────────────────
+
 
 def test_upgrade_without_web_viewer(installer: Path) -> None:
     print("\n=== Test 9: Upgrade with the web viewer component dropped ===")
@@ -942,10 +1018,14 @@ def test_upgrade_without_web_viewer(installer: Path) -> None:
     # viewer's port.
     run_installer(installer, components="main")
 
-    check(not service_exists(WEB_SERVICE),
-          f"'{WEB_SERVICE}' deregistered when its component is dropped")
-    check(wait_service_running(SERVICE_NAME),
-          f"'{SERVICE_NAME}' still running after the reduced upgrade")
+    check(
+        not service_exists(WEB_SERVICE),
+        f"'{WEB_SERVICE}' deregistered when its component is dropped",
+    )
+    check(
+        wait_service_running(SERVICE_NAME),
+        f"'{SERVICE_NAME}' still running after the reduced upgrade",
+    )
 
     # Put the full installation back for the tests that follow. The components
     # have to be named: a silent re-install with no /COMPONENTS repeats the
@@ -958,6 +1038,7 @@ def test_upgrade_without_web_viewer(installer: Path) -> None:
 
 # ─── Test 10: Uninstall ───────────────────────────────────────────────────────
 
+
 def test_uninstall() -> None:
     print("\n=== Test 10: Uninstall ===")
 
@@ -969,29 +1050,35 @@ def test_uninstall() -> None:
     run_uninstaller()
 
     check(not path_has(TOOLS_DIR), f"{TOOLS_DIR} removed from the system PATH")
-    check(read_system_path() == expected_path,
-          "Every other PATH entry survives the uninstall, in order")
+    check(
+        read_system_path() == expected_path,
+        "Every other PATH entry survives the uninstall, in order",
+    )
     # Clean up the sentinel whatever the outcome above.
-    write_system_path(";".join(seg for seg in read_system_path().split(";")
-                               if seg != PATH_SENTINEL))
+    write_system_path(
+        ";".join(seg for seg in read_system_path().split(";") if seg != PATH_SENTINEL)
+    )
 
-    check(not service_exists(),     "Service removed after uninstall")
+    check(not service_exists(), "Service removed after uninstall")
     check(not service_exists(WEB_SERVICE), "Web viewer service removed after uninstall")
-    check(not event_source_registered(SERVICE_NAME),
-          f"Event Log source '{SERVICE_NAME}' removed after uninstall")
-    check(not event_source_registered(WEB_SERVICE),
-          f"Event Log source '{WEB_SERVICE}' removed after uninstall")
-    check(not EXE_PATH.exists(),    "minilog.exe removed after uninstall")
+    check(
+        not event_source_registered(SERVICE_NAME),
+        f"Event Log source '{SERVICE_NAME}' removed after uninstall",
+    )
+    check(
+        not event_source_registered(WEB_SERVICE),
+        f"Event Log source '{WEB_SERVICE}' removed after uninstall",
+    )
+    check(not EXE_PATH.exists(), "minilog.exe removed after uninstall")
     check(not WEB_VIEWER_EXE.exists(), "minilog-web-viewer.exe removed after uninstall")
     check(not VIEWER_PATH.exists(), "minilog-cli-viewer.py removed after uninstall")
-    check(not SEND_PATH.exists(),   "minilog-send.exe removed after uninstall")
-    check(CONFIG_PATH.exists(),     "Config file survives uninstall")
-    check(VIEWER_CONFIG.exists(),   "Viewer config file survives uninstall")
-
-
+    check(not SEND_PATH.exists(), "minilog-send.exe removed after uninstall")
+    check(CONFIG_PATH.exists(), "Config file survives uninstall")
+    check(VIEWER_CONFIG.exists(), "Viewer config file survives uninstall")
 
 
 # ─── Test 11: the PATH entry does not outlive the product ─────────────────────
+
 
 def test_path_entry_lifecycle(installer: Path) -> None:
     print("\n=== Test 11: System PATH entry lifecycle ===")
@@ -1020,16 +1107,23 @@ def test_path_entry_lifecycle(installer: Path) -> None:
     write_system_path(untouched)
 
     run_uninstaller(ALT_APP_DIR)
-    check(read_system_path() == untouched,
-          "Uninstalling with the entry already absent leaves the PATH unchanged")
+    check(
+        read_system_path() == untouched,
+        "Uninstalling with the entry already absent leaves the PATH unchanged",
+    )
 
-    check(read_system_path() == baseline,
-          "install, uninstall, install elsewhere, uninstall leaves no stale entry")
-    check(not ALT_APP_DIR.exists() or not (ALT_APP_DIR / "minilog.exe").exists(),
-          f"Second installation removed from {ALT_APP_DIR}")
+    check(
+        read_system_path() == baseline,
+        "install, uninstall, install elsewhere, uninstall leaves no stale entry",
+    )
+    check(
+        not ALT_APP_DIR.exists() or not (ALT_APP_DIR / "minilog.exe").exists(),
+        f"Second installation removed from {ALT_APP_DIR}",
+    )
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     # The runner's console is cp1252, and a single non-ASCII character in a

@@ -25,9 +25,7 @@ BINARY: str = ""  # set from argv[1] before test discovery
 # On Windows, processes must be in their own process group so that
 # CTRL_C_EVENT can be delivered without also interrupting the test runner.
 _POPEN_FLAGS: dict = (
-    {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    if sys.platform == "win32"
-    else {}
+    {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if sys.platform == "win32" else {}
 )
 
 
@@ -539,9 +537,7 @@ class TestMultiWorker(unittest.TestCase):
                             port,
                         )
 
-                threads = [
-                    threading.Thread(target=sender, args=(t,)) for t in range(n_threads)
-                ]
+                threads = [threading.Thread(target=sender, args=(t,)) for t in range(n_threads)]
                 for t in threads:
                     t.start()
                 for t in threads:
@@ -582,9 +578,7 @@ class TestInvalidAddresses(unittest.TestCase):
     def _run_with_config(self, d: Path, body: str) -> subprocess.CompletedProcess:
         conf = d / "minilog.conf"
         conf.write_text(body)
-        return subprocess.run(
-            [BINARY, str(conf)], capture_output=True, text=True, timeout=10
-        )
+        return subprocess.run([BINARY, str(conf)], capture_output=True, text=True, timeout=10)
 
     @staticmethod
     def _forwarding_config(d: Path, port: int, host: str) -> str:
@@ -635,9 +629,7 @@ class TestInvalidAddresses(unittest.TestCase):
             err_path = d / "stderr.txt"
 
             with err_path.open("w") as err:
-                proc = subprocess.Popen(
-                    [BINARY, str(conf)], stderr=err, text=True, **_POPEN_FLAGS
-                )
+                proc = subprocess.Popen([BINARY, str(conf)], stderr=err, text=True, **_POPEN_FLAGS)
                 try:
                     self.assertTrue(wait_for_port(port), "server did not bind")
 
@@ -749,9 +741,7 @@ class TestSinkPathsCheckedAtStartup(unittest.TestCase):
                 f"text_file = {missing}\n"
             )
 
-            r = subprocess.run(
-                [BINARY, str(conf)], capture_output=True, text=True, timeout=10
-            )
+            r = subprocess.run([BINARY, str(conf)], capture_output=True, text=True, timeout=10)
 
             self.assertNotEqual(r.returncode, 0, "server started with an unusable sink path")
             self.assertIn("failed to open", r.stderr)
