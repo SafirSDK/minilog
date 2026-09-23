@@ -179,7 +179,18 @@ jobs:
         run: |
           lcov --capture --directory build/linux-coverage --output-file coverage.info --ignore-errors mismatch
           lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
-          lcov --list coverage.info
+          # Not lcov --list or --summary: lcov 2.0 (the Ubuntu 24.04 package)
+          # prints nonsense rates from a correct tracefile. Read LF/LH instead.
+          awk -F: -v root="$PWD/" '
+            /^SF:/ { f = substr($0, 4); sub("^" root, "", f) }
+            /^LF:/ { lf = $2 }
+            /^LH:/ { lh = $2 }
+            /^end_of_record/ {
+              printf "%-45s %6.1f%%  %5d/%d\n", f, lf ? 100 * lh / lf : 0, lh, lf
+              tlf += lf; tlh += lh
+            }
+            END { printf "%-45s %6.1f%%  %5d/%d\n", "Total", tlf ? 100 * tlh / tlf : 0, tlh, tlf }
+          ' coverage.info
 
       - name: Generate web-viewer coverage report
         run: |

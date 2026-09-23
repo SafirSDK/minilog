@@ -1,5 +1,8 @@
+# develop, not master: a release fast-forwards master onto a commit develop
+# has already uploaded, and Codecov files each commit under one branch only,
+# so master never gets a new head. At release time the two are the same commit.
 codecov:
-  branch: master
+  branch: develop
 
 fixes:
   - "github.com/SafirSDK/minilog-web-viewer/::src/web-viewer/"

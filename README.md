@@ -5,7 +5,7 @@
 ![minilog logo](artwork/minilog-logo.png)
 
 [![Build & Test](https://github.com/SafirSDK/minilog/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/SafirSDK/minilog/actions/workflows/build.yml)
-[![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/master/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
+[![codecov](https://codecov.io/gh/SafirSDK/minilog/branch/develop/graph/badge.svg)](https://codecov.io/gh/SafirSDK/minilog)
 
 A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datagrams, routes them to text and/or JSONL log files with rotation, and can forward to another syslog endpoint. Ships with a browser-based log viewer and a CLI tail tool for reading logs. Runs as a Windows service or a Linux process (systemd-friendly); the Windows installer sets up both the server and the web viewer by default.
 
