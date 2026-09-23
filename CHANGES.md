@@ -31,6 +31,18 @@ full further down; this is the list to check a deployment against before upgradi
 
 ### New
 
+- **`minilog-send`, a command-line sender (#46).** A small executable that builds a syslog datagram
+  from its arguments and sends it over UDP: `minilog-send -s error -a deploy release failed`. With
+  no message it reads stdin and sends one datagram per line, so a command's output can be piped
+  in. Flags set the host and port, facility and severity (by the same names the JSONL uses, or by
+  number), app, hostname, pid and msgid; `--rfc3164` switches to the legacy format. It exists
+  because Windows has no `logger(1)`, so a script there had no simple way to put a line into
+  minilog, and because sending one message and watching it arrive is the end-to-end check that
+  `--check` deliberately stops short of. Exit 0 means the datagram left the machine — UDP gives no
+  receipt, and the help text says so — 1 that it did not, and 2 that the command line was wrong.
+  The installer puts it in `tools` (already on the `PATH`), the zip ships it, and the README has a
+  **minilog-send** section.
+
 - **`exclude_facility` says "all but these" (#44).** A new key in `[output.*]` and `[forwarding]`
   takes facility names out of whatever `facility` accepts, so `facility = *` with
   `exclude_facility = local3` is a sink for everything except local3. Until now that took listing
@@ -187,6 +199,14 @@ full further down; this is the list to check a deployment against before upgradi
   Log. Interactive runs still log to stderr.
 
 ### Changed
+
+- **Facility 15 is written as `clock2`, not `cron`.** RFC 5424 gives both 9 and 15 to "clock
+  daemon"; the config has always taken `cron` as an alias of 9 (as `syslog(3)` does) and `clock2`
+  for 15, but the parser named 15 `cron` in the JSONL — so a `facility` value copied from a log
+  record into a config routed a different facility. The parser and the config now share one name
+  table, and `minilog-send`'s tests check that every name minilog writes reads back to the same
+  number. Only records from facility 15, which is rarely used, change; a web-viewer or CLI-viewer
+  filter on `cron` no longer matches them and should say `clock2`.
 
 - **The shipped `minilog.conf` explains itself (#45).** The default config the installer and the zip
   lay down carried one comment, on `[web_viewer]`. Every key now has a line or two saying what it

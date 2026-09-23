@@ -15,6 +15,8 @@
 
 #include "config.hpp"
 
+#include "parser/syslog_names.hpp"
+
 #include <boost/algorithm/string.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/property_tree/ini_parser.hpp>
@@ -29,24 +31,12 @@
 #include <set>
 #include <stdexcept>
 #include <system_error>
-#include <unordered_map>
 
 namespace minilog
 {
 
 namespace
 {
-
-// RFC5424 facility name → numeric code (0–23).
-// Aliases (kern/kernel, auth/security, etc.) map to the same code.
-const std::unordered_map<std::string, int> kFacilityNames = {
-    {"kern", 0},      {"kernel", 0},  {"user", 1},     {"mail", 2},      {"daemon", 3},
-    {"system", 3},    {"auth", 4},    {"security", 4}, {"syslog", 5},    {"lpr", 6},
-    {"news", 7},      {"uucp", 8},    {"clock", 9},    {"cron", 9},      {"authpriv", 10},
-    {"ftp", 11},      {"ntp", 12},    {"audit", 13},   {"logaudit", 13}, {"alert", 14},
-    {"logalert", 14}, {"clock2", 15}, {"local0", 16},  {"local1", 17},   {"local2", 18},
-    {"local3", 19},   {"local4", 20}, {"local5", 21},  {"local6", 22},   {"local7", 23},
-};
 
 // Reject an address that boost::asio cannot parse, naming the key and the value.
 //
@@ -251,14 +241,16 @@ std::vector<std::string> facilityTokens(const std::string& raw)
     return tokens;
 }
 
+// The names and aliases are the parser's (syslog_names.hpp), so a name accepted
+// here is spelled the way the JSONL will show it.
 int facilityCode(const std::string& token)
 {
-    auto it = kFacilityNames.find(token);
-    if (it == kFacilityNames.end())
+    const auto code = facilityFromName(token);
+    if (!code)
     {
         throw std::runtime_error("Unknown facility name: '" + token + "'");
     }
-    return it->second;
+    return *code;
 }
 
 void appendUnique(std::vector<int>& list, int code)

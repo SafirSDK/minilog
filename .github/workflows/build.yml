@@ -34,7 +34,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find src/server tests/server -name "*.cpp" -o -name "*.hpp" \
+          find src/server src/send tests/server tests/send -name "*.cpp" -o -name "*.hpp" \
             | xargs clang-format --dry-run --Werror
 
   # ─── File header check ───────────────────────────────────────────────────────

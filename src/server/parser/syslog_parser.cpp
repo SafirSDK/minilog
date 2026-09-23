@@ -15,8 +15,9 @@
 
 #include "syslog_parser.hpp"
 
+#include "syslog_names.hpp"
+
 #include <algorithm>
-#include <array>
 #include <cassert>
 #include <cctype>
 
@@ -26,14 +27,6 @@ namespace minilog
 namespace
 {
 
-const std::array<const char*, 8> kSeverityNames = {
-    "EMERGENCY", "ALERT", "CRITICAL", "ERROR", "WARNING", "NOTICE", "INFO", "DEBUG"};
-
-const std::array<const char*, 24> kFacilityNames = {
-    "kern",   "user",   "mail",     "daemon", "auth",   "syslog", "lpr",    "news",
-    "uucp",   "clock",  "authpriv", "ftp",    "ntp",    "audit",  "alert",  "cron",
-    "local0", "local1", "local2",   "local3", "local4", "local5", "local6", "local7"};
-
 void applyPri(SyslogMessage& msg, int pri)
 {
     assert(pri >= 0 && pri <= 191);
@@ -42,11 +35,11 @@ void applyPri(SyslogMessage& msg, int pri)
     msg.severity = pri % 8;
     if (*msg.facility < static_cast<int>(kFacilityNames.size()))
     {
-        msg.facilityName = kFacilityNames[static_cast<std::size_t>(*msg.facility)];
+        msg.facilityName = std::string(kFacilityNames[static_cast<std::size_t>(*msg.facility)]);
     }
     if (*msg.severity < static_cast<int>(kSeverityNames.size()))
     {
-        msg.severityName = kSeverityNames[static_cast<std::size_t>(*msg.severity)];
+        msg.severityName = std::string(kSeverityNames[static_cast<std::size_t>(*msg.severity)]);
     }
 }
 

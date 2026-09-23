@@ -125,6 +125,42 @@ if(WIN32)
     target_include_directories(minilog PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
+# ---------------------------------------------------------------------------
+# minilog-send: command-line sender, for scripts and for proving a deployment
+# works end to end. Shares the parser's facility/severity names and nothing
+# else with the server.
+# ---------------------------------------------------------------------------
+add_executable(minilog-send
+    src/send/main.cpp
+    src/send/send_options.cpp
+    src/send/syslog_format.cpp
+    $<$<PLATFORM_ID:Windows>:src/send/minilog-send.rc>
+)
+
+target_include_directories(minilog-send PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/send
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/server
+)
+
+target_compile_definitions(minilog-send PRIVATE
+    BOOST_ASIO_NO_DEPRECATED
+    MINILOG_SEND_VERSION="${MINILOG_PACKAGE_VERSION}"
+    $<$<PLATFORM_ID:Windows>:
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0601
+    >
+)
+
+target_link_libraries(minilog-send PRIVATE
+    Boost::headers
+    Boost::program_options
+)
+
+if(WIN32)
+    target_link_libraries(minilog-send PRIVATE ws2_32)
+endif()
+
 enable_testing()
 add_subdirectory(tests)
 
@@ -175,7 +211,7 @@ endif()
 # ---------------------------------------------------------------------------
 include(GNUInstallDirs)
 
-install(TARGETS minilog
+install(TARGETS minilog minilog-send
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 
@@ -200,9 +236,9 @@ if(WIN32)
         "C:/Program Files/Inno Setup 6"
     )
     if(ISCC)
-        # Collect the DEPENDS list: always the server, plus the web viewer if Go
-        # is available.
-        set(_package_deps minilog)
+        # Collect the DEPENDS list: always the server and the sender (they share
+        # SourceDir), plus the web viewer if Go is available.
+        set(_package_deps minilog minilog-send)
         set(_iscc_web_viewer_args "")
         if(GO_EXECUTABLE)
             list(APPEND _package_deps minilog-web-viewer)
@@ -229,7 +265,7 @@ if(WIN32)
     # the files are staged and archived by cmake/package_zip.cmake, which is
     # also where the list of what goes in lives.
     # -----------------------------------------------------------------------
-    set(_zip_deps minilog)
+    set(_zip_deps minilog minilog-send)
     set(_zip_optional_args "")
     if(GO_EXECUTABLE)
         list(APPEND _zip_deps minilog-web-viewer)
@@ -245,6 +281,7 @@ if(WIN32)
             "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
             "-DOUTPUT_DIR=${CMAKE_BINARY_DIR}"
             "-DSERVER_EXE=$<TARGET_FILE:minilog>"
+            "-DSEND_EXE=$<TARGET_FILE:minilog-send>"
             ${_zip_optional_args}
             -P "${CMAKE_SOURCE_DIR}/cmake/package_zip.cmake"
         DEPENDS ${_zip_deps}

@@ -20,8 +20,9 @@ directly in PowerShell/CMD.
 Boost throughout: Asio (networking), PropertyTree (INI parsing), JSON (JSONL output), Test (tests).
 Direct WinAPI/POSIX for OS logging. Inno Setup 6 for the Windows installer.
 
-Both Windows executables embed `artwork/minilog.ico`. The server uses `src/server/minilog.rc`
-(compiled by MSVC). The Go web-viewer uses a pre-generated `src/web-viewer/rsrc_windows_amd64.syso`.
+All three Windows executables embed `artwork/minilog.ico`. The server uses `src/server/minilog.rc`
+and the sender `src/send/minilog-send.rc` (compiled by MSVC). The Go web-viewer uses a
+pre-generated `src/web-viewer/rsrc_windows_amd64.syso`.
 If the icon changes, regenerate the `.syso`:
 ```
 cd src/web-viewer
@@ -31,6 +32,9 @@ Install `go-winres` with `go install github.com/tc-hib/go-winres@latest` if need
 
 ## Conventions
 Formatting enforced by `.clang-format` (Allman braces, 100-col limit, include grouping — read it).
+The clang-format and header checks cover `src/server`, `src/send`, `tests/server` and `tests/send`;
+a new C++ directory has to be added to the CI `find` in `build.yml`, `tests/check_headers.py`, and
+the `clang-format-check` target.
 - Naming: `camelCase` functions/vars/params; `m_camelCase` private members; `PascalCase` types;
   plain `camelCase` for public struct fields (e.g. `appName`, `maxSize`)
 - File headers: MIT licence block at the top of every `.cpp`/`.hpp`; interior lines use ` *`
@@ -81,6 +85,26 @@ the socket to minilog — the message says that rather than guessing.
 
 ### RFC5424 structured data
 Kept verbatim as a prefix of `message` — **not** parsed into a separate JSONL field.
+
+### Facility and severity names
+One table, `parser/syslog_names.hpp`, header-only. `kFacilityNames`/`kSeverityNames` are what the
+parser writes into the JSONL; `facilityFromName`/`severityFromName` (case-insensitive, with the
+README's aliases) are what the config loader and minilog-send read. Every written name must read
+back to its own number — `test_parser` and `test_send` both check it. Do not add a name→number
+table anywhere else.
+
+## minilog-send (`src/send/`)
+Command-line UDP sender, C++20 + Boost.Asio + program_options, one executable, no config file, no
+Event Log. `send_options.*` turns argv into `SendOptions` (throws `UsageError` → exit 2);
+`syslog_format.*` turns `SyslogFields` into RFC 5424 or RFC 3164 bytes, validates header fields
+(single printable-ASCII words; `[]:` banned from the RFC 3164 tag; `--msgid` refused with
+`--rfc3164`), formats timestamps from a `LocalTime` so tests can fix the clock, and splits stdin
+into non-empty lines. `main.cpp` is the only file that touches the OS: hostname, pid, clock,
+resolver, socket. Exit 1 is a resolve or send failure; in stdin mode the first bad line stops the
+run. Nothing is truncated — a datagram over 65507 bytes is an error. Tests:
+`tests/send/test_send.cpp` (Boost.Test, includes a round trip through `parseSyslog`) and
+`tests/binary/test_send_binary.py` (the built tool against a running server, checking JSONL fields
+and exit codes). Ships in the installer's `tools` directory and in the zip.
 
 ## JSONL record format
 UTF-8, one JSON object per line. Invalid UTF-8 bytes are replaced with U+FFFD before serialisation.
@@ -214,7 +238,7 @@ Before tagging a release, verify all of the following:
    `minilog-<version>-win64.zip` to the GitHub Release. A prerelease tag is `v<version>-<suffix>`
    (`v1.4.0-beta2`); the suffix is not committed anywhere — CI takes it from the tag and passes
    it as `MINILOG_VERSION_SUFFIX`, so the files come out as `minilog-1.4.0-beta2-*` and the web
-   viewer's `/version` says the same. The build fails if the tag's numeric part is not the
+   viewer's `/version` and `minilog-send --version` say the same. The build fails if the tag's numeric part is not the
    `CMakeLists.txt` version. The three version numbers above stay plain `x.y.z` for a beta. The zip's file list lives in three places
    that must agree: `cmake/package_zip.cmake`, `tests/installer/test_zip_install.py`
    (`EXPECTED_FILES`) and the table in the README's "Windows deployment without the installer".

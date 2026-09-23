@@ -133,6 +133,17 @@ else()
     )
 endif()
 
+# minilog-send: the argument parsing, the two wire formats and the timestamps
+# are pure functions, tested here; the parser is compiled in for the round trip.
+add_boost_test(test_send send/test_send.cpp)
+target_sources(test_send PRIVATE
+    ../src/send/send_options.cpp
+    ../src/send/syslog_format.cpp
+    ../src/server/parser/syslog_parser.cpp
+)
+target_include_directories(test_send PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/send)
+target_link_libraries(test_send PRIVATE Boost::program_options)
+
 # Binary-level tests — require the minilog executable.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
@@ -144,6 +155,18 @@ if(Python3_FOUND)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     set_tests_properties(test_binary PROPERTIES TIMEOUT 120)
+
+    # The built minilog-send against a running minilog: what lands in the JSONL,
+    # and the exit codes only the real executable can show.
+    add_test(
+        NAME test_send_binary
+        COMMAND Python3::Interpreter
+            ${CMAKE_CURRENT_SOURCE_DIR}/binary/test_send_binary.py
+            $<TARGET_FILE:minilog>
+            $<TARGET_FILE:minilog-send>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(test_send_binary PROPERTIES TIMEOUT 120)
 
     add_test(
         NAME test_cli_viewer
@@ -211,8 +234,8 @@ if(CLANG_FORMAT)
     add_custom_target(clang-format-check ALL
         COMMAND "${CMAKE_COMMAND}"
             "-DCLANG_FORMAT=${CLANG_FORMAT}"
-            "-DSRC_DIR=${CMAKE_SOURCE_DIR}/src/server"
-            "-DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/server"
+            "-DSRC_DIR=${CMAKE_SOURCE_DIR}/src"
+            "-DTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
             -P "${CMAKE_SOURCE_DIR}/cmake/clang_format_check.cmake"
         COMMENT "Checking clang-format..."
         VERBATIM

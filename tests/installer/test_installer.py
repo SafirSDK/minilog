@@ -50,6 +50,7 @@ DATA_DIR       = PROGRAM_DATA / "minilog"
 EXE_PATH       = APP_DIR / "minilog.exe"
 WEB_VIEWER_EXE = APP_DIR / "minilog-web-viewer.exe"
 VIEWER_PATH    = TOOLS_DIR / "minilog-cli-viewer.py"
+SEND_PATH      = TOOLS_DIR / "minilog-send.exe"
 CONFIG_PATH    = DATA_DIR / "minilog.conf"
 VIEWER_CONFIG  = DATA_DIR / "minilog-cli-viewer.conf"
 LOG_DIR        = DATA_DIR / "logs"
@@ -484,6 +485,30 @@ def test_clean_install(installer: Path) -> None:
         )
         check(result.returncode == 0, "Viewer script runs successfully (--help)")
         check("minilog-cli-viewer" in result.stdout, "Viewer help output looks correct")
+
+    # The sender is an executable in the same PATH directory; --help proves it
+    # runs from where it was put, and a message through it proves the service
+    # it was installed beside is receiving.
+    check(SEND_PATH.exists(), f"minilog-send.exe present at {TOOLS_DIR}")
+    if SEND_PATH.exists():
+        result = subprocess.run(
+            [str(SEND_PATH), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        check(result.returncode == 0, "minilog-send.exe runs successfully (--help)")
+        check("Usage: minilog-send" in result.stdout, "minilog-send help output looks correct")
+        result = subprocess.run(
+            [str(SEND_PATH), "--app", "installer-test", "installed and sending"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        check(result.returncode == 0,
+              f"minilog-send.exe sends to the installed service (stderr: {result.stderr.strip()})")
 
     # Web viewer checks
     check(WEB_VIEWER_EXE.exists(), f"minilog-web-viewer.exe present at {APP_DIR}")
@@ -948,6 +973,7 @@ def test_uninstall() -> None:
     check(not EXE_PATH.exists(),    "minilog.exe removed after uninstall")
     check(not WEB_VIEWER_EXE.exists(), "minilog-web-viewer.exe removed after uninstall")
     check(not VIEWER_PATH.exists(), "minilog-cli-viewer.py removed after uninstall")
+    check(not SEND_PATH.exists(),   "minilog-send.exe removed after uninstall")
     check(CONFIG_PATH.exists(),     "Config file survives uninstall")
     check(VIEWER_CONFIG.exists(),   "Viewer config file survives uninstall")
 

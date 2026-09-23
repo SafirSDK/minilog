@@ -7,7 +7,7 @@
 ;   ISCC /DSourceDir=<build-output-dir> /DAppVersion=<version> setup.iss
 ;
 ; Defines accepted on the ISCC command line:
-;   SourceDir      — directory containing minilog.exe and minilog.pdb
+;   SourceDir      — directory containing minilog.exe, minilog-send.exe and minilog.pdb
 ;   WebViewerDir   — directory containing minilog-web-viewer.exe
 ;   ConfigDir      — directory containing the default minilog.conf
 ;   AppVersion     — version string, e.g. "0.1.0"
@@ -77,6 +77,9 @@ Source: "{#SourceDir}\minilog.exe"; DestDir: "{app}"; Components: main; Flags: i
 
 ; CLI viewer script — installed to tools subdirectory (will be in PATH).
 Source: "..\src\cli-viewer\minilog-cli-viewer.py"; DestDir: "{app}\tools"; Components: main; Flags: ignoreversion
+
+; Command-line sender — also in tools, so a script can call it by name.
+Source: "{#SourceDir}\minilog-send.exe"; DestDir: "{app}\tools"; Components: main; Flags: ignoreversion
 
 ; Web viewer binary.
 Source: "{#WebViewerDir}\minilog-web-viewer.exe"; DestDir: "{app}"; Components: webviewer; \

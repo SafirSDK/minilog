@@ -14,9 +14,12 @@
  ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_parser
+#include "parser/syslog_names.hpp"
 #include "parser/syslog_parser.hpp"
 
 #include <boost/test/unit_test.hpp>
+
+#include <string>
 
 using namespace minilog;
 
@@ -47,6 +50,21 @@ BOOST_AUTO_TEST_CASE(basic)
     BOOST_TEST(*m.procId == "123");
     BOOST_TEST(*m.msgId == "ID47");
     BOOST_TEST(m.message == "- message text");
+}
+
+BOOST_AUTO_TEST_CASE(facility_names_read_back_to_the_same_number)
+{
+    // What the JSONL says for a facility must be a name a config file (and
+    // minilog-send) maps back to that same facility. Facility 15 used to be
+    // written as "cron", which the config reads as 9.
+    for (int facility = 0; facility < 24; ++facility)
+    {
+        const auto m = parse("<" + std::to_string(facility * 8) + ">1 - - - - - - x");
+        BOOST_TEST(*m.facility == facility);
+        BOOST_TEST(facilityFromName(*m.facilityName).value_or(-1) == facility, *m.facilityName);
+    }
+    BOOST_TEST(*parse("<72>1 - - - - - - x").facilityName == "clock");
+    BOOST_TEST(*parse("<120>1 - - - - - - x").facilityName == "clock2");
 }
 
 BOOST_AUTO_TEST_CASE(all_nil_fields)

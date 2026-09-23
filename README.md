@@ -20,7 +20,8 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 - Windows service installation/removal via CLI flags
 - Web viewer — browser UI with paging, filtering, search across rotated log files (installed by default on Windows)
 - CLI viewer — Python `tail -f` style tool with colour output and filtering
-- Single external dependency: Boost (server only; viewers are standalone)
+- CLI sender — `minilog-send`, a small executable for putting a line into the log from a script or a shell
+- Single external dependency: Boost (server and sender only; viewers are standalone)
 
 ## Limitations
 
@@ -173,7 +174,9 @@ The suite contains:
 | `test_forwarder` | UDP forwarding, truncation, facility filtering |
 | `test_integration` | Multi-output routing end-to-end |
 | `test_stress` | Concurrent senders, file rotation under load (soak) |
+| `test_send` | `minilog-send`: argument parsing, both wire formats, timestamps, and a round trip through the parser |
 | `test_binary` | Black-box test of the real binary (Python, via CTest) |
+| `test_send_binary` | The built `minilog-send` against a running `minilog`: JSONL fields, stdin mode, exit codes (Python, via CTest) |
 
 ### Sanitizer builds
 
@@ -445,9 +448,12 @@ because as a name it would never resolve and would be retried silently forever.
 
 ### Facility names
 
-`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`, `lpr`, `news`, `uucp`, `clock`, `authpriv`, `ftp`, `ntp`, `audit`, `alert`, `local0`–`local7`.
+`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`, `lpr`, `news`, `uucp`, `clock`, `authpriv`, `ftp`, `ntp`, `audit`, `alert`, `clock2`, `local0`–`local7`.
 
 Aliases: `kernel`=`kern`, `security`=`auth`, `system`=`daemon`, `cron`=`clock`, `logaudit`=`audit`, `logalert`=`alert`.
+
+These are also the names the JSONL `facility` field carries and the names `minilog-send --facility`
+accepts, so a name read from a log can be written straight back into a config or a command line.
 
 ## Output formats
 
@@ -550,6 +556,7 @@ The archive contains one directory, `minilog-<version>\`:
 |---|---|
 | `minilog.exe` | the syslog server |
 | `minilog-web-viewer.exe` | the web viewer |
+| `minilog-send.exe` | the command-line sender; see [minilog-send](#minilog-send) |
 | `minilog.pdb` | debug symbols for `minilog.exe`; optional, but a crash dump is only readable with the `.pdb` of the exact build, so keep it beside the executable |
 | `minilog.conf` | the default configuration the installer ships; edit it, do not use it as is |
 | `minilog-cli-viewer.py` | the CLI viewer, a Python 3 script with no dependencies |
@@ -575,9 +582,10 @@ The archive contains one directory, `minilog-<version>\`:
 
 ### Installing
 
-1. **Place the executables.** Any directory; the two need not share one. Nothing is read
+1. **Place the executables.** Any directory; the three need not share one. Nothing is read
    relative to the executable except the web viewer's default config path, and that is
-   overridden below.
+   overridden below. `minilog-send.exe` reads nothing at all; put it wherever scripts will find
+   it.
 
 2. **Write the config.** Start from the shipped `minilog.conf` and put it wherever the deployment
    keeps configuration. Set `text_file` and `jsonl_file` in each `[output.*]` section to absolute
@@ -627,9 +635,12 @@ The archive contains one directory, `minilog-<version>\`:
    ```
 
    A failed start says so on the console, and the reason is in the Application event log under
-   the source `minilog` or `minilog-web-viewer`. Then send a datagram (see [Sending a test
-   message](#sending-a-test-message)), confirm it lands in the log file, and open
-   `http://<host>:9514/` in a browser.
+   the source `minilog` or `minilog-web-viewer`. Then send a message, confirm it lands in the
+   log file, and open `http://<host>:9514/` in a browser:
+
+   ```
+   D:\deploy\bin\minilog-send.exe --port 514 deployment check
+   ```
 
 8. **The CLI viewer**, if wanted, needs a Python 3 interpreter and a pointer to the config, since
    its own search looks only in the current directory, `%ProgramData%\minilog` and beside the
@@ -716,7 +727,58 @@ systemctl enable --now minilog
 
 Note: binding to UDP port 514 requires either `CAP_NET_BIND_SERVICE` or running as root. To avoid running as root, bind to a high port (e.g. 5514) and redirect with a firewall rule.
 
-## Sending a test message
+## minilog-send
+
+`minilog-send` builds a syslog datagram from its command line and sends it over UDP. It is for
+scripts — a PowerShell or batch file that wants a line in the log, where Windows has no
+`logger(1)` — and for proving a fresh deployment works end to end: `--check` shows the config and
+the machine are right, and one message arriving in the viewer shows the whole path is.
+
+The installer puts it in the `tools` directory, which is on the system `PATH`; the zip archive
+ships it beside the other executables. On Linux it is built alongside `minilog` and installed to
+the same `bin`.
+
+```
+minilog-send backup finished
+minilog-send -s error -a deploy --msgid STEP3 release 1.4 failed on web01
+minilog-send --host collector.example --port 5514 -f local3 hello from a script
+minilog-send --rfc3164 -a legacy for an old collector
+some-command 2>&1 | minilog-send -s warning -a some-command
+```
+
+The words on the command line are joined with single spaces into one message; put `--` before a
+message that starts with a dash. With no words, stdin is read and every non-empty line is sent as
+a message of its own, with the same header fields and a fresh timestamp each — that is what makes
+it usable in a pipeline. Empty lines are skipped.
+
+| Flag | Default | Field |
+|---|---|---|
+| `--host <host>` | `127.0.0.1` | where to send; a name or an IP address |
+| `--port <port>` | `514` | UDP port |
+| `-f`, `--facility <name\|0-23>` | `user` | the names under [Facility names](#facility-names), or a number |
+| `-s`, `--severity <name\|0-7>` | `info` | `emergency`, `alert`, `critical`, `error`, `warning`, `notice`, `info`, `debug`, or a number; `emerg`, `panic`, `crit`, `err`, `warn` are accepted too |
+| `-a`, `--app <name>` | `minilog-send` | APP-NAME (RFC 5424) or the tag (RFC 3164) |
+| `--hostname <name>` | this machine's name | HOSTNAME |
+| `--pid <id>` | this process's pid | PROCID |
+| `--msgid <id>` | none | MSGID; RFC 5424 only, an error with `--rfc3164` |
+| `--rfc3164` | off | send `<PRI>Mmm dd hh:mm:ss HOST APP[PID]: MSG` instead of RFC 5424 |
+| `-h`, `--help`, `--version` | | |
+
+Names are case-insensitive. The default format is RFC 5424 with a local timestamp carrying its UTC
+offset (`2026-09-23T14:07:31.123456+02:00`), no structured data, and `-` for a field not given.
+Header fields must be single words of printable ASCII, since that is how the receiver takes the
+header apart; the message itself may contain anything, and minilog escapes or replaces what it
+must. A message that would not fit in one UDP datagram (65 507 bytes with its header) is refused,
+not truncated.
+
+Exit status is 0 when every datagram left this machine, 1 when the host could not be resolved or
+a send failed (in stdin mode, the line that failed and how many were sent before it are on stderr,
+and nothing after it is sent), and 2 for a bad command line. Nothing is written to stdout on
+success. **UDP gives no delivery receipt**: exit 0 means the message was sent, not that anything
+received it. It does not read `minilog.conf` — the destination is what the flags say, and it
+never writes to the Windows Event Log.
+
+### Without minilog-send
 
 Using netcat:
 

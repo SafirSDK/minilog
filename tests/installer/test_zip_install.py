@@ -27,7 +27,6 @@ import os
 import random
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -63,6 +62,7 @@ ETC_DIR    = ROOT / "etc"
 LOG_DIR    = ROOT / "var" / "logs"
 EXE_PATH   = BIN_DIR / "minilog.exe"
 WEB_EXE    = BIN_DIR / "minilog-web-viewer.exe"
+SEND_EXE   = BIN_DIR / "minilog-send.exe"
 VIEWER_PY  = BIN_DIR / "minilog-cli-viewer.py"
 CONFIG     = ETC_DIR / "minilog.conf"
 LOG_FILE   = LOG_DIR / "syslog.log"
@@ -74,6 +74,7 @@ EXPECTED_FILES = {
     "minilog.exe",
     "minilog.pdb",
     "minilog-web-viewer.exe",
+    "minilog-send.exe",
     "minilog.conf",
     "minilog-cli-viewer.py",
     "minilog-cli-viewer.conf",
@@ -153,7 +154,8 @@ def test_install(archive: Path, top: str) -> None:
         with zipfile.ZipFile(archive) as zf:
             zf.extractall(tmp)
         src = Path(tmp) / top.rstrip("/")
-        for name in ("minilog.exe", "minilog.pdb", "minilog-web-viewer.exe", "minilog-cli-viewer.py"):
+        for name in ("minilog.exe", "minilog.pdb", "minilog-web-viewer.exe", "minilog-send.exe",
+                     "minilog-cli-viewer.py"):
             shutil.copy2(src / name, BIN_DIR / name)
         for name in ("minilog.conf", "minilog-cli-viewer.conf"):
             shutil.copy2(src / name, ETC_DIR / name)
@@ -209,16 +211,26 @@ def test_install(archive: Path, top: str) -> None:
 def test_smoke() -> None:
     print("\n=== Test 3: Services work from where they were put ===")
 
+    # Sent with the shipped sender rather than a raw socket: this is the step the
+    # README tells an administrator to do, with the tool it tells them to use.
     marker = f"zip-test-{random.randint(100000, 999999)}"
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.sendto(f"<13>Mar 15 10:00:00 testhost minilog-ci: {marker}".encode("ascii"),
-                    ("127.0.0.1", 514))
+    result = subprocess.run(
+        [str(SEND_EXE), "--port", "514", "--app", "minilog-ci", marker],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    check(result.returncode == 0,
+          f"`minilog-send.exe --port 514 ... {marker}` exits 0 (stderr: {result.stderr.strip()})")
+    check(result.stdout == "", "minilog-send.exe prints nothing on success")
     time.sleep(2)
 
     check(LOG_FILE.exists(), f"syslog.log written under {LOG_DIR}")
     if LOG_FILE.exists():
-        check(marker in LOG_FILE.read_text(encoding="utf-8", errors="replace"),
-              "Sent message appears in syslog.log")
+        text = LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        check(marker in text, "Sent message appears in syslog.log")
+        check("minilog-ci" in text, "Sent message carries the --app given to minilog-send.exe")
     check(not (ti.LOG_DIR / "syslog.log").exists() or
           marker not in (ti.LOG_DIR / "syslog.log").read_text(encoding="utf-8", errors="replace"),
           "Nothing was written to the installer's default log directory")

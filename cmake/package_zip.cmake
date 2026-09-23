@@ -2,17 +2,18 @@
 #
 # Run by the `package-zip` target in the top-level CMakeLists.txt as
 #   cmake -DVERSION=... -DSOURCE_DIR=... -DOUTPUT_DIR=... -DSERVER_EXE=...
-#         [-DSERVER_PDB=...] [-DWEB_VIEWER_EXE=...] -P cmake/package_zip.cmake
+#         -DSEND_EXE=... [-DSERVER_PDB=...] [-DWEB_VIEWER_EXE=...]
+#         -P cmake/package_zip.cmake
 #
 # The archive holds one directory, minilog-<version>/, with the same files the
-# installer lays down — the two executables, the default config, the CLI viewer
-# and its config — plus the licence, README and changelog. Nothing in it is
+# installer lays down — the three executables, the default config, the CLI
+# viewer and its config — plus the licence, README and changelog. Nothing in it is
 # generated: an administrator copies the files where they want them and follows
 # the README's "Windows deployment without the installer" section. The list of
 # files is checked by tests/installer/test_zip_install.py, so a change here is a
 # change there and in the README.
 
-foreach(var VERSION SOURCE_DIR OUTPUT_DIR SERVER_EXE)
+foreach(var VERSION SOURCE_DIR OUTPUT_DIR SERVER_EXE SEND_EXE)
     if(NOT DEFINED ${var})
         message(FATAL_ERROR "package_zip.cmake: ${var} is not set")
     endif()
@@ -31,6 +32,7 @@ file(MAKE_DIRECTORY "${_root}")
 
 set(_files
     "${SERVER_EXE}"
+    "${SEND_EXE}"
     "${SOURCE_DIR}/installer/minilog.conf"
     "${SOURCE_DIR}/src/cli-viewer/minilog-cli-viewer.py"
     "${SOURCE_DIR}/LICENSE"
