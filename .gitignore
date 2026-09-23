@@ -34,6 +34,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...but minilog-send's UTF-8 code-page manifest is a source file, not output.
+!src/send/minilog-send.manifest
 
 # Installer logs
 pip-log.txt
