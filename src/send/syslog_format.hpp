@@ -53,7 +53,10 @@ std::string formatRfc3164(const SyslogFields& f);
 // Check the fields against the format's grammar and throw std::runtime_error
 // naming the first problem. The parser on the other end takes the header
 // apart on spaces (and, for RFC 3164, on the tag's brackets and colon), so a
-// value containing one of those would come back as a different field.
+// value containing one of those would come back as a different field. The
+// RFCs' length limits (RFC 5424: HOSTNAME 255, APP-NAME 48, PROCID 128,
+// MSGID 32; RFC 3164: TAG 32) are enforced too, for the sake of collectors
+// stricter than minilog.
 void validateFields(const SyslogFields& f, bool rfc3164);
 
 // A local wall-clock time, broken down and with its offset from UTC, so that a

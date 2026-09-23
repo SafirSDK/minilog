@@ -72,6 +72,15 @@ void requireToken(const char* what, std::string_view value)
     }
 }
 
+void requireAtMost(const char* what, std::string_view value, std::size_t max, const char* rfc)
+{
+    if (value.size() > max)
+    {
+        throw std::runtime_error(std::string(what) + " is " + std::to_string(value.size()) +
+                                 " characters; " + rfc + " allows at most " + std::to_string(max));
+    }
+}
+
 void requireNoneOf(const char* what, std::string_view value, std::string_view forbidden)
 {
     if (value.find_first_of(forbidden) != std::string_view::npos)
@@ -131,10 +140,27 @@ void validateFields(const SyslogFields& f, bool rfc3164)
         {
             throw std::runtime_error("--msgid has no field to go in with --rfc3164");
         }
+        // RFC 3164 §4.1.3: the TAG must not exceed 32 characters. It also says
+        // the TAG is alphanumeric, which no real-world tag (`minilog-send`,
+        // `systemd-logind`) honours, so only the length is enforced.
+        const std::string tag = f.pid ? f.app + "[" + *f.pid + "]" : f.app;
+        requireAtMost("the tag APP[PID]", tag, 32, "RFC 3164");
     }
-    else if (f.msgid)
+    else
     {
-        requireToken("msgid", *f.msgid);
+        // RFC 5424 §6.2: the header fields have fixed maximum lengths. minilog
+        // does not care, but another collector may drop what exceeds them.
+        requireAtMost("hostname", f.hostname, 255, "RFC 5424");
+        requireAtMost("app", f.app, 48, "RFC 5424");
+        if (f.pid)
+        {
+            requireAtMost("pid", *f.pid, 128, "RFC 5424");
+        }
+        if (f.msgid)
+        {
+            requireToken("msgid", *f.msgid);
+            requireAtMost("msgid", *f.msgid, 32, "RFC 5424");
+        }
     }
     if (f.message.empty())
     {

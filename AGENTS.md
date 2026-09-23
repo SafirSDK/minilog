@@ -22,7 +22,9 @@ Direct WinAPI/POSIX for OS logging. Inno Setup 6 for the Windows installer.
 
 All three Windows executables embed `artwork/minilog.ico`. The server uses `src/server/minilog.rc`
 and the sender `src/send/minilog-send.rc` (compiled by MSVC). The Go web-viewer uses a
-pre-generated `src/web-viewer/rsrc_windows_amd64.syso`.
+pre-generated `src/web-viewer/rsrc_windows_amd64.syso`. The sender also links
+`src/send/minilog-send.manifest` (listed as a source; CMake hands it to the linker), which puts the
+process in the UTF-8 code page so that non-ASCII argv arrives as UTF-8.
 If the icon changes, regenerate the `.syso`:
 ```
 cd src/web-viewer
@@ -97,11 +99,15 @@ table anywhere else.
 Command-line UDP sender, C++20 + Boost.Asio + program_options, one executable, no config file, no
 Event Log. `send_options.*` turns argv into `SendOptions` (throws `UsageError` → exit 2);
 `syslog_format.*` turns `SyslogFields` into RFC 5424 or RFC 3164 bytes, validates header fields
-(single printable-ASCII words; `[]:` banned from the RFC 3164 tag; `--msgid` refused with
-`--rfc3164`), formats timestamps from a `LocalTime` so tests can fix the clock, and splits stdin
-into non-empty lines. `main.cpp` is the only file that touches the OS: hostname, pid, clock,
-resolver, socket. Exit 1 is a resolve or send failure; in stdin mode the first bad line stops the
-run. Nothing is truncated — a datagram over 65507 bytes is an error. Tests:
+(single printable-ASCII words within the RFCs' length limits; `[]:` banned from the RFC 3164 tag;
+`--msgid` refused with `--rfc3164`), formats timestamps from a `LocalTime` so tests can fix the
+clock, and splits stdin into non-empty lines. `main.cpp` is the only file that touches the OS:
+hostname, pid, clock, resolver, socket. The header fields are validated once, before the resolver
+runs, so a bad flag is exit 2 in stdin mode as well as with an argv message; an empty argv word
+is a usage error, not a switch to stdin. Exit 1 is a resolve or send failure; in stdin mode the
+first bad line stops the run. stdin is read to EOF before the first send and switched to binary
+mode on Windows (0x1A would otherwise end it). Nothing is truncated — a datagram over 65507 bytes
+is an error. Tests:
 `tests/send/test_send.cpp` (Boost.Test, includes a round trip through `parseSyslog`) and
 `tests/binary/test_send_binary.py` (the built tool against a running server, checking JSONL fields
 and exit codes). Ships in the installer's `tools` directory and in the zip.

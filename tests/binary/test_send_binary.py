@@ -68,15 +68,16 @@ def wait_for_listener(host: str, port: int, timeout: float = 5.0) -> bool:
     return False
 
 
-def first_resolved(name: str) -> str:
+def first_resolved(name: str, port: int) -> str:
     """The address minilog-send will send to for *name*.
 
-    Asio's resolver is getaddrinfo with AI_ADDRCONFIG, and the tool takes the
-    first result; this is the same call, so the test can put the server where
-    the datagram is going to go.  On a dual-stack machine that is ::1 for
-    "localhost", not 127.0.0.1.
+    Asio's ``resolve(host, service)`` is getaddrinfo for a UDP socket with no
+    flags at all (not AI_ADDRCONFIG, which would drop loopback addresses), and
+    the tool takes the first result.  This is the same call, so the test can put
+    the server where the datagram is going to go.  On a dual-stack machine that
+    is ::1 for "localhost", not 127.0.0.1.
     """
-    infos = socket.getaddrinfo(name, None, type=socket.SOCK_DGRAM, flags=socket.AI_ADDRCONFIG)
+    infos = socket.getaddrinfo(name, str(port), type=socket.SOCK_DGRAM, proto=socket.IPPROTO_UDP)
     return infos[0][4][0]
 
 
@@ -110,7 +111,10 @@ def wait_for_records(path: Path, count: int, timeout: float = 10.0) -> list[dict
         if path.exists():
             lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln]
             if len(lines) >= count:
-                return [json.loads(ln) for ln in lines]
+                try:
+                    return [json.loads(ln) for ln in lines]
+                except json.JSONDecodeError:
+                    pass  # caught the writer mid-record; look again
         time.sleep(0.02)
     raise AssertionError(f"{count} record(s) did not arrive in {path} within {timeout}s")
 
@@ -203,6 +207,37 @@ class TestCommandLine(unittest.TestCase):
         r = run_send("--app", "two words", "hello")
         self.assertEqual(r.returncode, EXIT_USAGE)
         self.assertIn("app", r.stderr)
+
+    def test_bad_header_flags_are_usage_errors_in_stdin_mode_too(self):
+        # The same command line must get the same exit code whichever way the
+        # message comes in, and the flag, not "line 1", must be blamed.  Port 1
+        # and an unresolvable host: the check has to come before either matters.
+        for args, needle in (
+            (("--app", "two words"), "app"),
+            (("--hostname", "a b"), "hostname"),
+            (("--rfc3164", "--msgid", "X"), "msgid"),
+            (("--app", "x" * 49), "48"),
+        ):
+            with self.subTest(args=args):
+                r = run_send("--host", "no-such-host.invalid", *args, stdin="hello\n")
+                self.assertEqual(r.returncode, EXIT_USAGE, r.stderr)
+                self.assertIn(needle, r.stderr)
+                self.assertNotIn("line 1", r.stderr)
+                self.assertIn("--help", r.stderr)
+
+    def test_empty_message_word_is_a_usage_error_not_stdin_mode(self):
+        # `minilog-send "$msg"` with $msg unset.  Were it taken as "no words",
+        # it would read stdin: here that is empty, and the error would be about
+        # stdin rather than the argument.
+        r = run_send("--port", "1", "", stdin="not this\n")
+        self.assertEqual(r.returncode, EXIT_USAGE)
+        self.assertIn("message is empty", r.stderr)
+        self.assertNotIn("stdin", r.stderr)
+
+    def test_empty_host_is_a_usage_error(self):
+        r = run_send("--host", "", "hello")
+        self.assertEqual(r.returncode, EXIT_USAGE)
+        self.assertIn("--host", r.stderr)
 
     @unittest.skipIf(
         sys.platform == "win32",
@@ -348,6 +383,26 @@ class TestAgainstServer(unittest.TestCase):
         self.assertEqual(len(recs), 1)
         self.assertEqual(rec["message"], "- ok one")
 
+    def test_stdin_is_bytes_a_ctrl_z_does_not_end_it(self):
+        # In the Windows CRT's text mode 0x1A is end of file; the tool switches
+        # stdin to binary so that a command's output is taken whole.  The JSONL
+        # escapes the byte and json.loads gives it back.
+        with ServerFixture() as srv:
+            r = srv.send(stdin="before\x1aafter\nsecond\n")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            recs = wait_for_records(srv.jsonl, 2)
+        self.assertEqual([rec["message"] for rec in recs], ["- before\x1aafter", "- second"])
+
+    def test_non_ascii_message_arrives_as_utf8(self):
+        # On Windows the manifest puts the process in the UTF-8 code page, so
+        # argv is UTF-8 there as it is on Linux; without it the bytes would be
+        # the legacy code page's and minilog would write U+FFFD.
+        with ServerFixture() as srv:
+            r = srv.send("--app", "unicode", "Grüße", "från", "日本")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            (rec,) = wait_for_records(srv.jsonl, 1)
+        self.assertEqual(rec["message"], "- Grüße från 日本")
+
     def test_message_starting_with_a_dash_after_double_dash(self):
         with ServerFixture() as srv:
             r = srv.send("--", "-v", "--looks-like-a-flag")
@@ -359,7 +414,7 @@ class TestAgainstServer(unittest.TestCase):
         """A name goes to the first address it resolves to, so the server is
         bound there -- ::1 on a dual-stack machine, where a server on 127.0.0.1
         would never see the datagram.  The README says as much."""
-        with ServerFixture(host=first_resolved("localhost")) as srv:
+        with ServerFixture(host=first_resolved("localhost", 514)) as srv:
             r = srv.send("--host", "localhost", "by name")
             self.assertEqual(r.returncode, 0, r.stderr)
             (rec,) = wait_for_records(srv.jsonl, 1)

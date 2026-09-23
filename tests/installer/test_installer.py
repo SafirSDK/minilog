@@ -487,8 +487,9 @@ def test_clean_install(installer: Path) -> None:
         check("minilog-cli-viewer" in result.stdout, "Viewer help output looks correct")
 
     # The sender is an executable in the same PATH directory; --help proves it
-    # runs from where it was put, and a message through it proves the service
-    # it was installed beside is receiving.
+    # runs from where it was put, and a message through it that shows up in
+    # syslog.log proves the service it was installed beside is receiving (exit
+    # 0 alone would not: UDP has no receipt).
     check(SEND_PATH.exists(), f"minilog-send.exe present at {TOOLS_DIR}")
     if SEND_PATH.exists():
         result = subprocess.run(
@@ -500,8 +501,9 @@ def test_clean_install(installer: Path) -> None:
         )
         check(result.returncode == 0, "minilog-send.exe runs successfully (--help)")
         check("Usage: minilog-send" in result.stdout, "minilog-send help output looks correct")
+        marker = f"send-test-{random.randint(100000, 999999)}"
         result = subprocess.run(
-            [str(SEND_PATH), "--app", "installer-test", "installed and sending"],
+            [str(SEND_PATH), "--app", "installer-test", marker],
             capture_output=True,
             text=True,
             check=False,
@@ -509,6 +511,15 @@ def test_clean_install(installer: Path) -> None:
         )
         check(result.returncode == 0,
               f"minilog-send.exe sends to the installed service (stderr: {result.stderr.strip()})")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if LOG_FILE.exists() and marker in LOG_FILE.read_text(encoding="utf-8",
+                                                                   errors="replace"):
+                break
+            time.sleep(0.2)
+        check(LOG_FILE.exists() and marker in LOG_FILE.read_text(encoding="utf-8",
+                                                                  errors="replace"),
+              "Message sent with minilog-send.exe appears in syslog.log")
 
     # Web viewer checks
     check(WEB_VIEWER_EXE.exists(), f"minilog-web-viewer.exe present at {APP_DIR}")

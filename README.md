@@ -747,16 +747,19 @@ some-command 2>&1 | minilog-send -s warning -a some-command
 ```
 
 The words on the command line are joined with single spaces into one message; put `--` before a
-message that starts with a dash. With no words, stdin is read and every non-empty line is sent as
-a message of its own, with the same header fields and a fresh timestamp each — that is what makes
-it usable in a pipeline. Empty lines are skipped.
+message that starts with a dash (an empty word, as from an unset shell variable, is an error rather
+than a switch to stdin). With no words, stdin is read to its end and then every non-empty line is
+sent as a message of its own, with the same header fields and a fresh timestamp each — that is
+what makes it usable after a command in a pipeline. Empty lines are skipped. Because nothing is
+sent until stdin closes, it is not a sink for `tail -f`: the lines would wait for an end that never
+comes.
 
 | Flag | Default | Field |
 |---|---|---|
 | `--host <host>` | `127.0.0.1` | where to send; a name or an IP address |
 | `--port <port>` | `514` | UDP port |
 | `-f`, `--facility <name\|0-23>` | `user` | the names under [Facility names](#facility-names), or a number |
-| `-s`, `--severity <name\|0-7>` | `info` | `emergency`, `alert`, `critical`, `error`, `warning`, `notice`, `info`, `debug`, or a number; `emerg`, `panic`, `crit`, `err`, `warn` are accepted too |
+| `-s`, `--severity <name\|0-7>` | `info` | `emergency`, `alert`, `critical`, `error`, `warning`, `notice`, `info`, `debug`, or a number; `emerg`, `panic`, `crit`, `err`, `warn`, `informational` are accepted too |
 | `-a`, `--app <name>` | `minilog-send` | APP-NAME (RFC 5424) or the tag (RFC 3164) |
 | `--hostname <name>` | this machine's name | HOSTNAME |
 | `--pid <id>` | this process's pid | PROCID |
@@ -770,9 +773,12 @@ listens on IPv4 only, give the address rather than the name. The default format 
 local timestamp carrying its UTC
 offset (`2026-09-23T14:07:31.123456+02:00`), no structured data, and `-` for a field not given.
 Header fields must be single words of printable ASCII, since that is how the receiver takes the
-header apart; the message itself may contain anything, and minilog escapes or replaces what it
-must. A message that would not fit in one UDP datagram (65 507 bytes with its header) is refused,
-not truncated.
+header apart, and no longer than the RFCs allow (RFC 5424: hostname 255, app 48, pid 128, msgid 32
+characters; RFC 3164: the `app[pid]` tag 32) — minilog itself would not mind, but another collector
+may. The message itself may contain anything, and minilog escapes or replaces what it must. A
+message that would not fit in one UDP datagram (65 507 bytes with its header) is refused, not
+truncated. On Windows the executable runs in the UTF-8 code page, so a non-ASCII word on the
+command line is sent as UTF-8, as it is everywhere else.
 
 Exit status is 0 when every datagram left this machine, 1 when the host could not be resolved or
 a send failed (in stdin mode, the line that failed and how many were sent before it are on stderr,

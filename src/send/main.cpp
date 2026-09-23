@@ -35,6 +35,8 @@
 #include <string>
 
 #ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -163,20 +165,27 @@ int main(int argc, char* argv[])
         return kExitSendFailed;
     }
 
-    // The command-line message is checked before anything is resolved or
-    // opened, so that a bad one is a usage error and nothing else.
+    // The header fields and the command-line message are checked before
+    // anything is resolved or opened, so that a bad flag is a usage error and
+    // nothing else — in stdin mode too, where the datagrams are built later.
     std::string single;
-    if (!opts.message.empty())
+    try
     {
-        try
+        if (!opts.message.empty())
         {
             single = buildDatagram(fields, opts.message, opts.rfc3164);
         }
-        catch (const std::exception& e)
+        else
         {
-            std::cerr << "minilog-send: " << e.what() << "\nTry 'minilog-send --help'.\n";
-            return kExitUsage;
+            SyslogFields probe = fields;
+            probe.message      = "x";
+            validateFields(probe, opts.rfc3164);
         }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "minilog-send: " << e.what() << "\nTry 'minilog-send --help'.\n";
+        return kExitUsage;
     }
 
     try
@@ -192,6 +201,12 @@ int main(int argc, char* argv[])
         // stdin mode. The whole input is read first: a message per line means
         // the split has to see line ends, and a pipe delivers them in whatever
         // pieces it likes.
+#ifdef _WIN32
+        // The CRT opens stdin in text mode, where a 0x1A byte is end of file
+        // and everything after it would be dropped without a word. The message
+        // is bytes to this tool; splitLines handles CRLF on its own.
+        _setmode(_fileno(stdin), _O_BINARY);
+#endif
         const std::string input((std::istreambuf_iterator<char>(std::cin)),
                                 std::istreambuf_iterator<char>());
         const auto lines = splitLines(input);

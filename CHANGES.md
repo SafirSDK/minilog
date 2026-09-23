@@ -4,9 +4,11 @@
 
 ### Upgrading from 1.3.0
 
-Eight changes in this release alter existing behaviour rather than add to it. Each is described in
+Nine changes in this release alter existing behaviour rather than add to it. Each is described in
 full further down; this is the list to check a deployment against before upgrading.
 
+- **Facility 15 is written as `clock2` in the JSONL, not `cron`.** `cron` stays the config's name
+  for facility 9, as it always was. A viewer filter on `cron` no longer matches facility 15 records.
 - **`text_file` and `jsonl_file` must be absolute paths.** A relative path is now a startup error.
 - **An unknown config key, or a value that cannot be read, is a startup error.** `max_sise = 100MB`,
   `max_files = abc`, `include_malformed = yes` and `max_files = 10 ; ten generations` all fail the
@@ -40,6 +42,8 @@ full further down; this is the list to check a deployment against before upgradi
   minilog, and because sending one message and watching it arrive is the end-to-end check that
   `--check` deliberately stops short of. Exit 0 means the datagram left the machine — UDP gives no
   receipt, and the help text says so — 1 that it did not, and 2 that the command line was wrong.
+  Header fields are held to the RFCs' lengths, and a datagram over 65 507 bytes is refused, not
+  truncated.
   The installer puts it in `tools` (already on the `PATH`), the zip ships it, and the README has a
   **minilog-send** section.
 

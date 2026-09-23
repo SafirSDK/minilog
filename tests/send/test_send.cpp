@@ -146,6 +146,23 @@ BOOST_AUTO_TEST_CASE(no_words_means_stdin)
     BOOST_TEST(o.message.empty());
 }
 
+BOOST_AUTO_TEST_CASE(an_empty_word_is_not_the_same_as_no_word)
+{
+    // `minilog-send "$msg"` with $msg unset must fail, not sit reading stdin.
+    BOOST_CHECK_THROW(parse({""}), UsageError);
+    BOOST_CHECK_THROW(parse({"", ""}), UsageError);
+    BOOST_CHECK_THROW(parse({"-s", "notice", ""}), UsageError);
+    // A word of spaces is a message, odd as it is.
+    BOOST_TEST(parse({" "}).message == " ");
+}
+
+BOOST_AUTO_TEST_CASE(empty_host_is_a_usage_error)
+{
+    // getaddrinfo would take "" as this machine, and `--host "$UNSET"` would
+    // log to loopback without a word.
+    BOOST_CHECK_THROW(parse({"--host", "", "m"}), UsageError);
+}
+
 BOOST_AUTO_TEST_CASE(double_dash_ends_options)
 {
     const auto o = parse({"--", "-not", "--an-option"});
@@ -246,7 +263,7 @@ BOOST_AUTO_TEST_CASE(usage_text_documents_the_flags_and_the_udp_caveat)
                                "--pid",
                                "--msgid",
                                "--rfc3164",
-                               "stdin",
+                               "stdin is read to its end",
                                "does not mean the message arrived"})
     {
         BOOST_TEST(text.find(needle) != std::string::npos, needle);
@@ -431,6 +448,56 @@ BOOST_AUTO_TEST_CASE(rfc3164_tag_delimiters_are_rejected_in_app_and_pid)
     f.msgid = std::nullopt;
     f.pid   = "1]2";
     BOOST_CHECK_THROW(validateFields(f, true), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(rfc5424_field_length_limits)
+{
+    // RFC 5424 §6.2: HOSTNAME 255, APP-NAME 48, PROCID 128, MSGID 32. One
+    // over is refused, the limit itself is fine.
+    struct Limit
+    {
+        std::string SyslogFields::*field;
+        std::size_t max;
+    };
+    for (const auto& [field, max] :
+         {Limit{&SyslogFields::hostname, 255}, Limit{&SyslogFields::app, 48}})
+    {
+        auto f   = fullFields();
+        f.*field = std::string(max, 'a');
+        BOOST_CHECK_NO_THROW(validateFields(f, false));
+        f.*field = std::string(max + 1, 'a');
+        BOOST_CHECK_THROW(validateFields(f, false), std::runtime_error);
+    }
+    auto f = fullFields();
+    f.pid  = std::string(128, '1');
+    BOOST_CHECK_NO_THROW(validateFields(f, false));
+    f.pid = std::string(129, '1');
+    BOOST_CHECK_THROW(validateFields(f, false), std::runtime_error);
+    f       = fullFields();
+    f.msgid = std::string(32, 'M');
+    BOOST_CHECK_NO_THROW(validateFields(f, false));
+    f.msgid = std::string(33, 'M');
+    BOOST_CHECK_THROW(validateFields(f, false), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(rfc3164_tag_is_at_most_32_characters)
+{
+    // The TAG is APP[PID] as one unit: 26 + "[4242]" is 32 and passes, one
+    // more letter in the app does not. Without a pid the app alone may be 32.
+    auto f  = fullFields();
+    f.msgid = std::nullopt;
+    f.app   = std::string(26, 'a');
+    BOOST_CHECK_NO_THROW(validateFields(f, true));
+    f.app = std::string(27, 'a');
+    BOOST_CHECK_THROW(validateFields(f, true), std::runtime_error);
+    f.pid = std::nullopt;
+    f.app = std::string(32, 'a');
+    BOOST_CHECK_NO_THROW(validateFields(f, true));
+    f.app = std::string(33, 'a');
+    BOOST_CHECK_THROW(validateFields(f, true), std::runtime_error);
+    // The same 33-character app is well within RFC 5424's 48.
+    f.pid = "4242";
+    BOOST_CHECK_NO_THROW(validateFields(f, false));
 }
 
 BOOST_AUTO_TEST_CASE(facility_and_severity_ranges)

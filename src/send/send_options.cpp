@@ -137,8 +137,8 @@ std::string usageText()
            "       <command> | minilog-send [options]\n"
            "\n"
            "Send a syslog message over UDP. The words on the command line are joined\n"
-           "with spaces into one message; with no words, stdin is read and each\n"
-           "non-empty line is sent as its own message.\n"
+           "with spaces into one message; with no words, stdin is read to its end and\n"
+           "then each non-empty line is sent as its own message.\n"
            "\n" +
            visibleOptions() +
            "\n"
@@ -175,6 +175,12 @@ SendOptions parseSendOptions(int argc, const char* const argv[])
     }
 
     opts.host = vm["host"].as<std::string>();
+    if (opts.host.empty())
+    {
+        // getaddrinfo takes an empty node as "this machine", so an unset shell
+        // variable would quietly log to loopback.
+        throw UsageError("--host is empty");
+    }
     opts.port = parsePort(vm["port"].as<std::string>());
     opts.facility =
         nameOrNumber("facility", vm["facility"].as<std::string>(), facilityFromName, 23);
@@ -203,6 +209,13 @@ SendOptions parseSendOptions(int argc, const char* const argv[])
                 opts.message += ' ';
             }
             opts.message += word;
+        }
+        if (opts.message.empty())
+        {
+            // `minilog-send "$msg"` with $msg unset: an empty word was given,
+            // which is not the same as no word, so it must not fall through to
+            // reading stdin.
+            throw UsageError("the message is empty");
         }
     }
     return opts;

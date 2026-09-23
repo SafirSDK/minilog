@@ -134,7 +134,11 @@ add_executable(minilog-send
     src/send/main.cpp
     src/send/send_options.cpp
     src/send/syslog_format.cpp
+    # The .manifest is merged by the linker (CMake passes it as /MANIFESTINPUT)
+    # and switches the process to the UTF-8 code page, so non-ASCII argv
+    # arrives as UTF-8.
     $<$<PLATFORM_ID:Windows>:src/send/minilog-send.rc>
+    $<$<PLATFORM_ID:Windows>:src/send/minilog-send.manifest>
 )
 
 target_include_directories(minilog-send PRIVATE
