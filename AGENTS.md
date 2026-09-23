@@ -146,7 +146,8 @@ of that ordering and because those values are table-driven (see `matchStringFiel
 ### web-viewer (`src/web-viewer/`)
 - Language: Go 1.25; single external dep: `golang.org/x/sys` (Windows service and Event Log
   support only), vendored under `src/web-viewer/vendor/`.
-- Entry point: `main.go`; build with `go build ./src/web-viewer`.
+- Entry point: `main.go`. This directory is its own Go module (`go.mod` lives here, not at the
+  repo root), so every `go` command must run from inside it: `cd src/web-viewer && go build .`.
 - Serves an embedded SPA (`assets/`) over HTTP (default `:9514`).
 - Reads `minilog.conf` to discover all `[output.*]` sections with `jsonl_file`; each becomes a
   named **sink** available in the browser's sink selector. The listen address comes from the
@@ -188,7 +189,7 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   for what would change it. Do not re-raise it as an open memory bound.
 - Filter params on `/lines` and `/search`: `sev` (severity names), `fac` (facility names),
   `inc` (include substrings), `exc` (exclude substrings).
-- Tests: `*_test.go` files in `src/web-viewer/`; run with `go test ./src/web-viewer/`.
+- Tests: `*_test.go` files in `src/web-viewer/`; run with `cd src/web-viewer && go test ./...`.
 
 ## CI flakes to watch — not to chase
 

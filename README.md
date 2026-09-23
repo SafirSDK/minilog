@@ -889,8 +889,11 @@ paging, filtering, and search without a database.
 **Build:**
 
 ```
-go build -o minilog-web-viewer ./src/web-viewer
+cd src/web-viewer
+go build -o minilog-web-viewer .
 ```
+
+`src/web-viewer/` is its own Go module, so the build must run from that directory.
 
 On Windows, cross-compile with `GOOS=windows GOARCH=amd64` or build natively with Go for Windows.
 
