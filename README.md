@@ -56,8 +56,9 @@ Message formats: [RFC 5424](https://www.rfc-editor.org/rfc/rfc5424) and legacy
 as a prefix of the message rather than parsed into separate fields.
 
 When forwarding (`[forwarding]`), minilog acts as a syslog sender. Messages longer than
-`max_message_size` are truncated and marked with `... [TRUNCATED: N bytes]`; RFC 5426 §3.1 permits
-truncated messages, and §3.2 RECOMMENDS that senders keep datagrams below the path MTU.
+`max_message_size` are truncated to that size, the end replaced by `[TRUNCATED: N bytes]` with N the
+original length; RFC 5426 §3.1 permits truncated messages, and §3.2 RECOMMENDS that senders keep
+datagrams below the path MTU.
 
 Multicast and broadcast group reception are not addressed by any of the syslog RFCs and are not
 supported. Transports other than UDP (TCP, TLS/RFC 5425, RELP) are out of scope.
@@ -95,7 +96,7 @@ cmake --preset linux-release
 cmake --build --preset linux-release
 ```
 
-The binary is at `build/linux-release/minilog`.
+The binaries are in `build/linux-release/bin/`.
 
 To run the tests:
 
@@ -117,7 +118,7 @@ cmake --preset windows-release
 cmake --build --preset windows-release
 ```
 
-The binary is at `build\windows-release\Release\minilog.exe`.
+The binaries are in `build\windows-release\bin\`.
 
 To build the installer (requires [Inno Setup](https://jrsoftware.org/isinfo.php)):
 
@@ -142,7 +143,7 @@ A prerelease tag such as `v1.4.0-beta2` puts its suffix into the file names
 Pass `/VERYSILENT` to suppress the wizard and install with defaults:
 
 ```
-minilog-1.0.0-setup.exe /VERYSILENT
+minilog-1.4.0-setup.exe /VERYSILENT
 ```
 
 For further command-line flags (component selection, install directory override, etc.) see the
@@ -430,7 +431,7 @@ Read by `minilog-web-viewer` only; minilog itself ignores the section. See
 | `port` | `514` | Destination UDP port |
 | `facility` | `*` | Facilities to forward |
 | `exclude_facility` | — | Facilities not to forward, taken out of what `facility` accepts; same rules as in `[output.*]` |
-| `max_message_size` | `2048` | Truncate messages longer than this (bytes); appends `... [TRUNCATED: N bytes]`. `0` = no limit; no unit suffix |
+| `max_message_size` | `2048` | Truncate messages longer than this (bytes) to this size, ending in `[TRUNCATED: N bytes]`, N the original length. `0` = no limit; no unit suffix |
 
 The destination is resolved once, when minilog starts, and the address found is used for the
 lifetime of the process — re-resolving per message would put a name lookup on the hot path, and a
@@ -484,7 +485,7 @@ had — that nothing reading the file afterwards could distinguish from a genuin
 the backslash keeps the transform reversible: `\n` in the file is always an escaped newline,
 and a literal backslash-n in the message is always written `\\n`.
 
-**This is not JSON escaping.** The JSONL sink writes ESC as `\\u001B`, TAB as `\t`, and escapes
+**This is not JSON escaping.** The JSONL sink writes ESC as `\u001b`, TAB as `\t`, and escapes
 the double quote; the text sink does none of those. The dialect above is the one the
 [cli-viewer](#cli-viewer) displays, so a line on screen reads the way a line in the file does —
 decode text-sink lines with these rules, not with a JSON string unescaper.
@@ -531,9 +532,12 @@ Build the image:
 docker build -t minilog .
 ```
 
-Run with docker-compose (mounts config from `./conf/minilog.conf`, writes logs to `./logs/`):
+Run with docker-compose (mounts config from `./conf/minilog.conf`, writes logs to `./logs/`). The
+`conf` directory is not in the repository; start from the example, whose log paths already suit
+the container:
 
 ```
+mkdir conf && cp minilog.conf.example conf/minilog.conf
 docker compose up
 ```
 
@@ -747,12 +751,12 @@ some-command 2>&1 | minilog-send -s warning -a some-command
 ```
 
 The words on the command line are joined with single spaces into one message; put `--` before a
-message that starts with a dash (an empty word, as from an unset shell variable, is an error rather
-than a switch to stdin). With no words, stdin is read to its end and then every non-empty line is
-sent as a message of its own, with the same header fields and a fresh timestamp each — that is
-what makes it usable after a command in a pipeline. Empty lines are skipped. Because nothing is
-sent until stdin closes, it is not a sink for `tail -f`: the lines would wait for an end that never
-comes.
+message that starts with a dash (a message made only of empty words, as from an unset shell
+variable, is an error rather than a switch to stdin). With no words, stdin is read to its end and
+then every non-empty line is sent as a message of its own, with the same header fields and a fresh
+timestamp each — that is what makes it usable after a command in a pipeline. Empty lines are
+skipped. Because nothing is sent until stdin closes, it is not a sink for `tail -f`: the lines would
+wait for an end that never comes.
 
 | Flag | Default | Field |
 |---|---|---|
@@ -770,22 +774,23 @@ comes.
 Names are case-insensitive. A `--host` name that resolves to several addresses is sent to the first
 one the resolver returns — on a dual-stack machine `localhost` is usually `::1` — so if minilog
 listens on IPv4 only, give the address rather than the name. The default format is RFC 5424 with a
-local timestamp carrying its UTC
-offset (`2026-09-23T14:07:31.123456+02:00`), no structured data, and `-` for a field not given.
-Header fields must be single words of printable ASCII, since that is how the receiver takes the
-header apart, and no longer than the RFCs allow (RFC 5424: hostname 255, app 48, pid 128, msgid 32
-characters; RFC 3164: the `app[pid]` tag 32) — minilog itself would not mind, but another collector
-may. The message itself may contain anything, and minilog escapes or replaces what it must. A
-message that would not fit in one UDP datagram (65 507 bytes with its header) is refused, not
-truncated. On Windows the executable runs in the UTF-8 code page, so a non-ASCII word on the
-command line is sent as UTF-8, as it is everywhere else.
+local timestamp carrying its UTC offset (`2026-09-23T14:07:31.123456+02:00`), no structured data,
+and `-` for a field not given. Header fields must be single words of printable ASCII, since that is
+how the receiver takes the header apart, and no longer than the RFCs allow (RFC 5424: hostname 255,
+app 48, pid 128, msgid 32 characters; RFC 3164: the `app[pid]` tag 32, and no `[`, `]` or `:` in app
+or pid) — minilog itself would not mind, but another collector may. The message itself may contain
+anything, and minilog escapes or replaces what it must. A message that would not fit in one UDP
+datagram (65 507 bytes with its header) is refused, not truncated. On Windows the executable runs in
+the UTF-8 code page, so a non-ASCII word on the command line is sent as UTF-8, as it is everywhere
+else.
 
-Exit status is 0 when every datagram left this machine, 1 when the host could not be resolved or
-a send failed (in stdin mode, the line that failed and how many were sent before it are on stderr,
-and nothing after it is sent), and 2 for a bad command line. Nothing is written to stdout on
-success. **UDP gives no delivery receipt**: exit 0 means the message was sent, not that anything
-received it. It does not read `minilog.conf` — the destination is what the flags say, and it
-never writes to the Windows Event Log.
+Exit status is 0 when every datagram left this machine, 1 when the host could not be resolved, a
+send failed or a stdin line was too long for a datagram (the line that failed and how many were sent
+before it are on stderr, and nothing after it is sent), and 2 for a bad command line, which includes
+a command-line message too long for a datagram and a stdin with no non-empty line. Nothing is
+written to stdout on success. **UDP gives no delivery receipt**: exit 0 means the message was sent,
+not that anything received it. It does not read `minilog.conf` — the destination is what the flags
+say, and it never writes to the Windows Event Log.
 
 ### Without minilog-send
 
@@ -820,8 +825,9 @@ surviving log rotation transparently.
 2. `/etc/minilog/minilog.conf` (Linux) or `%ProgramData%\minilog\minilog.conf` (Windows)
 3. Same directory as the script
 
-The viewer also looks for `minilog-cli-viewer.conf` next to `minilog.conf` (or `./`) for display
-and filter settings. See [`src/cli-viewer/minilog-cli-viewer.conf.example`](src/cli-viewer/minilog-cli-viewer.conf.example).
+The viewer also looks for `minilog-cli-viewer.conf` in `./`, then next to `minilog.conf`, for
+display and filter settings. See
+[`src/cli-viewer/minilog-cli-viewer.conf.example`](src/cli-viewer/minilog-cli-viewer.conf.example).
 
 **The current directory is searched first on purpose.** A Windows shortcut's "Start in" field, or
 a `cd` in a launcher script, then decides which configuration the viewer picks up — so several

@@ -179,7 +179,7 @@ std::string sanitizeUtf8(std::string_view s)
 // follows it.
 //
 // This is not JSON's escaping and does not try to be — boost::json writes ESC
-// as \u001B, TAB as \t and quotes the double quote, none of which this does.
+// as \u001b, TAB as \t and quotes the double quote, none of which this does.
 // It is the dialect the cli-viewer displays, so a line on screen reads the way
 // a line in the file does.
 std::string escapeControlChars(std::string_view s)

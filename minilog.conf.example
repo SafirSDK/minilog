@@ -1,5 +1,6 @@
 ; minilog configuration file
-; All available options are listed here with their defaults.
+; All available options are listed here, with their defaults unless a comment
+; says otherwise.
 ; Restart minilog to apply any changes.
 ;
 ; Every key below is one minilog knows. A key it does not recognise is a config
@@ -59,12 +60,14 @@ max_queue_bytes = 16MB
 ; ─────────────────────────────────────────────────────────────────────────────
 [output.main]
 
-; Raw text log: each line is the verbatim UDP payload followed by a newline.
-; No decoding or reformatting is applied.
+; Text log: each line is the UDP payload followed by a newline, with control
+; characters escaped (\n, \r, \xNN, \uNNNN) and a backslash doubled, so one
+; datagram is always one line. The README's text-file section has the rules.
 text_file = /var/log/minilog/syslog.log
 
 ; JSONL log: one UTF-8 JSON object per line with parsed fields.
-; Fields: rcv, src, proto, facility, severity, hostname, app, pid, msgid, message
+; Fields: rcv, src, proto, facility, severity, hostname, app, pid, msgid,
+; msg_time, message
 jsonl_file = /var/log/minilog/syslog.jsonl
 
 ; Rotate both files when either exceeds this size.
@@ -72,7 +75,7 @@ jsonl_file = /var/log/minilog/syslog.jsonl
 ; Rotated filenames: syslog.1.log, syslog.2.log, ...
 ; A value too large for 64 bits is a config error — it used to wrap around to 0,
 ; which means "never rotate", so asking for an enormous threshold quietly asked
-; for none at all.
+; for none at all. The default is 0; 100MB is an example.
 max_size = 100MB
 
 ; Number of rotated files to keep per output section, 0 to 1000.
@@ -168,7 +171,8 @@ port = 514
 ; exclude_facility works here too.
 facility = *
 
-; Messages longer than this many bytes are truncated before forwarding.
-; The string "... [TRUNCATED: N bytes]" is appended to the shortened message.
+; Messages longer than this many bytes are truncated before forwarding: the
+; end of the message is replaced by "[TRUNCATED: N bytes]", N being the
+; original length, so the datagram is still at most this size.
 ; Set to 0 for no limit.
 max_message_size = 2048

@@ -1,19 +1,28 @@
 # Changelog
 
-## v1.4.0 — 2026-09-22
+## v1.4.0 — 2026-09-23
 
 ### Upgrading from 1.3.0
 
-Nine changes in this release alter existing behaviour rather than add to it. Each is described in
-full further down; this is the list to check a deployment against before upgrading.
+Thirteen changes in this release alter existing behaviour rather than add to it. Each is described
+in full further down; this is the list to check a deployment against before upgrading.
 
 - **Facility 15 is written as `clock2` in the JSONL, not `cron`.** `cron` stays the config's name
   for facility 9, as it always was. A viewer filter on `cron` no longer matches facility 15 records.
 - **`text_file` and `jsonl_file` must be absolute paths.** A relative path is now a startup error.
+- **Output files are opened at startup.** A missing or unwritable log directory is a startup
+  failure naming the path, where 1.3.0 started and lost the sink on the first message.
 - **An unknown config key, or a value that cannot be read, is a startup error.** `max_sise = 100MB`,
   `max_files = abc`, `include_malformed = yes` and `max_files = 10 ; ten generations` all fail the
   start — a value runs to the end of its line, so there are no inline comments. Booleans accept
   exactly `true`, `false`, `1` and `0`.
+- **Some values that used to be accepted are out of range.** `workers` is capped at 256 and
+  `max_files` at 1000; one path used for two files, in one section or across two, is rejected;
+  and a `host` with a port appended (`10.0.0.5:514`) is an error rather than a silently dropped
+  port.
+- **Datagrams can be dropped under a flood.** `[server] max_queue_bytes` (default 16 MB) bounds
+  what is received but not yet written; beyond it datagrams are dropped, counted and reported,
+  where 1.3.0 grew without limit.
 - **An RFC 3164 message without a `tag:` now has `app` set to `null`** instead of its first word,
   and a colon reached only after a space is message text, not a tag terminator. Records written
   before and after the upgrade differ in `app` and `message` for such messages.
@@ -25,6 +34,7 @@ full further down; this is the list to check a deployment against before upgradi
   read the port from there. A deployment that passed `--addr` has to move the value into the config.
 - **`/search` no longer returns record text**, only an offset per match; the record is fetched
   through `/lines`. The bundled UI is updated; anything else consuming the endpoint has to be.
+  `/lines` `count` and `/search` `limit` are also capped at 5000.
 - **Datagrams arriving while a `[forwarding] host` *name* is still being resolved are not
   forwarded.** The lookup no longer holds up the UDP bind, so the first few messages after a start
   can miss forwarding — counted, and reported when the lookup finishes. An IP literal is unaffected.
@@ -35,35 +45,36 @@ full further down; this is the list to check a deployment against before upgradi
 
 - **`minilog-send`, a command-line sender (#46).** A small executable that builds a syslog datagram
   from its arguments and sends it over UDP: `minilog-send -s error -a deploy release failed`. With
-  no message it reads stdin and sends one datagram per line, so a command's output can be piped
-  in. Flags set the host and port, facility and severity (by the same names the JSONL uses, or by
-  number), app, hostname, pid and msgid; `--rfc3164` switches to the legacy format. It exists
-  because Windows has no `logger(1)`, so a script there had no simple way to put a line into
-  minilog, and because sending one message and watching it arrive is the end-to-end check that
-  `--check` deliberately stops short of. Exit 0 means the datagram left the machine — UDP gives no
-  receipt, and the help text says so — 1 that it did not, and 2 that the command line was wrong.
-  Header fields are held to the RFCs' lengths, and a datagram over 65 507 bytes is refused, not
-  truncated.
-  The installer puts it in `tools` (already on the `PATH`), the zip ships it, and the README has a
-  **minilog-send** section.
+  no message it reads stdin to its end and then sends one datagram per non-empty line, so a
+  command's output can be piped in — though not a stream that never ends, such as `tail -f`. Flags
+  set the host and port, facility and severity (by the same names the JSONL uses, or by number),
+  app, hostname, pid and msgid; `--rfc3164` switches to the legacy format. It exists because Windows
+  has no `logger(1)`, so a script there had no simple way to put a line into minilog, and because
+  sending one message and watching it arrive is the end-to-end check that `--check` deliberately
+  stops short of. Exit 0 means the datagram left the machine — UDP gives no receipt, and the help
+  text says so — 1 that it did not, and 2 that the command line was wrong. Header fields are held to
+  the RFCs' lengths, and a datagram over 65 507 bytes is refused, not truncated. The installer puts
+  it in `tools` (already on the `PATH`), the zip ships it, and the README has a **minilog-send**
+  section.
 
 - **`exclude_facility` says "all but these" (#44).** A new key in `[output.*]` and `[forwarding]`
   takes facility names out of whatever `facility` accepts, so `facility = *` with
   `exclude_facility = local3` is a sink for everything except local3. Until now that took listing
   the other 23 names — and that list, being a list rather than the wildcard, also silently dropped
   every datagram that has no facility because it parsed as neither RFC. An exclusion cannot name
-  what such a datagram lacks, so those still arrive and `include_malformed` alone decides their
-  fate. `exclude_facility = *` is a config error, since it describes a sink that can never match;
+  what such a datagram lacks, so those still arrive: in an output section `include_malformed` alone
+  decides their fate, and `[forwarding]` forwards them as it did with `facility = *`.
+  `exclude_facility = *` is a config error, since it describes a sink that can never match;
   excluding a facility that `facility` does not accept anyway is accepted and changes nothing.
 
 - **A zip archive for installing without the installer.** Every release now ships
-  `minilog-<version>-win64.zip` beside `minilog-<version>-setup.exe`. It holds the two executables,
-  the server's debug symbols, the default config, the CLI viewer and its config, and the
-  documentation — the same files the installer lays down, for a deployment that places them itself
-  and keeps its config and logs wherever it keeps such things. Much of this release exists to make
-  that work: `--install` recording the real executable path and an absolute config path, `--check`
-  for validating the result before registering anything, `--stop` for upgrading in place. The
-  README has a **Windows deployment without the installer** section walking through it, and CI
+  `minilog-<version>-win64.zip` beside `minilog-<version>-setup.exe`. It holds the three
+  executables, the server's debug symbols, the default config, the CLI viewer and its config, and
+  the documentation — the same files the installer lays down, for a deployment that places them
+  itself and keeps its config and logs wherever it keeps such things. Much of this release exists to
+  make that work: `--install` recording the real executable path and an absolute config path,
+  `--check` for validating the result before registering anything, `--stop` for upgrading in place.
+  The README has a **Windows deployment without the installer** section walking through it, and CI
   exercises the archive the same way — a real install from it, on paths the installer never uses.
   `cmake --build --preset windows-release --target package-zip` builds it. A prerelease build
   carries its tag's suffix in both file names — `minilog-1.4.0-beta2-setup.exe` — and in the web
@@ -183,7 +194,9 @@ full further down; this is the list to check a deployment against before upgradi
   It reports "installed" or "updated" and exits 0 either way; it never starts or stops anything.
   `--uninstall` against an absent service exits 0. The installer now stops the services with
   `--stop` before copying files instead of deregistering them, so a hand-tuned registration
-  survives an upgrade.
+  survives an upgrade, and a `--stop` that fails stops the install rather than letting the copy hit
+  a locked executable. An upgrade that deselects the web viewer deregisters its service instead of
+  leaving it registered against a file that is no longer maintained.
 
 - **`--stop` on both executables.** `minilog --stop` and `minilog-web-viewer --stop` stop the
   service and wait until its process has genuinely exited, with `--timeout SECONDS` (default 30)
@@ -213,10 +226,10 @@ full further down; this is the list to check a deployment against before upgradi
   filter on `cron` no longer matches them and should say `clock2`.
 
 - **The shipped `minilog.conf` explains itself (#45).** The default config the installer and the zip
-  lay down carried one comment, on `[web_viewer]`. Every key now has a line or two saying what it
-  is and what the accepted values are, and the header points at the README's Configuration section
-  for the full account. The values are unchanged, and an existing installed config is not touched —
-  the installer only writes the file when there is none.
+  lay down carried no comments. Every key now has a line or two saying what it is and what the
+  accepted values are, and the header points at the README's Configuration section for the full
+  account. The values are unchanged, and an existing installed config is not touched — the installer
+  only writes the file when there is none.
 
 - **A sink closed by a filesystem error now reopens itself.** Isolating a storage fault to the one
   sink that hit it left "restart minilog to get that sink back" as the only way out, and the
@@ -300,15 +313,14 @@ full further down; this is the list to check a deployment against before upgradi
   absolute paths; a hand-written config with relative ones has to be corrected.
 
 - **An RFC 3164 message without a tag now has `app` unset instead of its first word.** This goes
-  with the parsing fix above. When no `tag:` is found the first word used to be taken as the app
-  name and removed from the message, so `<14>… myhost Connection reset by peer` was stored as
+  with the parsing fix under Fixed. When no `tag:` is found the first word used to be taken as the
+  app name and removed from the message, so `<14>… myhost Connection reset by peer` was stored as
   `app` = `Connection`, `message` = `reset by peer` — with no colon anywhere in it. Now `app` is
   `null` and the message is whole. Both changes alter how existing inputs parse: stored JSONL
-  written before and after this release will differ in `app` and `message` for any message that
-  was not properly tagged, and the web viewer's app filter and the CLI viewer's patterns will see
-  a smaller, bounded set of app values. One case is knowingly left alone — a message opening with
-  a bare clock time (`10:30:45 disk is full`) has a colon before any space and is still read as a
-  tag.
+  written before and after this release will differ in `app` and `message` for any message that was
+  not properly tagged, and the web viewer's app filter and the CLI viewer's patterns will see a
+  smaller, bounded set of app values. One case is knowingly left alone — a message opening with a
+  bare clock time (`10:30:45 disk is full`) has a colon before any space and is still read as a tag.
 
 - **Output files are opened at startup, not on the first message.** An unwritable or missing log
   directory is now a startup failure naming the path. Previously minilog started, reported itself
@@ -481,7 +493,7 @@ full further down; this is the list to check a deployment against before upgradi
   on NTFS and ext4 alike. Values now run to the end of the line in the viewer as well; `;` and `#`
   still start a comment at the beginning of a line. One consequence worth knowing: a trailing
   `max_files = 10 ; ten generations` is not a number to either end, and both now reject it — see
-  the entry below.
+  the unreadable-value entry under Changed.
 
 - **The web viewer no longer holds half-open connections open forever.** `http.Server` was built
   with only `Addr` and `Handler`, and Go applies no timeouts by default, so a client that
@@ -624,11 +636,11 @@ full further down; this is the list to check a deployment against before upgradi
   host` nor `[forwarding] host` was validated, and both are passed to an address parser that does
   not resolve names. A hostname or typo in `[forwarding] host` aborted the process with `SIGABRT`;
   the same in `[server] host` exited non-zero with nothing on stderr and nothing in the Event Log.
-  `loadConfig` now rejects both, naming the key and the value, and startup failures from the
-  server socket are reported by the caller so they can no longer be swallowed.
-  `minilog.conf.example` said "hostname or IP address" and now says IP address. An address with a
-  port appended (`10.0.0.5:514`) is rejected too — the Windows address parser accepted it and
-  silently discarded the port.
+  `loadConfig` now rejects an invalid value in either, naming the key and the value, and startup
+  failures from the server socket are reported by the caller so they can no longer be swallowed.
+  A hostname in `[forwarding] host` is now resolved rather than rejected — see the entry under
+  New. An address with a port appended (`10.0.0.5:514`) is rejected too — the Windows address
+  parser accepted it and silently discarded the port.
 
 - **A filesystem error no longer aborts the whole server.** Six `std::filesystem` calls on the
   write and rotation paths used the throwing overloads. An exception from any of them escaped the
@@ -636,10 +648,10 @@ full further down; this is the list to check a deployment against before upgradi
   `std::terminate` — an unreadable log directory took down every sink, including those whose own
   storage was healthy. All filesystem calls on that path now use the `error_code` overloads, a
   failure takes only the affected sink out of service, and handlers plus each `run()` thread have
-  a catch-all so that no exception can terminate the process. A sink closed this way stays closed;
-  restart minilog once the storage problem is fixed. A caught handler exception is reported as a
-  failed run rather than a clean stop — surviving is not the same as being healthy, and on Windows
-  it is what lets the service's recovery actions fire.
+  a catch-all so that no exception can terminate the process. A sink closed this way reopens
+  itself once the storage problem is fixed (see the entry under Changed). A caught handler
+  exception is reported as a failed run rather than a clean stop — surviving is not the same as
+  being healthy, and on Windows it is what lets the service's recovery actions fire.
 
 - **Windows services now report failure to the SCM.** Both the server and the web viewer used to
   report every stop as a clean one with exit code 0, so a service that died on an invalid config

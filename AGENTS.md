@@ -10,7 +10,7 @@ Windows service + Inno Setup installer). Intended primarily for Windows deployme
 commands (git, cmake, ctest, go, python, etc.) must be run via `wsl bash -c "..."` rather than
 directly in PowerShell/CMD.
 
-- Branch: `master`
+- Branches: work lands on `develop`; `master` only receives release fast-forwards
 - Build: CMake + Boost (system package on Linux, Conan on Windows); Boost is the only external dep
 - Test framework: Boost.Test + Python binary tests (`tests/binary/test_binary.py`)
 - Build presets: `linux-debug`, `linux-release`, `linux-docker`, `linux-coverage`, `linux-asan`,
@@ -35,8 +35,8 @@ Install `go-winres` with `go install github.com/tc-hib/go-winres@latest` if need
 ## Conventions
 Formatting enforced by `.clang-format` (Allman braces, 100-col limit, include grouping — read it).
 The clang-format and header checks cover `src/server`, `src/send`, `tests/server` and `tests/send`;
-a new C++ directory has to be added to the CI `find` in `build.yml`, `tests/check_headers.py`, and
-the `clang-format-check` target.
+a new C++ directory has to be added to the CI `find` in `build.yml` and to `tests/check_headers.py`.
+The local `clang-format-check` target already scans all of `src/` and `tests/` (and only warns).
 - Naming: `camelCase` functions/vars/params; `m_camelCase` private members; `PascalCase` types;
   plain `camelCase` for public struct fields (e.g. `appName`, `maxSize`)
 - File headers: MIT licence block at the top of every `.cpp`/`.hpp`; interior lines use ` *`
@@ -45,11 +45,15 @@ the `clang-format-check` target.
 ## Architecture
 
 ### Threading model
-N threads call `io_context::run()`. No hand-written queues — one `asio::strand` per output sink
-serialises file I/O; one strand for the forwarder serialises UDP sends.
+N threads call `io_context::run()` (through `runIoContext()` in `run_loop.hpp`, which re-enters
+`run()` after a handler throws). No hand-written queues — the socket has its own strand, one
+`asio::strand` per output sink serialises file I/O, and one strand for the forwarder serialises UDP
+sends. `AdmissionControl` (`admission.hpp`, `max_queue_bytes`) bounds the bytes posted but not yet
+processed: a datagram over budget is dropped and counted, never queued. After a receive error the
+re-arm is delayed by `ReceiveBackoff` (`receive_backoff.hpp`) on `m_rearmTimer`.
 
 ```
-receive handler  →  copy buffer, re-arm immediately  →  post processing task
+receive handler  →  copy buffer, admit or drop, re-arm  →  post processing task
 processing task  →  parse  →  post write to each matching sink strand
                           →  post to forwarder strand
 ```
@@ -101,13 +105,14 @@ Event Log. `send_options.*` turns argv into `SendOptions` (throws `UsageError` �
 `syslog_format.*` turns `SyslogFields` into RFC 5424 or RFC 3164 bytes, validates header fields
 (single printable-ASCII words within the RFCs' length limits; `[]:` banned from the RFC 3164 tag;
 `--msgid` refused with `--rfc3164`), formats timestamps from a `LocalTime` so tests can fix the
-clock, and splits stdin into non-empty lines. `main.cpp` is the only file that touches the OS:
-hostname, pid, clock, resolver, socket. The header fields are validated once, before the resolver
-runs, so a bad flag is exit 2 in stdin mode as well as with an argv message; an empty argv word
-is a usage error, not a switch to stdin. Exit 1 is a resolve or send failure; in stdin mode the
-first bad line stops the run. stdin is read to EOF before the first send and switched to binary
-mode on Windows (0x1A would otherwise end it). Nothing is truncated — a datagram over 65507 bytes
-is an error. Tests:
+clock, and splits stdin into non-empty lines. `main.cpp` touches the OS — hostname, pid,
+resolver, socket — and `localNow()` in `syslog_format.cpp` reads the clock; nothing else does.
+The header fields are validated once, before the resolver runs, so a bad flag is exit 2 in stdin
+mode as well as with an argv message; a message made entirely of empty argv words is a usage
+error, not a switch to stdin (an empty word beside a non-empty one is simply joined in). Exit 1
+is a resolve or send failure; in stdin mode the first bad line stops the run. stdin is read to
+EOF before the first send and switched to binary mode on Windows (0x1A would otherwise end it).
+Nothing is truncated — a datagram over 65507 bytes is an error. Tests:
 `tests/send/test_send.cpp` (Boost.Test, includes a round trip through `parseSyslog`) and
 `tests/binary/test_send_binary.py` (the built tool against a running server, checking JSONL fields
 and exit codes). Ships in the installer's `tools` directory and in the zip.
@@ -131,7 +136,7 @@ of that ordering and because those values are table-driven (see `matchStringFiel
 - Behaviour: `tail -f` style — shows last N lines on startup (default 10), then follows new lines.
   Detects log rotation via inode change (POSIX) or file-size regression (Windows) and re-opens.
 - Config discovery: looks for `minilog.conf` in `./`, platform default dir, then script dir;
-  looks for `minilog-cli-viewer.conf` next to `minilog.conf` or `./`. `--config` and
+  looks for `minilog-cli-viewer.conf` in `./`, then next to `minilog.conf`. `--config` and
   `--viewer-config` override either search and error if the path is missing (no fall-back).
 - Key classes/functions: `ViewerConfig`, `tail_file()`, `format_message()`, `should_display()`,
   `escape_control_chars()` (C0/DEL escaping applied to every displayed field),
@@ -151,9 +156,10 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   - `config.go` — INI parser, `Sink` / `Config` structs, `loadConfig()`, `listenAddr()`
   - `reader.go` — `FileChain` (logical byte-offset abstraction over rotation chain),
     `ReadForward()`, `ReadBackward()`, `Search()`, `Filter` struct
-  - `handlers.go` — HTTP routes: `GET /sinks`, `GET /lines`, `GET /search`
-  - `service_windows.go` — Windows NT service install/uninstall/run via `golang.org/x/sys/windows/svc`,
-    including recovery actions (two restarts, 5 s apart, 300 s reset period)
+  - `handlers.go` — HTTP routes: `GET /sinks`, `GET /lines`, `GET /search`, `GET /version`
+  - `service_windows.go` — Windows NT service install/stop/uninstall/run via
+    `golang.org/x/sys/windows/svc`, including recovery actions (two restarts, 5 s apart, 300 s
+    reset period)
   - `service_other.go` — no-op stubs for non-Windows
   - `os_log_windows.go` / `os_log_other.go` — `osLogError`/`osLogInfo`; on Windows these also write
     to the `minilog-web-viewer` Event Log source registered by `--install`
@@ -193,11 +199,17 @@ an entry once its cause is found and fixed, or once it has gone a few releases w
 - **`test_binary.py::test_inflight_messages_complete_before_exit`, Windows.** Failed once as
   `17 != 20` (run 35359400495, 2026-09-18, on the #35 commit, which touches nothing but the
   installer and its test). Three of twenty datagrams sent in a tight loop never reached the log
-  before the shutdown signal; a re-run passed. This is the territory of #10 (admission control —
-  what happens to datagrams that arrive faster than they are processed), so if it recurs, record it
-  here and treat it as evidence about that path rather than as a test to loosen. The test allows
-  0.3 s between the last send and the signal, which is the first thing to look at if the admission
-  path turns out not to explain it.
+  before the shutdown signal; a re-run passed. It predates `AdmissionControl` (#10, landed
+  2026-09-19), so nothing was dropped by admission, and twenty small datagrams are far below the
+  16 MB budget in any case. The first suspect is the 0.3 s the test allows between the last send
+  and the signal; if it recurs, record it here and look there rather than loosening the count.
+- **Windows `test_binary.py` bind-probe race (#48).** Failed once in
+  `test_unresolvable_forwarding_host_starts_and_reports` (run 35861209546, 2026-09-23, commit
+  484fbca, which touches neither the test nor the server): the server logged WSAEADDRINUSE on its
+  bind and exited, and the test found an empty log. `wait_for_port()` detects the server by trying
+  to bind the port itself, and the server binds with `SO_EXCLUSIVEADDRUSE`, so a probe holding the
+  port at the wrong instant makes the *server* fail; a fixed 0.3 s sleep is the only guard.
+  `test_send_binary.py` copies the pattern. #48 lists the fixes to pick from if it recurs.
 
 ## Release checklist
 
@@ -212,10 +224,10 @@ Before tagging a release, verify all of the following:
    changes documented under `### New`, `### Changed`, `### Fixed` as appropriate.
 
 3. **CI green** — all GitHub Actions jobs pass on the `develop` branch (or the release branch):
-   - clang-format, header check, ruff lint
+   - clang-format, header check, ruff lint, gofmt
    - Linux GCC, Clang ASan+UBSan, Clang TSan
    - Linux coverage (C++ and Go)
-   - Windows MSVC (build, tests, installer)
+   - Windows MSVC (build, tests, installer, zip)
    - Docker build
    - libFuzzer
 
