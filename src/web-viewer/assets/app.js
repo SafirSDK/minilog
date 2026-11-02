@@ -36,6 +36,7 @@ let topOffset       = 0;
 let tailOffset      = 0;   // logical offset the live tail has read up to
 let chainEnd        = 0;   // tail_offset of the last response, for rotation detection
 let atTail          = true;
+let lastScrollTop   = 0;   // to tell which way the last scroll went
 let pollTimer       = 0;
 let loadingUp       = false;
 let polling         = false;
@@ -250,7 +251,12 @@ async function pollTail() {
   // a chainEnd a later response already advanced. A full batch takes longer to
   // fetch, parse and render than a handful of lines, so draining a burst — what
   // the next_offset cursor exists for — is exactly when polls start to overlap.
-  if (polling) return;
+  //
+  // Away from the tail nothing is fetched: new rows would push the oldest ones
+  // out of the MAX_ROWS window, and under heavy traffic that removes the rows
+  // the user scrolled up to read within seconds. The cursor stays where it is,
+  // so returning to the bottom resumes without a gap.
+  if (polling || !atTail) return;
   polling = true;
   try {
     await pollTailOnce();
@@ -274,6 +280,10 @@ async function pollTailOnce() {
     return;
   }
   setStatus('connected');
+
+  // The user left the tail while this request was in flight. Dropping the
+  // response leaves the cursor untouched, so these lines are fetched again.
+  if (!atTail) return;
 
   // Detect rotation: the end of the chain regressed since the last response.
   // Compared against chainEnd rather than tailOffset, which lags behind the end
@@ -836,6 +846,10 @@ function bindControls() {
       closeAllDropdowns();
       if (pendingSearch) clearSearch();
     }
+    if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) &&
+        !e.target.closest('input, select, textarea')) {
+      leaveTailUpward();
+    }
   });
 
   // Search input
@@ -863,15 +877,42 @@ function bindControls() {
   // Jump to tail button
   jumpTailBtn.addEventListener('click', () => loadTail());
 
-  // Scroll tracking — detect when user is at the bottom
+  // Leaving the tail is decided by what the user does, not by where the view
+  // ends up. Each poll snaps the view back to the bottom while it is within 80px
+  // of it, so a small wheel step, or a scrollbar thumb that has only moved a
+  // pixel or two, never got far enough before the next poll to escape (#49).
+  mainEl.addEventListener('wheel', e => { if (e.deltaY < 0) leaveTailUpward(); },
+                          { passive: true });
+  mainEl.addEventListener('touchmove', () => leaveTailUpward(), { passive: true });
+  mainEl.addEventListener('pointerdown', e => {
+    // Only a press on the scrollbar; a click on a row expands it instead.
+    const r = mainEl.getBoundingClientRect();
+    if (e.clientX >= r.left + mainEl.clientLeft + mainEl.clientWidth) leaveTailUpward();
+  });
+
+  // Scroll tracking — rejoin the tail only by scrolling down to the bottom, so
+  // a small step up that is still within reach of the bottom does not count.
   mainEl.addEventListener('scroll', () => {
-    if (isNearBottom()) {
+    const movedDown = mainEl.scrollTop > lastScrollTop;
+    lastScrollTop = mainEl.scrollTop;
+    if (!isNearBottom()) {
+      leaveTail();
+    } else if (movedDown) {
       atTail = true;
       if (!pendingSearch) hideOverlays();
-    } else {
-      if (!pendingSearch) showJumpTail();
     }
   });
+}
+
+function leaveTail() {
+  atTail = false;
+  showJumpTail();
+}
+
+// For user input that scrolls up: there is nothing to leave for while the view
+// is already at the top, and the way back — scrolling down — would not exist.
+function leaveTailUpward() {
+  if (mainEl.scrollTop > 0) leaveTail();
 }
 
 function clearSearch() {
@@ -927,6 +968,10 @@ function clearDOM() {
 
 function scrollToBottom() {
   mainEl.scrollTop = mainEl.scrollHeight;
+  // The scroll event for this arrives in the next frame, after any wheel input
+  // already queued. Seen as a move down to the bottom, it would rejoin the tail
+  // the user just left; recorded here, it is no move at all.
+  lastScrollTop = mainEl.scrollTop;
 }
 
 function isNearBottom() {
