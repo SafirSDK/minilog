@@ -354,8 +354,9 @@ editor — makes renaming it fail. minilog retries such a rename for up to 750 m
 typical scan without any report. If it still fails, the sink keeps writing to its current files,
 past `max_size`, and tries the rotation again every 30 seconds; the failure is reported once, then
 at most once a minute while it lasts, and once when a rotation succeeds again. Nothing is dropped.
-A rotation that stopped part way — the text file rotated and the JSONL file not, say — leaves the
-two a generation apart until the next attempt catches up; generations are never reordered.
+A rotation that stopped part way — the text file rotated and the JSONL file not, say — is finished
+by the next attempt, which rotates only what is left; generations are never reordered, and none is
+deleted earlier than it would have been.
 
 **An unrecognised key is a config error, and so is a value that cannot be read.** minilog rejects
 a key it does not know in `[server]`, `[output.*]`, `[forwarding]` or `[web_viewer]`, naming the
@@ -404,7 +405,7 @@ a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\
 | `text_file` | — | Absolute path. Raw UDP payload bytes + `\n`, one line per message ([control characters escaped](#text-file)) |
 | `jsonl_file` | — | Absolute path. One JSON object per line (see [JSONL format](#jsonl-format)) |
 | `max_size` | `0` (no rotation) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB`. `0` disables rotation; a value that overflows 64 bits is a config error rather than silently becoming `0` |
-| `max_files` | `10` | Rotated generations to keep, 0–1000. `0` = keep them all, up to that limit. Each generation costs a filesystem check on every rotation and, in the web viewer, on every request |
+| `max_files` | `10` | Rotated generations to keep, 0–1000. `0` = keep them all, up to that limit |
 | `facility` | `*` | Comma-separated facility names to accept. `*` = all |
 | `exclude_facility` | — | Comma-separated facility names to leave out of whatever `facility` accepts. `facility = *` with `exclude_facility = local3` is "everything except local3". `*` is not allowed here |
 | `include_malformed` | `true` | Write unrecognised (UNKNOWN) datagrams. `true`, `false`, `1` or `0` |

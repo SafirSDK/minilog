@@ -38,6 +38,7 @@ let chainEnd        = 0;   // tail_offset of the last response, for rotation det
 let atTail          = true;
 let lastScrollTop   = 0;   // to tell which way the last scroll went
 let tailResumable   = true; // the rows on screen end where the cursor is
+let chainMoved      = false; // a rotation since the rows on screen were read
 let pollTimer       = 0;
 let loadingUp       = false;
 let polling         = false;
@@ -209,6 +210,7 @@ async function loadTail() {
   clearDOM();
   setAtTail(true);
   tailResumable = true;
+  chainMoved    = false;
   hideOverlays();
   pendingSearch      = '';
   searchMatches      = [];
@@ -263,17 +265,60 @@ async function pollTail() {
   // fetch, parse and render than a handful of lines, so draining a burst — what
   // the next_offset cursor exists for — is exactly when polls start to overlap.
   //
-  // Away from the tail nothing is fetched: new rows would push the oldest ones
+  // Away from the tail no rows are fetched: new rows would push the oldest ones
   // out of the MAX_ROWS window, and under heavy traffic that removes the rows
   // the user scrolled up to read within seconds. The cursor stays where it is,
-  // so returning to the bottom resumes without a gap.
-  if (polling || !atTail) return;
+  // so returning to the bottom resumes without a gap — and the chain is still
+  // watched, so that it does not resume from a cursor a rotation has moved.
+  if (polling) return;
   polling = true;
   try {
-    await pollTailOnce();
+    await (atTail ? pollTailOnce() : watchWhilePaused());
   } finally {
     polling = false;
   }
+}
+
+// While paused, keep the rotation check going without fetching rows. A cursor
+// from before a rotation points somewhere else in the chain after it, and the
+// check only catches the end regressing: a pause long enough for the chain to
+// grow back past where it was would otherwise resume from the wrong place,
+// skipping lines without a sign. A rotation seen here makes resuming reload the
+// tail instead. One line at most is read, with no filter to scan for.
+async function watchWhilePaused() {
+  if (chainMoved) return; // resuming reloads the tail anyway
+  const p = new URLSearchParams();
+  p.set('sink',   activeSink);
+  p.set('offset', String(chainEnd));
+  p.set('count',  '1');
+  p.set('dir',    'forward');
+
+  let data;
+  try {
+    const res = await fetch('/lines?' + p);
+    data = await res.json();
+  } catch {
+    setStatus('disconnected');
+    return;
+  }
+  setStatus('connected');
+
+  // Resumed while this was in flight: the next poll makes the same check.
+  if (atTail) return;
+
+  if ((data.tail_offset ?? 0) < chainEnd) {
+    // The offsets of the rows on screen are from before the rotation too, so
+    // loading older rows from them would read from the wrong place as well.
+    // The cursor moves to the new end, which is what Clear needs; resuming
+    // reloads the tail rather than reading on from it.
+    chainMoved    = true;
+    tailResumable = false;
+    tailOffset    = data.tail_offset ?? 0;
+    chainEnd      = tailOffset;
+    if (topObserver) topObserver.disconnect();
+    return;
+  }
+  chainEnd = data.tail_offset ?? chainEnd;
 }
 
 async function pollTailOnce() {
@@ -339,10 +384,13 @@ function attachTopObserver() {
 }
 
 async function loadOlder() {
-  if (loadingUp || topOffset === 0) return;
+  if (loadingUp || topOffset === 0 || chainMoved) return;
   loadingUp = true;
-  setAtTail(false);
-  showJumpTail();
+  // Only a view the user has scrolled away from the bottom pauses — and that
+  // one has paused already. Rows that do not fill the screen, as a narrow
+  // filter can leave, also bring the first row into view; pausing then would
+  // stop new lines with no scrolling that could bring them back.
+  if (!isNearBottom()) leaveTail();
 
   const p = filterParams();
   p.set('offset', String(topOffset));
@@ -558,6 +606,7 @@ async function jumpToMatch(idx) {
 
   tailOffset = data.tail_offset ?? tailOffset;
   chainEnd   = tailOffset;
+  chainMoved = false;
   topOffset  = data.first_offset ?? match.offset;
 
   renderRows(data.lines ?? [], data.offsets ?? [], false);
@@ -1110,6 +1159,7 @@ function clearView() {
   clearDOM();
   setAtTail(true);
   tailResumable = true;
+  chainMoved    = false;
   hideOverlays();
   updateEmptyState();
   startPoll();

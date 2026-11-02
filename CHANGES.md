@@ -44,7 +44,9 @@
   the log files open — antivirus, a backup, an editor — made the rotation's rename fail, which
   closed the sink and dropped every message for 30 seconds. Such a rename is now retried for up to
   750 ms; if it still fails, the sink keeps writing to its current files past `max_size` and tries
-  the rotation again every 30 seconds, reporting it once and then at most once a minute. (#50)
+  the rotation again every 30 seconds, reporting it once and then at most once a minute. A rotation
+  that stopped part way is finished by the next attempt without rotating again what had already
+  rotated, and without deleting a generation early. (#50)
 - **Hiding one severity in the web viewer no longer hides four others.** The severity chips send
   the short syslog names (`err`, `warn`, `crit`, `emerg`) while minilog writes `ERROR`, `WARNING`,
   `CRITICAL` and `EMERGENCY`, and the filter compared the two exactly. So hiding any severity —
@@ -57,7 +59,9 @@
   wheel, the scrollbar, touch or ArrowUp/PageUp/Home now leaves the tail at once, and only
   scrolling down to the bottom, or "Jump to tail", rejoins it. While away from the tail no new lines
   are added, so the lines being read are no longer pushed out of the view within seconds; scrolling
-  back to the bottom carries on from where it stopped. (#49)
+  back to the bottom carries on from where it stopped, unless the log rotated meanwhile, in which
+  case Follow or "Jump to tail" reloads the newest lines. A filtered view whose few rows do not fill
+  the screen keeps following. (#49)
 - **The web viewer no longer makes a rotation fail on Windows.** It opened log files without
   `FILE_SHARE_DELETE`, and while one was open the server could not rename it, so a rotation that
   coincided with a viewer read took the sink out of service until its next retry. Every read now

@@ -16,20 +16,22 @@
 #include "log_file.hpp"
 
 #include "compress.hpp"
+#include "retry_in_use.hpp"
 
 #include "platform/os_log.hpp"
 
 #include <boost/asio/post.hpp>
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <format>
 #include <future>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
-#include <thread>
 #include <vector>
 
 namespace minilog
@@ -59,29 +61,60 @@ std::string formatInterval(std::chrono::milliseconds interval)
     return std::to_string(interval.count()) + " ms";
 }
 
-// Run a filesystem operation that reports through `ec`, retrying it briefly if
-// the file is in use. On Windows a file that another program has open without
-// sharing delete cannot be renamed or removed; antivirus does exactly that to a
-// file it has just seen closed, typically for milliseconds. Four retries over
-// 750 ms let it go first, so a scan does not even count as a failed rotation.
-// Elsewhere an open file never blocks either operation, and nothing is retried.
-template <typename Op> void retryWhileInUse(Op op, std::error_code& ec)
+// Which rotated generations of `base` exist, in either form: present[n][0] for
+// the plain "<stem>.<n><ext>", present[n][1] for its .gz, for every n from 1 to
+// present.size() - 1. One pass over the directory rather than two probes per
+// possible number, which with max_files = 0 would be two thousand. Returns
+// what went wrong, or "".
+std::string findGenerations(const std::filesystem::path& base,
+                            std::vector<std::array<bool, 2>>& present)
 {
-    op(ec);
-#ifdef _WIN32
-    constexpr int kAccessDenied     = 5;  // ERROR_ACCESS_DENIED: also a pending delete
-    constexpr int kSharingViolation = 32; // ERROR_SHARING_VIOLATION
-    for (const int ms : {50, 100, 200, 400})
+    namespace fs = std::filesystem;
+
+    const std::string prefix = base.stem().string() + ".";
+    const std::string ext    = base.extension().string();
+    const fs::path dir       = base.parent_path().empty() ? fs::path(".") : base.parent_path();
+
+    std::error_code ec;
+    fs::directory_iterator it(dir, ec);
+    for (; !ec && it != fs::directory_iterator(); it.increment(ec))
     {
-        if (!ec || (ec.value() != kSharingViolation && ec.value() != kAccessDenied))
+        const std::string name = it->path().filename().string();
+        if (!name.starts_with(prefix))
         {
-            return;
+            continue;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-        ec.clear();
-        op(ec);
+        // The number, as rotatedPath() writes it: digits without a leading zero.
+        std::size_t end = prefix.size();
+        while (end < name.size() && name[end] >= '0' && name[end] <= '9')
+        {
+            ++end;
+        }
+        const std::size_t digits = end - prefix.size();
+        if (digits == 0 || digits > 4 || name[prefix.size()] == '0')
+        {
+            continue;
+        }
+        const auto n = std::stoul(name.substr(prefix.size(), digits));
+        if (n >= present.size())
+        {
+            continue;
+        }
+        const std::string_view rest = std::string_view(name).substr(end);
+        if (rest == ext)
+        {
+            present[n][0] = true;
+        }
+        else if (rest == ext + ".gz")
+        {
+            present[n][1] = true;
+        }
     }
-#endif
+    if (ec)
+    {
+        return "listing '" + dir.string() + "' failed: " + ec.message();
+    }
+    return {};
 }
 
 std::string currentTimestamp()
@@ -361,12 +394,15 @@ void LogFile::write(const SyslogMessage& msg)
 
 void LogFile::close()
 {
+    // Set here rather than in the handler: a rotation waiting for the
+    // compressor holds the strand, so the handler would not run until the whole
+    // file had been compressed — seconds for a large one, during a shutdown.
+    m_cancelCompression = true;
     boost::asio::post(m_strand,
                       [this]()
                       {
-                          m_shuttingDown      = true;
-                          m_closed            = true;
-                          m_cancelCompression = true;
+                          m_shuttingDown = true;
+                          m_closed       = true;
                           try
                           {
                               // A pending retry is outstanding work, and run()
@@ -590,29 +626,15 @@ void LogFile::rotate()
     // A failure here does not close the sink, unlike a failed write: on Windows
     // another program that merely has one of these files open makes its rename
     // fail, and that is normal rather than broken storage (#50). The rotation is
-    // postponed instead and the sink goes on writing to its current files. A
-    // shift abandoned partway is safe to resume: it works oldest first and the
-    // next attempt probes what is there, so it only ever leaves a gap in the
-    // numbering for the next one to close, never two generations out of order.
+    // postponed instead and the sink goes on writing to its current files.
+    //
+    // A shift abandoned partway is safe to resume. It works oldest first and
+    // moves only the generations below the first gap in the numbering — the
+    // ones that have to move to make room for .1 — so the next attempt picks up
+    // where this one stopped: it closes the gap this one left rather than
+    // carrying it along, and expires only what a complete shift would have.
     auto shiftFiles = [&](const fs::path& base) -> std::string
     {
-        std::string failure;
-
-        // exists() with an error_code leaves ec clear for a file that simply is
-        // not there, so nullopt means a real failure — a denied or unreachable
-        // directory — rather than absence.
-        auto probe = [&](const fs::path& p) -> std::optional<bool>
-        {
-            std::error_code ec;
-            const bool found = fs::exists(p, ec);
-            if (ec)
-            {
-                failure = "probing '" + p.string() + "' failed: " + ec.message();
-                return std::nullopt;
-            }
-            return found;
-        };
-
         // A generation is there in either form, plain or compressed. Both are
         // handled whatever `compress` says, so that switching it off does not
         // strand the .gz generations already written. Both forms can also exist
@@ -621,67 +643,60 @@ void LogFile::rotate()
         // the same records and simply move and expire together.
         auto forms = [](const fs::path& plain) { return std::array{plain, gzipPath(plain)}; };
 
-        // Find the highest rotated generation that exists.
-        // Probe up to the limit (or a reasonable cap when unlimited) so that
-        // gaps left by manually deleted files don't cause orphaned generations.
-        const int probeLimit = (m_cfg.maxFiles > 0) ? m_cfg.maxFiles : kMaxFilesLimit;
-        int highest          = 0;
-        for (int n = 1; n <= probeLimit; ++n)
+        // Generations past the limit (or a cap when unlimited) are left alone,
+        // as a sink that has had max_files lowered has always left them.
+        const int limit = (m_cfg.maxFiles > 0) ? m_cfg.maxFiles : kMaxFilesLimit;
+        std::vector<std::array<bool, 2>> present(static_cast<std::size_t>(limit) + 2);
+        if (auto error = findGenerations(base, present); !error.empty())
         {
-            for (const auto& p : forms(rotatedPath(base, n)))
-            {
-                const auto found = probe(p);
-                if (!found)
-                {
-                    return failure;
-                }
-                if (*found)
-                {
-                    highest = n;
-                }
-            }
+            return error;
+        }
+        const auto exists = [&](int n)
+        {
+            const auto& found = present[static_cast<std::size_t>(n)];
+            return found[0] || found[1];
+        };
+
+        // Generations .1 up to the first gap move up by one; those above it
+        // stay where they are. The gap may be one a person left by deleting a
+        // file, or one an abandoned shift left.
+        int top = 0;
+        while (top < limit && exists(top + 1))
+        {
+            ++top;
         }
 
-        // Delete generations beyond max_files.
-        if (m_cfg.maxFiles > 0 && highest >= m_cfg.maxFiles)
+        // Delete what would move past max_files.
+        if (m_cfg.maxFiles > 0)
         {
-            for (int n = highest; n >= m_cfg.maxFiles; --n)
+            for (int n = top; n >= m_cfg.maxFiles; --n)
             {
-                for (const auto& p : forms(rotatedPath(base, n)))
+                const auto paths = forms(rotatedPath(base, n));
+                for (std::size_t i = 0; i < paths.size(); ++i)
                 {
-                    const auto found = probe(p);
-                    if (!found)
-                    {
-                        return failure;
-                    }
-                    if (!*found)
+                    if (!present[static_cast<std::size_t>(n)][i])
                     {
                         continue;
                     }
                     std::error_code ec;
-                    retryWhileInUse([&](std::error_code& e) { fs::remove(p, e); }, ec);
+                    retryWhileInUse([&](std::error_code& e) { fs::remove(paths[i], e); }, ec);
                     if (ec)
                     {
-                        return "removing '" + p.string() + "' failed: " + ec.message();
+                        return "removing '" + paths[i].string() + "' failed: " + ec.message();
                     }
                 }
             }
-            highest = m_cfg.maxFiles - 1;
+            top = std::min(top, m_cfg.maxFiles - 1);
         }
 
-        // Shift existing rotated files up by one.
-        for (int n = highest; n >= 1; --n)
+        // Shift them up by one.
+        for (int n = top; n >= 1; --n)
         {
             const auto from = forms(rotatedPath(base, n));
             const auto to   = forms(rotatedPath(base, n + 1));
             for (std::size_t i = 0; i < from.size(); ++i)
             {
-                const auto found = probe(from[i]);
-                if (!found)
-                {
-                    return failure;
-                }
-                if (!*found)
+                if (!present[static_cast<std::size_t>(n)][i])
                 {
                     continue;
                 }
@@ -694,15 +709,17 @@ void LogFile::rotate()
             }
         }
 
-        // Rename the current file to .1.
-        const auto found = probe(base);
-        if (!found)
+        // Rename the current file to .1. exists() with an error_code leaves ec
+        // clear for a file that simply is not there, so an error is a real
+        // failure — a denied or unreachable directory — rather than absence.
+        std::error_code ec;
+        const bool found = fs::exists(base, ec);
+        if (ec)
         {
-            return failure;
+            return "probing '" + base.string() + "' failed: " + ec.message();
         }
-        if (*found)
+        if (found)
         {
-            std::error_code ec;
             retryWhileInUse([&](std::error_code& e) { fs::rename(base, rotatedPath(base, 1), e); },
                             ec);
             if (ec)
@@ -713,21 +730,41 @@ void LogFile::rotate()
         return {};
     };
 
-    // The text file first and then the JSONL file, as before. A failure in the
-    // first leaves the second alone, so both stay where they were; a failure in
-    // the second leaves the first rotated, and the two are a generation apart
-    // until the second catches up.
+    // The text file first and then the JSONL file, each shifted once per
+    // rotation. A failure in the first leaves the second alone. A failure in
+    // the second leaves the first rotated, and the retry shifts only the second:
+    // shifting the first again would turn its fresh, nearly empty file into a
+    // generation and expire a full one, once every retry interval for as long
+    // as the second kept failing.
     std::string failure;
-    for (const auto& file : {m_cfg.textFile, m_cfg.jsonlFile})
+    for (const auto& [file, shifted] :
+         {std::pair{&m_cfg.textFile, &m_textShifted}, std::pair{&m_cfg.jsonlFile, &m_jsonlShifted}})
     {
-        if (!file.empty())
+        if (file->empty() || *shifted)
         {
-            failure = shiftFiles(fs::path(file));
-            if (!failure.empty())
-            {
-                break;
-            }
+            continue;
         }
+        failure = shiftFiles(fs::path(*file));
+        if (!failure.empty())
+        {
+            break;
+        }
+        *shifted = true;
+    }
+    if (failure.empty())
+    {
+        m_textShifted  = false;
+        m_jsonlShifted = false;
+    }
+
+    // .2 is compressed if it is plain: after a shift that went through it is
+    // the one that has just moved there, and after one that stopped short
+    // nothing about it changed. Before the files are opened, because a failure
+    // to open them does not undo the shift — and only .2 is ever compressed, so
+    // one skipped here would stay plain for good.
+    if (m_cfg.compress)
+    {
+        scheduleCompression();
     }
 
     // Opens whatever is at the active paths: a fresh file where the rename
@@ -746,14 +783,6 @@ void LogFile::rotate()
     else
     {
         rotationFailed(failure);
-    }
-
-    // Whatever happened, .2 is compressed if it is plain: after a rotation that
-    // went through it is the one that has just moved there, and after one that
-    // stopped short nothing about it changed.
-    if (m_cfg.compress)
-    {
-        scheduleCompression();
     }
 }
 

@@ -502,15 +502,6 @@ func fieldString(raw json.RawMessage) (string, bool) {
 	return string(raw), true
 }
 
-// facilityCodes maps the facility names minilog writes (kFacilityNames in
-// src/server/parser/syslog_names.hpp) back to their numbers, for the PRI;
-// severityAliases in reader.go does the same for severities.
-var facilityCodes = map[string]int{
-	"kern": 0, "user": 1, "mail": 2, "daemon": 3, "auth": 4, "syslog": 5, "lpr": 6, "news": 7,
-	"uucp": 8, "clock": 9, "authpriv": 10, "ftp": 11, "ntp": 12, "audit": 13, "alert": 14, "clock2": 15,
-	"local0": 16, "local1": 17, "local2": 18, "local3": 19, "local4": 20, "local5": 21, "local6": 22, "local7": 23,
-}
-
 // syslogLine rebuilds the datagram a record was parsed from, as far as the
 // record allows (src/server/parser/syslog_parser.cpp is the other direction):
 //
@@ -530,7 +521,7 @@ func syslogLine(r *record) string {
 	pri := ""
 	fac, _ := fieldString(r.Facility)
 	sev, _ := fieldString(r.Severity)
-	f, fok := facilityCodes[strings.ToLower(fac)]
+	f, fok := facilityAliases[strings.ToLower(fac)]
 	s, sok := severityAliases[strings.ToLower(sev)]
 	if fok && sok {
 		pri = fmt.Sprintf("<%d>", f*8+s)

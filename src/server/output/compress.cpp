@@ -15,6 +15,8 @@
 
 #include "compress.hpp"
 
+#include "retry_in_use.hpp"
+
 #include <fstream>
 #include <memory>
 #include <system_error>
@@ -44,13 +46,25 @@ namespace fs = std::filesystem;
 bool syncToDisk(const fs::path& path)
 {
 #ifdef _WIN32
-    HANDLE h = CreateFileW(path.c_str(),
-                           GENERIC_WRITE,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                           nullptr,
-                           OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL,
-                           nullptr);
+    // Antivirus opens a file the moment it is closed, and may not share write.
+    HANDLE h = INVALID_HANDLE_VALUE;
+    std::error_code ec;
+    retryWhileInUse(
+        [&](std::error_code& e)
+        {
+            h = CreateFileW(path.c_str(),
+                            GENERIC_WRITE,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                            nullptr,
+                            OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL,
+                            nullptr);
+            if (h == INVALID_HANDLE_VALUE)
+            {
+                e = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+            }
+        },
+        ec);
     if (h == INVALID_HANDLE_VALUE)
     {
         return false;
@@ -209,7 +223,10 @@ std::string gzipFile(const fs::path& plain, const std::atomic<bool>& cancel)
         std::error_code ec;
         if (error.empty())
         {
-            fs::rename(tmp, gzipPath(plain), ec);
+            // Retried while in use: antivirus scanning the .gz.tmp it has just
+            // seen closed would otherwise leave this generation plain for good,
+            // since only .2 is ever compressed.
+            retryWhileInUse([&](std::error_code& e) { fs::rename(tmp, gzipPath(plain), e); }, ec);
             if (ec)
             {
                 error = "rename to '" + gzipPath(plain).string() + "' failed: " + ec.message();
@@ -228,7 +245,7 @@ std::string gzipFile(const fs::path& plain, const std::atomic<bool>& cancel)
             return "compressed, but syncing directory '" + plain.parent_path().string() +
                    "' failed (both copies are kept)";
         }
-        fs::remove(plain, ec);
+        retryWhileInUse([&](std::error_code& e) { fs::remove(plain, e); }, ec);
         if (ec)
         {
             return "compressed, but removing '" + plain.string() + "' failed: " + ec.message() +

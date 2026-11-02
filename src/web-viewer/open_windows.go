@@ -15,8 +15,8 @@ import (
 // server's rotation.
 //
 // os.Open shares only read and write. While such a handle is open, minilog's
-// rotation cannot rename the file — the rename fails, and the server takes the
-// whole sink out of service until its next retry. FILE_SHARE_DELETE allows the
+// rotation cannot rename the file — the rename fails, and the server postpones
+// the rotation until its next retry. FILE_SHARE_DELETE allows the
 // rename (and the removal of the oldest generation); the handle goes on
 // reading the same file under its new name. The cli-viewer opens files the
 // same way, for the same reason.

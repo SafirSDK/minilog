@@ -72,11 +72,14 @@ With `compress`, generation `.2` is gzipped by `gzipFile()` (`output/compress.cp
 rotation and once at startup, on `LogFile::m_compressor` — a one-thread `asio::thread_pool`
 created on first use, not the strand (writes) or the io_context (receives), since 100 MB takes
 seconds. `rotate()` calls `waitForCompression()` before renaming anything: on Windows a file the
-compressor still holds cannot be renamed, and a failed rename closes the sink. The cost is that a
-rotation arriving before the previous compression is done blocks that strand, and the io thread
-running it. `gzipFile` writes `.gz.tmp`, syncs it and (POSIX) the directory, renames, then
-removes the plain file, so every failure leaves the plain generation; `m_cancelCompression` (set
-by `close()` and the destructor) stops it between blocks.
+compressor still holds cannot be renamed, and a failed rename postpones the rotation. The cost is
+that a rotation arriving before the previous compression is done blocks that strand, and the io
+thread running it. `gzipFile` writes `.gz.tmp`, syncs it and (POSIX) the directory, renames, then
+removes the plain file, so every failure leaves the plain generation; its rename and removal go
+through `retryWhileInUse()` like rotation's. `m_cancelCompression` (set by `close()` before it
+posts, so a rotation blocked waiting for the compressor cannot delay it, and by the destructor)
+stops it between blocks. Only `.2` is ever compressed, so `rotate()` schedules it whenever the
+shift went through, even when reopening the files then fails.
 
 The web viewer's `FileChain` never includes `.gz` files. With `compress` (read from the same
 config) it is exactly `.1` + the active file, so a compression finishing never moves its offsets;
@@ -97,8 +100,12 @@ A failed **rotation** is not a sink failure (#50): `rotate()` gets a reason back
 `shiftFiles` instead of calling `failSink`, reopens the active files, and `rotationFailed()` sets
 `m_rotationRetryAt` (now + the retry interval) and reports through its own `SinkRecovery`,
 `m_rotationRecovery`; `rotateIfNeeded()` does not try again before then. Renames and removals go
-through `retryWhileInUse()`, which on Windows retries a sharing violation for up to 750 ms. Only a
-failure to *open* the files afterwards closes the sink.
+through `retryWhileInUse()` (`output/retry_in_use.hpp`), which on Windows retries a sharing
+violation for up to 750 ms. Only a failure to *open* the files afterwards closes the sink.
+`m_textShifted`/`m_jsonlShifted` make a retry shift only the chain that has not been shifted yet.
+`shiftFiles` lists the directory once (`findGenerations`) and moves only the generations below the
+first gap, so a resumed shift closes the gap the abandoned one left instead of expiring the
+generation above it.
 
 A failure inside `openAtStartup()` is the one that is **not** retried or rate-limited: `main()` turns
 it into `EXIT_FAILURE` without ever running the `io_context`, so there is nothing alive to retry on
@@ -192,7 +199,7 @@ of that ordering and because those values are table-driven (see `matchStringFiel
     CSV. `escapeControlChars` there must match the server's in `output/log_file.cpp`
   - `open_windows.go` / `open_other.go` — `openShared()`, used for every log read: on Windows it
     adds `FILE_SHARE_DELETE`, without which an open viewer handle makes the server's rotation
-    rename fail and take the sink out of service
+    rename fail and postpones the rotation
   - `service_windows.go` — Windows NT service install/stop/uninstall/run via
     `golang.org/x/sys/windows/svc`, including recovery actions (two restarts, 5 s apart, 300 s
     reset period)

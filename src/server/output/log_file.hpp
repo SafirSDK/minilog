@@ -98,8 +98,8 @@ private:
 
     // Block until a compression in progress has finished. Rotation calls this
     // before renaming anything, so that no file is renamed or removed while the
-    // compressor still has it open — on Windows that rename fails, and a failed
-    // rotation takes the sink out of service.
+    // compressor still has it open — on Windows that rename fails, and the
+    // rotation would be postponed for a retry interval.
     void waitForCompression();
 
     // Remove .gz.tmp files a crash left behind. Startup only.
@@ -142,7 +142,11 @@ private:
     SinkRecovery m_rotationRecovery;
     // Set while rotation is failing: no attempt before then.
     std::optional<std::chrono::steady_clock::time_point> m_rotationRetryAt;
-    bool m_closed = false;
+    // Which chains a rotation still in progress has already shifted, so that a
+    // retry shifts only the rest. Both clear once the rotation is complete.
+    bool m_textShifted  = false;
+    bool m_jsonlShifted = false;
+    bool m_closed       = false;
     // Set by close() and never cleared: a sink closed for shutdown must not be
     // reopened by a retry, and cancel() alone does not cover a handler that was
     // already queued when the close arrived.
@@ -158,7 +162,8 @@ private:
     // The compression in progress, if any. Accessed only on m_strand.
     std::future<void> m_compression;
 
-    // Set to stop a compression early: by close(), and by the destructor.
+    // Set to stop a compression early: by close(), and by the destructor. The
+    // one field close() touches off the strand.
     // Declared before m_compressor so that it outlives the thread that reads it.
     std::atomic<bool> m_cancelCompression{false};
 

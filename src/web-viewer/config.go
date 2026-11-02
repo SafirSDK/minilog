@@ -49,10 +49,10 @@ func loadConfig(configPath string) (Config, error) {
 	const viewerSection = "web_viewer"
 
 	// maxFilesLimit is both the ceiling on a configured max_files and what
-	// max_files = 0 ("keep every generation") maps to. Every generation costs an
-	// os.Stat while the chain is built, on every request, so an unbounded value
-	// is unbounded work per HTTP request — "max_files = 2000000000" is two
-	// billion stat calls to answer one GET. It is the same limit minilog's own
+	// max_files = 0 ("keep every generation") maps to. Every generation is looked
+	// up while the chain is built, on every request, so an unbounded value is
+	// unbounded work per HTTP request — "max_files = 2000000000" is two billion
+	// lookups to answer one GET. It is the same limit minilog's own
 	// loader enforces (kMaxFilesLimit in config.hpp), so both ends agree on how
 	// deep a chain can be.
 	const maxFilesLimit = 1000

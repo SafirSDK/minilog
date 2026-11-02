@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -24,10 +25,25 @@ type Filter struct {
 	Exclude    []string // lowercase substrings; any match → skip line
 }
 
-// severityAliases maps every severity name to its number: the names minilog
-// writes into the JSONL (EMERGENCY, CRITICAL, ERROR, WARNING, …) and the
-// syslog(3) spellings the UI's severity chips send (EMERG, CRIT, ERR, WARN).
-// It mirrors kSeverityAliases in src/server/parser/syslog_names.hpp.
+// The name→number tables of src/server/parser/syslog_names.hpp, which is the
+// one place names and numbers are defined. Go cannot include it, so these are
+// copies, and TestNameTablesMatchTheServer fails the moment one differs from
+// it: change the header, then these.
+//
+// facilityAliases is kFacilityAliases: every name minilog writes into the
+// JSONL and every alias it accepts, for rebuilding a record's PRI on export.
+var facilityAliases = map[string]int{
+	"kern": 0, "kernel": 0, "user": 1, "mail": 2, "daemon": 3, "system": 3,
+	"auth": 4, "security": 4, "syslog": 5, "lpr": 6, "news": 7, "uucp": 8,
+	"clock": 9, "cron": 9, "authpriv": 10, "ftp": 11, "ntp": 12,
+	"audit": 13, "logaudit": 13, "alert": 14, "logalert": 14, "clock2": 15,
+	"local0": 16, "local1": 17, "local2": 18, "local3": 19,
+	"local4": 20, "local5": 21, "local6": 22, "local7": 23,
+}
+
+// severityAliases is kSeverityAliases: the names minilog writes into the
+// JSONL (EMERGENCY, CRITICAL, ERROR, WARNING, …) and the syslog(3) spellings
+// the UI's severity chips send (EMERG, CRIT, ERR, WARN).
 var severityAliases = map[string]int{
 	"emergency": 0, "emerg": 0, "panic": 0,
 	"alert":    1,
@@ -209,7 +225,7 @@ type FileChain struct {
 // there is any.
 func NewFileChain(sink Sink) (*FileChain, error) {
 	paths := chainPaths(sink)
-	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+	exists := dirListing(filepath.Dir(sink.Path))
 
 	// Newest first; the active file, last in paths, is never compressed.
 	var newestFirst []chainFile
@@ -224,6 +240,9 @@ func NewFileChain(sink Sink) (*FileChain, error) {
 		if i < len(paths)-1 && exists(paths[i]+".gz") {
 			olderOutside = true
 			break
+		}
+		if !exists(paths[i]) {
+			continue
 		}
 		info, err := os.Stat(paths[i])
 		if err != nil || info.Size() == 0 {
@@ -246,6 +265,28 @@ func NewFileChain(sink Sink) (*FileChain, error) {
 // OlderOutside reports whether older generations exist than the chain starts
 // with — gzipped ones, or plain ones behind them — which only /export reads.
 func (fc *FileChain) OlderOutside() bool { return fc.olderOutside }
+
+// dirListing lists dir once and reports whether a path in it exists. This runs
+// on every /lines poll, and probing each possible generation instead would be
+// two stat calls per number: with max_files = 0, two thousand a poll, per
+// browser, nearly all for files that are not there. A file that goes between
+// the listing and its use fails its os.Stat or open as it always could. An
+// unreadable directory lists as empty, as each probe would have failed.
+func dirListing(dir string) func(path string) bool {
+	entries, _ := os.ReadDir(dir) // what was read before an error still counts
+	fold := func(s string) string { return s }
+	if runtime.GOOS == "windows" {
+		fold = strings.ToLower // NTFS names match regardless of case
+	}
+	names := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		names[fold(e.Name())] = struct{}{}
+	}
+	return func(path string) bool {
+		_, ok := names[fold(filepath.Base(path))]
+		return ok
+	}
+}
 
 // chainPaths returns every path a plain generation of sink can have, oldest
 // first and the active file last. Most of them usually do not exist. A

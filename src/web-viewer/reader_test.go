@@ -4,10 +4,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -2583,6 +2587,47 @@ func TestSearch_MultiFileChain_CountsEveryMatchPastLimit(t *testing.T) {
 	for i := range offsets {
 		if want := int64(i * (testRecordBytes + 1)); offsets[i] != want {
 			t.Errorf("match %d: offset %d, want %d", i, offsets[i], want)
+		}
+	}
+}
+
+// The Go copies of the server's name tables (see facilityAliases) must hold
+// exactly what src/server/parser/syslog_names.hpp holds.
+func TestNameTablesMatchTheServer(t *testing.T) {
+	header, err := os.ReadFile(filepath.Join("..", "server", "parser", "syslog_names.hpp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := regexp.MustCompile(`\{"([a-z0-9]+)",\s*(\d+)\}`)
+	table := func(name string) map[string]int {
+		start := bytes.Index(header, []byte(name+" = {{"))
+		if start < 0 {
+			t.Fatalf("%s not found in syslog_names.hpp", name)
+		}
+		end := bytes.Index(header[start:], []byte("}};"))
+		if end < 0 {
+			t.Fatalf("end of %s not found", name)
+		}
+		out := map[string]int{}
+		for _, m := range entry.FindAllSubmatch(header[start:start+end], -1) {
+			n, _ := strconv.Atoi(string(m[2]))
+			out[string(m[1])] = n
+		}
+		return out
+	}
+	for _, c := range []struct {
+		cpp string
+		got map[string]int
+	}{
+		{"kFacilityAliases", facilityAliases},
+		{"kSeverityAliases", severityAliases},
+	} {
+		want := table(c.cpp)
+		if len(want) == 0 {
+			t.Fatalf("%s: no entries parsed", c.cpp)
+		}
+		if !reflect.DeepEqual(c.got, want) {
+			t.Errorf("%s differs from the Go copy:\n header: %v\n     go: %v", c.cpp, want, c.got)
 		}
 	}
 }

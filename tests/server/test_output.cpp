@@ -949,6 +949,33 @@ BOOST_AUTO_TEST_CASE(shutdown_cancels_a_compression_and_the_next_start_finishes_
     BOOST_CHECK_EQUAL(gunzip(dir / "syslog.2.log.gz").size(), bigSize);
 }
 
+BOOST_AUTO_TEST_CASE(shutdown_does_not_wait_for_a_compression_a_rotation_is_waiting_for)
+{
+    // A rotation waits for the compression in progress, and holds the strand
+    // while it does, so close()'s handler cannot run until it is over. The
+    // cancel is set before close() posts that handler, so the compression stops
+    // at its next block rather than running to the end of the file.
+    setUpLongCompression(dir);
+    const auto bigSize = fs::file_size(dir / "syslog.1.log");
+    LogFile lf(ioc, longCompressionConfig(dir));
+    writeSync(lf, rfc3164Msg("rotates")); // the 60 MB .1 becomes .2 and starts compressing
+    BOOST_REQUIRE(waitForFile(gzipTempPath(dir / "syslog.2.log")));
+    writeSync(lf, rfc3164Msg(std::string(1100 * 1024, 'x'))); // the active file passes max_size
+
+    ioc.restart();
+    lf.write(rfc3164Msg("waits")); // rotates, so waits for the compression
+    std::thread runner([this] { ioc.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    lf.close();
+    runner.join();
+
+    // The rotation went ahead once the compression stopped, so the 60 MB
+    // generation is .3 now — still plain, as it would not be had it been waited for.
+    BOOST_CHECK_EQUAL(fs::file_size(dir / "syslog.3.log"), bigSize);
+    BOOST_CHECK(!fs::exists(dir / "syslog.3.log.gz"));
+    BOOST_CHECK(!anyTempFile(dir));
+}
+
 BOOST_AUTO_TEST_CASE(both_forms_of_a_generation_move_and_expire_together)
 {
     // A crash between a compression's rename and its removal of the plain file
@@ -958,6 +985,7 @@ BOOST_AUTO_TEST_CASE(both_forms_of_a_generation_move_and_expire_together)
     BOOST_REQUIRE_EQUAL(gzipFile(dir / "copy.log", cancel), "");
     fs::rename(dir / "copy.log.gz", dir / "syslog.2.log.gz");
     std::ofstream(dir / "syslog.2.log") << "old\n";
+    std::ofstream(dir / "syslog.1.log") << "newer\n"; // no gap below it
 
     OutputConfig cfg = compressedConfig(dir, 3);
     cfg.jsonlFile.clear();
@@ -2019,6 +2047,94 @@ BOOST_AUTO_TEST_CASE(a_failed_rotation_is_not_tried_again_on_every_write)
     BOOST_CHECK_EQUAL(readAll(cfg.textFile), "m1\nm2\nm3\nm4\nm5\nm6\nm7\nm8\nm9\n");
     const auto jsonl = readAll(cfg.jsonlFile);
     BOOST_CHECK_EQUAL(std::count(jsonl.begin(), jsonl.end(), '\n'), 10); // none dropped
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
+BOOST_AUTO_TEST_CASE(a_retried_rotation_shifts_only_the_chain_that_failed)
+{
+    // The text chain is shifted and the jsonl chain then fails. Retrying must
+    // not shift the text chain again: each time, that would make a generation
+    // of the few records written since and expire a full one.
+    OutputConfig cfg;
+    cfg.name             = "main";
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 2;
+    cfg.includeMalformed = true;
+    std::ofstream(dir / "syslog.1.jsonl") << "{}\n";
+    // Expiring jsonl .2 is the step that fails: a non-empty directory.
+    fs::create_directories(dir / "syslog.2.jsonl" / "occupied");
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, messageWith("m0"));
+    for (int i = 1; i < 6; ++i)
+    {
+        std::this_thread::sleep_for(kTestRetry * 3); // past the retry interval: tried again
+        writeSync(lf, messageWith("m" + std::to_string(i)));
+    }
+
+    const auto lines = [&](const fs::path& p)
+    {
+        const auto text = readAll(p);
+        return std::count(text.begin(), text.end(), '\n');
+    };
+    BOOST_CHECK_EQUAL(lines(dir / "syslog.1.log"), 1); // m0, and nothing since
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log"));
+    BOOST_CHECK_EQUAL(lines(cfg.textFile), 5);         // m1 to m5
+
+    // Once the jsonl chain can rotate, it does — on its own, this once.
+    fs::remove_all(dir / "syslog.2.jsonl");
+    std::this_thread::sleep_for(kTestRetry * 3);
+    writeSync(lf, messageWith("m6"));
+    BOOST_CHECK_EQUAL(lines(dir / "syslog.1.log"), 1);
+    BOOST_CHECK(readAll(dir / "syslog.1.jsonl").find("m5") != std::string::npos);
+    BOOST_CHECK(readAll(cfg.jsonlFile).find("m6") != std::string::npos);
+
+    // And after that the two rotate together again.
+    writeSync(lf, messageWith("m7"));
+    BOOST_CHECK(readAll(dir / "syslog.1.log").find("m6") != std::string::npos);
+    BOOST_CHECK_EQUAL(lines(cfg.textFile), 1);
+    BOOST_CHECK(readAll(cfg.jsonlFile).find("m7") != std::string::npos);
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
+BOOST_AUTO_TEST_CASE(a_resumed_shift_keeps_the_generation_above_its_gap)
+{
+    // An abandoned shift that had moved .3 to .4 and then failed to move .2
+    // leaves .1, .2 and .4. Finishing it moves .2 and .1 up and keeps .4: only
+    // what a complete shift would have expired goes.
+    OutputConfig cfg;
+    cfg.name             = "main";
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 4;
+    cfg.includeMalformed = true;
+    std::ofstream(dir / "syslog.4.log") << "oldest\n";
+    std::ofstream(dir / "syslog.2.log") << "older\n";
+    std::ofstream(dir / "syslog.1.log") << "old\n";
+    std::ofstream(dir / "syslog.log") << "current\n";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, rfc3164Msg("new")); // the active file is over max_size: rotates first
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.4.log"), "oldest\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.3.log"), "older\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.2.log"), "old\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "current\n");
+    BOOST_CHECK_EQUAL(readAll(cfg.textFile), "new\n");
+
+    // The chain is whole again, and the next rotation expires the oldest.
+    writeSync(lf, rfc3164Msg("newer"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.5.log"));
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.4.log"), "older\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "new\n");
 
     lf.close();
     ioc.restart();
