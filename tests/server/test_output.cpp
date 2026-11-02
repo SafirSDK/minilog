@@ -26,7 +26,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -628,12 +627,22 @@ std::string wholeChain(const fs::path& base)
     int highest     = 0;
     for (const auto& e : fs::directory_iterator(base.parent_path()))
     {
+        // "<stem>.<n><ext>" or "<stem>.<n><ext>.gz"
         const auto name = e.path().filename().string();
-        int n           = 0;
-        char rest[32]   = {};
-        if (std::sscanf(name.c_str(), (stem + ".%d%31s").c_str(), &n, rest) == 2)
+        if (!name.starts_with(stem + "."))
         {
-            highest = std::max(highest, n);
+            continue;
+        }
+        const auto digits = name.substr(stem.size() + 1);
+        const auto end    = digits.find_first_not_of("0123456789");
+        if (end == 0 || end == std::string::npos)
+        {
+            continue;
+        }
+        const auto rest = digits.substr(end);
+        if (rest == ext || rest == ext + ".gz")
+        {
+            highest = std::max(highest, std::stoi(digits.substr(0, end)));
         }
     }
     std::string out;
@@ -786,12 +795,22 @@ BOOST_AUTO_TEST_CASE(a_crash_s_leftover_temp_file_is_removed_at_startup)
 {
     std::ofstream(dir / "syslog.3.log.gz.tmp") << "partial";
     std::ofstream(dir / "syslog.2.jsonl.gz.tmp") << "partial";
+    std::ofstream(dir / "syslog.250.log.gz.tmp") << "partial"; // beyond max_files: still ours
+    // Not this sink's: another sink's file, and names that only look similar.
+    for (const char* other : {"audit.3.log.gz.tmp", "syslog.old.log.gz.tmp", "syslog.3.txt.gz.tmp"})
+    {
+        std::ofstream(dir / other) << "keep";
+    }
 
     LogFile lf(ioc, compressedConfig(dir, 5));
     BOOST_REQUIRE(lf.openAtStartup());
 
     BOOST_CHECK(!fs::exists(dir / "syslog.3.log.gz.tmp"));
     BOOST_CHECK(!fs::exists(dir / "syslog.2.jsonl.gz.tmp"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.250.log.gz.tmp"));
+    BOOST_CHECK(fs::exists(dir / "audit.3.log.gz.tmp"));
+    BOOST_CHECK(fs::exists(dir / "syslog.old.log.gz.tmp"));
+    BOOST_CHECK(fs::exists(dir / "syslog.3.txt.gz.tmp"));
 }
 
 BOOST_AUTO_TEST_CASE(a_failed_compression_keeps_the_plain_file_and_the_sink)
@@ -871,30 +890,34 @@ BOOST_AUTO_TEST_CASE(writes_are_not_held_up_by_a_compression)
     LogFile lf(ioc, longCompressionConfig(dir));
 
     writeSync(lf, rfc3164Msg("rotates")); // .1 (60 MB) becomes .2 and starts compressing
-    const auto start = std::chrono::steady_clock::now();
+    BOOST_REQUIRE(waitForFile(gzipTempPath(dir / "syslog.2.log")));
     for (int i = 0; i < 50; ++i)
     {
         writeSync(lf, rfc3164Msg("during"));
     }
-    const auto elapsed          = std::chrono::steady_clock::now() - start;
-    const bool stillCompressing = fs::exists(gzipTempPath(dir / "syslog.2.log"));
 
-    BOOST_CHECK_LT(elapsed, std::chrono::milliseconds(500));
-    BOOST_WARN_MESSAGE(stillCompressing,
-                       "compression finished before the writes did; the timing proves nothing");
+    // Not a time limit, which a slow or instrumented build could miss: the
+    // writes are all on disk while the compression is still going, which they
+    // could not be if they had waited for it.
     BOOST_CHECK_EQUAL(readAll(dir / "syslog.log").size(), 8u + 50u * 7u);
+    BOOST_CHECK(fs::exists(gzipTempPath(dir / "syslog.2.log")));
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log.gz"));
 }
 
-BOOST_AUTO_TEST_CASE(cancelling_is_prompt)
+BOOST_AUTO_TEST_CASE(destroying_the_sink_cancels_a_compression)
 {
     setUpLongCompression(dir);
-    auto lf = std::make_unique<LogFile>(ioc, longCompressionConfig(dir));
+    const auto bigSize = fs::file_size(dir / "syslog.1.log");
+    auto lf            = std::make_unique<LogFile>(ioc, longCompressionConfig(dir));
     writeSync(*lf, rfc3164Msg("rotates"));
     BOOST_REQUIRE(waitForFile(gzipTempPath(dir / "syslog.2.log")));
 
-    const auto start = std::chrono::steady_clock::now();
-    lf.reset(); // the destructor cancels the job and waits for it to stop
-    BOOST_CHECK_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(500));
+    lf.reset(); // without close(): the destructor cancels the job and waits for it
+
+    // Cancelled rather than waited out: no .gz was finished, and the plain file
+    // is whole. A time limit would say the same less reliably.
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log.gz"));
+    BOOST_CHECK_EQUAL(fs::file_size(dir / "syslog.2.log"), bigSize);
     BOOST_CHECK(!anyTempFile(dir));
 }
 

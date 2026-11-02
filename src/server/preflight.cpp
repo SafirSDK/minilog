@@ -319,6 +319,15 @@ PreflightReport preflight(const std::string& configPath, ServiceState service)
                        "[output." + out.name +
                            "] has max_size = 0, so its files are never rotated and grow until the "
                            "filesystem is full");
+            if (out.compress)
+            {
+                // Compression acts on rotated generations, so without rotation
+                // the setting silently does nothing.
+                addWarning(report.findings,
+                           "[output." + out.name +
+                               "] has compress = true, but with max_size = 0 nothing is ever "
+                               "rotated, so nothing is compressed");
+            }
         }
     }
 

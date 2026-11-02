@@ -287,7 +287,10 @@ LogFile::LogFile(boost::asio::io_context& ioc,
 LogFile::~LogFile()
 {
     m_cancelCompression = true;
-    m_compressor.join();
+    if (m_compressor)
+    {
+        m_compressor->join();
+    }
 }
 
 bool LogFile::openAtStartup()
@@ -580,7 +583,7 @@ void LogFile::rotate()
         // Find the highest rotated generation that exists.
         // Probe up to the limit (or a reasonable cap when unlimited) so that
         // gaps left by manually deleted files don't cause orphaned generations.
-        const int probeLimit = (m_cfg.maxFiles > 0) ? m_cfg.maxFiles : 1000;
+        const int probeLimit = (m_cfg.maxFiles > 0) ? m_cfg.maxFiles : kMaxFilesLimit;
         int highest          = 0;
         for (int n = 1; n <= probeLimit; ++n)
         {
@@ -736,7 +739,11 @@ void LogFile::scheduleCompression()
             }
         });
     m_compression = job.get_future();
-    boost::asio::post(m_compressor, std::move(job));
+    if (!m_compressor)
+    {
+        m_compressor.emplace(1);
+    }
+    boost::asio::post(*m_compressor, std::move(job));
 }
 
 void LogFile::waitForCompression()
@@ -760,17 +767,37 @@ void LogFile::removeStaleCompressions()
 {
     namespace fs = std::filesystem;
 
-    const int probeLimit = (m_cfg.maxFiles > 0) ? m_cfg.maxFiles : kMaxFilesLimit;
+    // One pass over the directory rather than a probe per possible generation,
+    // which with max_files = 0 would be a thousand per file. Only names of this
+    // sink's own form — "<stem>.<digits><ext>.gz.tmp" — are touched.
     for (const auto& file : {m_cfg.textFile, m_cfg.jsonlFile})
     {
         if (file.empty())
         {
             continue;
         }
-        for (int n = 1; n <= probeLimit + 1; ++n)
+        const fs::path base(file);
+        const std::string prefix = base.stem().string() + ".";
+        const std::string suffix = base.extension().string() + ".gz.tmp";
+
+        std::error_code ec;
+        fs::directory_iterator it(base.parent_path(), ec);
+        for (; !ec && it != fs::directory_iterator(); it.increment(ec))
         {
-            std::error_code ec;
-            fs::remove(gzipTempPath(rotatedPath(fs::path(file), n)), ec);
+            const std::string name = it->path().filename().string();
+            if (name.size() <= prefix.size() + suffix.size() || !name.starts_with(prefix) ||
+                !name.ends_with(suffix))
+            {
+                continue;
+            }
+            const auto number =
+                name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+            if (number.find_first_not_of("0123456789") != std::string::npos)
+            {
+                continue;
+            }
+            std::error_code removeEc;
+            fs::remove(it->path(), removeEc);
         }
     }
 }

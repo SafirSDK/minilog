@@ -787,6 +787,54 @@ class TestFilesystemFailure(unittest.TestCase):
 # ── Compressed rotation ───────────────────────────────────────────────────────
 
 
+def wait_until_quiet(d: Path, quiet: float = 1.5, timeout: float = 60.0) -> bool:
+    """Block until no file in *d* has appeared, gone or changed size for *quiet*
+    seconds: minilog has written every datagram and finished every compression.
+
+    A fixed sleep is not enough: each rotation waits for the previous
+    compression, which syncs to disk, and on a slow disk with one worker the
+    backlog can outlast it — stopping the server then loses the datagrams it
+    has not read yet. Only stat is used. Reading a file would hold it open, and
+    on Windows an open file cannot be renamed, so the read itself could make a
+    rotation fail.
+    """
+
+    def snapshot():
+        try:
+            return sorted(
+                (p.name, p.stat().st_size) for p in d.iterdir() if not p.name.startswith("minilog-")
+            )
+        except FileNotFoundError:
+            return None  # a file went between listing and stat; look again
+
+    deadline = time.monotonic() + timeout
+    last, since = snapshot(), time.monotonic()
+    while time.monotonic() < deadline:
+        time.sleep(0.1)
+        now = snapshot()
+        if now != last:
+            last, since = now, time.monotonic()
+        elif time.monotonic() - since >= quiet:
+            return True
+    return False
+
+
+def chain_lines(d: Path) -> list[str]:
+    """Every line of the text sink's chain in *d*, oldest first, plain or gzipped.
+    Read with the server stopped."""
+    generations = {}
+    for p in d.glob("syslog.*.log*"):
+        n = int(p.name.split(".")[1])
+        if p.suffix != ".gz" or n not in generations:  # both forms hold the same records
+            generations[n] = p
+    text = ""
+    for n in sorted(generations, reverse=True):
+        p = generations[n]
+        data = gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_bytes()
+        text += data.decode()
+    return (text + (d / "syslog.log").read_text()).splitlines()
+
+
 class TestCompressedRotation(unittest.TestCase):
     def test_older_generations_are_gzipped_and_hold_every_message(self):
         """With compress = true, .1 stays plain and .2 and older become .gz;
@@ -802,11 +850,7 @@ class TestCompressedRotation(unittest.TestCase):
                 for msg in sent:
                     send_udp(msg, srv.port)
                     time.sleep(0.005)  # keep them in order on the way in
-                # Compression runs in the background after each rotation.
-                deadline = time.monotonic() + 10
-                while time.monotonic() < deadline and not (d / "syslog.3.log.gz").exists():
-                    time.sleep(0.05)
-                time.sleep(0.5)
+                self.assertTrue(wait_until_quiet(d), "minilog never stopped writing")
             # Where a failed rotation or compression is reported.
             stderr = srv.stderr()
             self.assertEqual(srv.proc.returncode, 0, stderr)
@@ -816,14 +860,8 @@ class TestCompressedRotation(unittest.TestCase):
             self.assertFalse((d / "syslog.2.log").exists())
             self.assertFalse(list(d.glob("*.tmp")))
 
-            generations = sorted((int(p.name.split(".")[1]), p) for p in d.glob("syslog.*.log*"))
-            self.assertGreaterEqual(len(generations), 3)
-            text = ""
-            for _, p in reversed(generations):  # oldest first
-                data = gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_bytes()
-                text += data.decode()
-            text += (d / "syslog.log").read_text()
-            self.assertEqual(text.splitlines(), sent, f"server stderr:\n{stderr}")
+            self.assertTrue((d / "syslog.3.log.gz").exists())
+            self.assertEqual(chain_lines(d), sent, f"server stderr:\n{stderr}")
 
     def test_a_restart_carries_on_with_the_same_chain(self):
         """Stopped and started again on the same files, minilog keeps shifting the
@@ -843,17 +881,11 @@ class TestCompressedRotation(unittest.TestCase):
                         send_udp(msg, srv.port)
                         sent.append(msg)
                         time.sleep(0.005)
-                    time.sleep(1.0)
+                    self.assertTrue(wait_until_quiet(d), "minilog never stopped writing")
                 stderr += srv.stderr()
                 self.assertEqual(srv.proc.returncode, 0, stderr)
 
-            generations = sorted((int(p.name.split(".")[1]), p) for p in d.glob("syslog.*.log*"))
-            text = ""
-            for _, p in reversed(generations):
-                data = gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_bytes()
-                text += data.decode()
-            text += (d / "syslog.log").read_text()
-            self.assertEqual(text.splitlines(), sent, f"server stderr:\n{stderr}")
+            self.assertEqual(chain_lines(d), sent, f"server stderr:\n{stderr}")
             self.assertFalse(list(d.glob("*.tmp")))
 
 

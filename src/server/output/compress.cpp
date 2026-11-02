@@ -16,7 +16,9 @@
 #include "compress.hpp"
 
 #include <fstream>
+#include <memory>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 #include <zlib.h>
 
@@ -68,6 +70,38 @@ bool syncToDisk(const fs::path& path)
 #endif
 }
 
+// The rename of the .gz into place has to reach the disk before the removal of
+// the plain file does. Without a sync of the directory in between, that order
+// is up to the filesystem: one that does not keep metadata changes in order
+// (ext4 with data=writeback, some network filesystems) could persist the
+// removal and lose the rename to a power cut, and both copies would be gone.
+// On Windows, NTFS logs both in order, and there is no equivalent call.
+bool syncDirectory([[maybe_unused]] const fs::path& dir)
+{
+#ifdef _WIN32
+    return true;
+#else
+    const int fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+    if (fd < 0)
+    {
+        return false;
+    }
+    const bool ok = ::fsync(fd) == 0;
+    ::close(fd);
+    return ok;
+#endif
+}
+
+// Closes a gzFile that is still open when a scope is left early — by an
+// exception, say — so neither the zlib state nor the file handle is leaked.
+// The normal path releases it and closes it explicitly, because gzclose is
+// where the trailer is written and its result has to be checked.
+struct GzClose
+{
+    void operator()(gzFile f) const noexcept { gzclose(f); }
+};
+using GzHandle = std::unique_ptr<std::remove_pointer_t<gzFile>, GzClose>;
+
 gzFile openGzip(const fs::path& path)
 {
     // Level 6, zlib's default: about 13x on JSONL, against 9x at level 1, and
@@ -88,8 +122,8 @@ std::string writeGzip(const fs::path& plain, const fs::path& tmp, const std::ato
         return "cannot open '" + plain.string() + "'";
     }
 
-    gzFile out = openGzip(tmp);
-    if (out == nullptr)
+    GzHandle out(openGzip(tmp));
+    if (!out)
     {
         return "cannot create '" + tmp.string() + "'";
     }
@@ -105,10 +139,10 @@ std::string writeGzip(const fs::path& plain, const fs::path& tmp, const std::ato
         }
         in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto got = static_cast<unsigned>(in.gcount());
-        if (got > 0 && gzwrite(out, buffer.data(), got) != static_cast<int>(got))
+        if (got > 0 && gzwrite(out.get(), buffer.data(), got) != static_cast<int>(got))
         {
             int code       = 0;
-            const char* gz = gzerror(out, &code);
+            const char* gz = gzerror(out.get(), &code);
             error = "write to '" + tmp.string() + "' failed: " + (gz != nullptr ? gz : "unknown");
             break;
         }
@@ -123,7 +157,7 @@ std::string writeGzip(const fs::path& plain, const fs::path& tmp, const std::ato
     }
 
     // gzclose writes the trailer, so a full disk can surface only here.
-    if (gzclose(out) != Z_OK && error.empty())
+    if (gzclose(out.release()) != Z_OK && error.empty())
     {
         error = "finishing '" + tmp.string() + "' failed";
     }
@@ -152,6 +186,21 @@ fs::path gzipTempPath(const fs::path& plain)
 
 std::string gzipFile(const fs::path& plain, const std::atomic<bool>& cancel)
 {
+    // Removes the .tmp, whatever stopped this short. Never throws: it also runs
+    // from the catch blocks below.
+    const auto discardTemp = [&plain]() noexcept
+    {
+        try
+        {
+            std::error_code ec;
+            fs::remove(gzipTempPath(plain), ec);
+        }
+        catch (...)
+        {
+            // Out of memory building the path; the next startup removes it.
+        }
+    };
+
     try
     {
         const fs::path tmp = gzipTempPath(plain);
@@ -168,11 +217,17 @@ std::string gzipFile(const fs::path& plain, const std::atomic<bool>& cancel)
         }
         if (!error.empty())
         {
-            fs::remove(tmp, ec);
+            discardTemp();
             return error;
         }
 
-        // Both now exist with the same records; the plain one goes last.
+        // Both now exist with the same records; the plain one goes last, and
+        // only once the rename is known to be on disk.
+        if (!syncDirectory(plain.parent_path()))
+        {
+            return "compressed, but syncing directory '" + plain.parent_path().string() +
+                   "' failed (both copies are kept)";
+        }
         fs::remove(plain, ec);
         if (ec)
         {
@@ -183,10 +238,12 @@ std::string gzipFile(const fs::path& plain, const std::atomic<bool>& cancel)
     }
     catch (const std::exception& e)
     {
+        discardTemp();
         return std::string("unexpected exception: ") + e.what();
     }
     catch (...)
     {
+        discardTemp();
         return "unexpected non-standard exception";
     }
 }

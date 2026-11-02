@@ -42,7 +42,7 @@ let pollTimer       = 0;
 let loadingUp       = false;
 let polling         = false;
 let clearOffset     = null;
-let olderCompressed = false; // gzipped generations exist beyond the chain's start
+let olderHistory    = false; // generations exist older than the chain's start (export only)
 
 let searchMatches      = [];
 let searchTotalMatches = 0;
@@ -234,7 +234,7 @@ async function loadTail() {
   tailOffset = data.tail_offset ?? 0;
   chainEnd   = tailOffset;
   topOffset  = data.first_offset ?? 0;
-  olderCompressed = Boolean(data.compressed_history);
+  olderHistory = Boolean(data.older_history);
 
   renderRows(data.lines ?? [], data.offsets ?? [], false);
   updateEmptyState();
@@ -369,7 +369,7 @@ async function loadOlder() {
     topOffset = data.first_offset ?? topOffset;
     updateEmptyState();
   }
-  olderCompressed = Boolean(data.compressed_history);
+  olderHistory = Boolean(data.older_history);
   updateOlderNote();
 
   // Re-attach observer to the new first row
@@ -1162,7 +1162,7 @@ function updateEmptyState() {
 // once that line is loaded — and not after Clear Screen, whose view starts
 // where the user cleared it rather than where the chain does.
 function updateOlderNote() {
-  olderNote.hidden = !(olderCompressed && topOffset === 0 && clearOffset === null &&
+  olderNote.hidden = !(olderHistory && topOffset === 0 && clearOffset === null &&
                        logBody.rows.length > 0);
 }
 

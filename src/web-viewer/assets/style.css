@@ -584,8 +584,8 @@ select option { background: var(--surface-2); }
 
 #top-sentinel { height: 1px; }
 
-/* Shown above the oldest line scrolling can reach when older generations are
-   gzipped; see compressed_history in handlers.go. */
+/* Shown above the oldest line scrolling can reach when older generations exist
+   outside the chain; see older_history in handlers.go. */
 .older-note {
   padding: 8px 16px;
   font-size: 12px;

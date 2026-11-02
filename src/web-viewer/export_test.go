@@ -515,7 +515,7 @@ func TestFileChain_LeavesCompressedGenerationsOut(t *testing.T) {
 	}
 }
 
-func TestHandler_Lines_ReportsCompressedHistoryOnTailAndBackwardReads(t *testing.T) {
+func TestHandler_Lines_ReportsOlderHistoryOnTailAndBackwardReads(t *testing.T) {
 	dir := t.TempDir()
 	sink, _ := compressedChain(t, dir)
 	plain := makeSink(t, t.TempDir(), "plain", []string{simple("2026-11-02T10:00:00Z", "INFO", "x").line(t)})
@@ -524,16 +524,16 @@ func TestHandler_Lines_ReportsCompressedHistoryOnTailAndBackwardReads(t *testing
 
 	flag := func(path string) bool {
 		var r struct {
-			CompressedHistory bool `json:"compressed_history"`
+			OlderHistory bool `json:"older_history"`
 		}
 		decodeJSON(t, get(t, ts, path), &r)
-		return r.CompressedHistory
+		return r.OlderHistory
 	}
 	if !flag("/lines?sink=main&tail=true") {
-		t.Error("tail read: compressed_history not reported")
+		t.Error("tail read: older_history not reported")
 	}
 	if !flag("/lines?sink=main&dir=backward&offset=100") {
-		t.Error("backward read: compressed_history not reported")
+		t.Error("backward read: older_history not reported")
 	}
 	if flag("/lines?sink=main&offset=0") {
 		t.Error("forward read (the live poll) checked for compressed history")
@@ -590,5 +590,81 @@ func TestExport_TimeRangeAcrossCompressedGenerations(t *testing.T) {
 	if !strings.Contains(body, "gen2") || !strings.Contains(body, "gen1") ||
 		strings.Contains(body, "gen3") || strings.Contains(body, "active") {
 		t.Errorf("body = %q", body)
+	}
+}
+
+// A plain generation older than a compressed one — a compression that failed,
+// or one from before compress was switched on — would sit directly before .1
+// in the chain, and scrolling up would jump over the compressed ones without
+// a sign. It stays out of the chain; export still has everything, in order.
+func TestFileChain_StopsAtTheNewestCompressedGeneration(t *testing.T) {
+	dir := t.TempDir()
+	sink, recs := compressedChain(t, dir) // .3.gz .2.gz .1 active
+	old := simple("2026-11-02T09:59:59Z", "INFO", "gen4 plain").line(t)
+	if err := os.WriteFile(filepath.Join(dir, "main.4.jsonl"), []byte(old+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fc, err := NewFileChain(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len(recs[2]) + 1 + len(recs[3]) + 1); fc.TailOffset() != want {
+		t.Errorf("chain is %d bytes, want %d (.1 and the active file)", fc.TailOffset(), want)
+	}
+
+	body, _ := exportBody(t, []Sink{sink}, "sink=main&format=jsonl")
+	if want := old + "\n" + strings.Join(recs, "\n") + "\n"; body != want {
+		t.Errorf("export got  %q\nwant %q", body, want)
+	}
+}
+
+// With compress, the chain is .1 and the active file only — also while .2 is
+// still plain because its compression has not finished — so a compression
+// finishing never moves the chain's offsets.
+func TestFileChain_WithCompressIsTheActiveFileAndDotOne(t *testing.T) {
+	dir := t.TempDir()
+	recs := []string{
+		simple("2026-11-02T10:00:00Z", "INFO", "gen2 still plain").line(t),
+		simple("2026-11-02T10:00:01Z", "INFO", "gen1").line(t),
+		simple("2026-11-02T10:00:02Z", "INFO", "active").line(t),
+	}
+	sink := makeSink(t, dir, "main", []string{recs[2]})
+	sink.Compress = true
+	for n, rec := range map[int]string{2: recs[0], 1: recs[1]} {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("main.%d.jsonl", n)), []byte(rec+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fc, err := NewFileChain(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len(recs[1]) + 1 + len(recs[2]) + 1); fc.TailOffset() != want {
+		t.Errorf("chain is %d bytes, want %d (.1 and the active file)", fc.TailOffset(), want)
+	}
+	if !fc.OlderOutside() {
+		t.Error("the plain .2 outside the chain was not reported")
+	}
+
+	// Its compression finishing does not move the chain.
+	writeGzip(t, filepath.Join(dir, "main.2.jsonl.gz"), recs[0])
+	os.Remove(filepath.Join(dir, "main.2.jsonl"))
+	after, _ := NewFileChain(sink)
+	if after.TailOffset() != fc.TailOffset() || !after.OlderOutside() {
+		t.Errorf("chain moved: %d → %d bytes, older %v", fc.TailOffset(), after.TailOffset(), after.OlderOutside())
+	}
+}
+
+func TestFileChain_WithCompressAndNoHistoryReportsNoneOlder(t *testing.T) {
+	sink := makeSink(t, t.TempDir(), "main", []string{simple("2026-11-02T10:00:00Z", "INFO", "x").line(t)})
+	sink.Compress = true
+	fc, err := NewFileChain(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.OlderOutside() {
+		t.Error("reported older history that does not exist")
 	}
 }

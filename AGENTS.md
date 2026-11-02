@@ -68,13 +68,20 @@ Triggered before each write if **either** `text_file` or `jsonl_file` exceeds `m
 Both files always rotate together. A generation exists as `.N.ext` or `.N.ext.gz`; shifting and
 expiry handle both forms whatever `compress` says.
 
-With `compress`, the generation that has just become `.2` is gzipped by `gzipFile()`
-(`output/compress.cpp`) on `LogFile::m_compressor`, a one-thread `asio::thread_pool` — not on
-the strand (writes) or the io_context (receives), since 100 MB takes seconds. `rotate()` calls
-`waitForCompression()` before renaming anything: on Windows a file the compressor still holds
-cannot be renamed, and a failed rename closes the sink. `gzipFile` writes `.gz.tmp`, syncs,
-renames, then removes the plain file, so every failure leaves the plain generation;
-`m_cancelCompression` (set by `close()` and the destructor) stops it between blocks.
+With `compress`, generation `.2` is gzipped by `gzipFile()` (`output/compress.cpp`) after each
+rotation and once at startup, on `LogFile::m_compressor` — a one-thread `asio::thread_pool`
+created on first use, not the strand (writes) or the io_context (receives), since 100 MB takes
+seconds. `rotate()` calls `waitForCompression()` before renaming anything: on Windows a file the
+compressor still holds cannot be renamed, and a failed rename closes the sink. The cost is that a
+rotation arriving before the previous compression is done blocks that strand, and the io thread
+running it. `gzipFile` writes `.gz.tmp`, syncs it and (POSIX) the directory, renames, then
+removes the plain file, so every failure leaves the plain generation; `m_cancelCompression` (set
+by `close()` and the destructor) stops it between blocks.
+
+The web viewer's `FileChain` never includes `.gz` files. With `compress` (read from the same
+config) it is exactly `.1` + the active file, so a compression finishing never moves its offsets;
+without it, it stops at the newest `.gz`. `/lines` reports `older_history` for what is left out,
+and `/export` reads everything.
 
 ### Sink failure and recovery
 A filesystem error closes that one sink (`LogFile::failSink`) and drops every message routed to it;

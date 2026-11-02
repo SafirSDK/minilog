@@ -179,42 +179,73 @@ type chainFile struct {
 // A new FileChain should be built on every request — it snapshots the
 // current state of the filesystem and is safe under log rotation.
 type FileChain struct {
-	files []chainFile // oldest first
-	total int64
+	files        []chainFile // oldest first
+	total        int64
+	olderOutside bool // see OlderOutside
 }
 
-// NewFileChain discovers all files in the rotation chain for sink and builds
+// NewFileChain discovers the files in the rotation chain for sink and builds
 // the logical offset map.
 //
 // Rotation naming: syslog.N.jsonl … syslog.1.jsonl, syslog.jsonl.
 // MaxFiles controls how many rotated generations to probe.
+//
+// Gzipped generations are never in the chain: scrolling reads at arbitrary
+// positions, which a gzip file gives only by decompressing from its start.
+// Which plain ones are in it depends on the sink:
+//
+//   - With compress, the active file and .1 — the two minilog keeps plain — and
+//     nothing else, even while .2 is still plain because its compression has
+//     not finished. Otherwise every compression would drop a generation off the
+//     front of the chain a few seconds after a rotation, moving every offset the
+//     client holds.
+//   - Without it, the plain generations newer than the newest gzipped one; .gz
+//     files are there only if compress was on once. A plain generation older
+//     than that is left out too, or it would sit directly before the next newer
+//     plain one and scrolling would jump over the compressed ones between them
+//     without a sign.
+//
+// Whatever is left out is reached through /export; OlderOutside says whether
+// there is any.
 func NewFileChain(sink Sink) (*FileChain, error) {
-	var files []chainFile
-	var offset int64
-	for _, path := range chainPaths(sink) {
-		info, err := os.Stat(path)
+	paths := chainPaths(sink)
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+
+	// Newest first; the active file, last in paths, is never compressed.
+	var newestFirst []chainFile
+	olderOutside := false
+	for i := len(paths) - 1; i >= 0; i-- {
+		if sink.Compress && i < len(paths)-2 {
+			// Past .1: is there anything older? .2 is all that needs looking
+			// at, since rotation keeps the generations contiguous.
+			olderOutside = exists(paths[i]) || exists(paths[i]+".gz")
+			break
+		}
+		if i < len(paths)-1 && exists(paths[i]+".gz") {
+			olderOutside = true
+			break
+		}
+		info, err := os.Stat(paths[i])
 		if err != nil || info.Size() == 0 {
 			continue
 		}
-		files = append(files, chainFile{path: path, start: offset, size: info.Size()})
-		offset += info.Size()
+		newestFirst = append(newestFirst, chainFile{path: paths[i], size: info.Size()})
 	}
 
-	return &FileChain{files: files, total: offset}, nil
+	files := make([]chainFile, 0, len(newestFirst))
+	var offset int64
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		cf := newestFirst[i]
+		cf.start = offset
+		files = append(files, cf)
+		offset += cf.size
+	}
+	return &FileChain{files: files, total: offset, olderOutside: olderOutside}, nil
 }
 
-// hasCompressedHistory reports whether any rotated generation of sink is
-// gzipped. Those are outside the FileChain — scrolling needs random access,
-// which a gzip file does not give — and reachable only through /export.
-func hasCompressedHistory(sink Sink) bool {
-	paths := chainPaths(sink)
-	for _, p := range paths[:len(paths)-1] { // the active file is never compressed
-		if _, err := os.Stat(p + ".gz"); err == nil {
-			return true
-		}
-	}
-	return false
-}
+// OlderOutside reports whether older generations exist than the chain starts
+// with — gzipped ones, or plain ones behind them — which only /export reads.
+func (fc *FileChain) OlderOutside() bool { return fc.olderOutside }
 
 // chainPaths returns every path a plain generation of sink can have, oldest
 // first and the active file last. Most of them usually do not exist. A

@@ -576,3 +576,23 @@ jsonl_file = /var/log/syslog.jsonl
 		t.Errorf("Addr: want %q, got %q", ":8080", cfg.Addr)
 	}
 }
+
+func TestLoadConfig_Compress(t *testing.T) {
+	for val, want := range map[string]bool{"": false, "true": true, "1": true, "false": false, "0": false} {
+		content := "[output.main]\njsonl_file = syslog.jsonl\n"
+		if val != "" {
+			content += "compress = " + val + "\n"
+		}
+		cfg, err := loadConfig(writeConfig(t, t.TempDir(), content))
+		if err != nil {
+			t.Fatalf("compress = %q: %v", val, err)
+		}
+		if cfg.Sinks[0].Compress != want {
+			t.Errorf("compress = %q: got %v, want %v", val, cfg.Sinks[0].Compress, want)
+		}
+	}
+	// The server will not start on anything else, so neither does this.
+	if _, err := loadConfig(writeConfig(t, t.TempDir(), "[output.main]\njsonl_file = syslog.jsonl\ncompress = yes\n")); err == nil {
+		t.Error("compress = yes was accepted")
+	}
+}

@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <optional>
 #include <string>
 
 namespace minilog
@@ -151,8 +152,10 @@ private:
     // writes happen, so it runs on a thread of its own rather than on the
     // strand or on the io_context, whose threads are also receiving datagrams.
     // One thread, one job at a time: rotation waits for the previous job, so a
-    // second can never be queued behind the first.
-    boost::asio::thread_pool m_compressor{1};
+    // second can never be queued behind the first. Created by the first
+    // compression, so a sink without `compress` has no thread. Accessed only on
+    // m_strand, apart from the destructor.
+    std::optional<boost::asio::thread_pool> m_compressor;
 };
 
 } // namespace minilog

@@ -48,6 +48,7 @@ struct Options
     uint16_t udpPort    = 0;      // 0 = pick a free one
     std::string forwardHost;      // empty = forwarding disabled
     bool secondSinkSameDir = false;
+    bool compress          = false;
 };
 
 // A directory of its own per test, removed afterwards. Everything here inspects
@@ -97,6 +98,10 @@ struct Fixture
             << "\n[output.main]\n"
             << "text_file = " << (fs::path(logDir) / "syslog.log").string() << "\n"
             << "max_size = " << opts.maxSize << "\n";
+        if (opts.compress)
+        {
+            ini << "compress = true\n";
+        }
         if (opts.secondSinkSameDir)
         {
             ini << "\n[output.audit]\n"
@@ -412,6 +417,21 @@ BOOST_AUTO_TEST_CASE(rotation_disabled_is_a_warning_and_exits_zero)
 
     std::ostringstream out;
     BOOST_TEST(printPreflight(report, "cfg", out) == EXIT_SUCCESS);
+}
+
+BOOST_AUTO_TEST_CASE(compress_without_rotation_is_a_warning)
+{
+    Options opts;
+    opts.compress = true;
+    opts.maxSize  = "0";
+    BOOST_TEST(mentions(preflight(writeConfig(opts), ServiceState::NotInstalled),
+                        Finding::Level::Warning,
+                        "compress = true"));
+
+    opts.maxSize = "10MB";
+    BOOST_TEST(!mentions(preflight(writeConfig(opts), ServiceState::NotInstalled),
+                         Finding::Level::Warning,
+                         "compress = true"));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

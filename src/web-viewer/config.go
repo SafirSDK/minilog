@@ -16,7 +16,8 @@ import (
 type Sink struct {
 	Name     string
 	Path     string
-	MaxFiles int // maximum number of rotated generations (default 10)
+	MaxFiles int  // maximum number of rotated generations (default 10)
+	Compress bool // the server gzips generations .2 and older; see NewFileChain
 }
 
 // Config is everything minilog-web-viewer takes from minilog.conf: the sinks it
@@ -61,6 +62,7 @@ func loadConfig(configPath string) (Config, error) {
 		jsonlFile   string
 		maxFiles    int
 		maxFilesSet bool
+		compress    bool
 	}
 
 	var (
@@ -165,6 +167,19 @@ func loadConfig(configPath string) (Config, error) {
 			}
 			current.maxFiles = n
 			current.maxFilesSet = true
+		case "compress":
+			// The spellings the server accepts, and rejected otherwise for the
+			// same reason as max_files: the server will not start on anything
+			// else.
+			switch val {
+			case "true", "1":
+				current.compress = true
+			case "false", "0":
+				current.compress = false
+			default:
+				return Config{}, fmt.Errorf(
+					"[output.%s] compress = %q is not true, false, 1 or 0", current.name, val)
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -190,7 +205,7 @@ func loadConfig(configPath string) (Config, error) {
 			// rejects a relative text_file / jsonl_file, so a path that reaches
 			// here is absolute; resolving one here would only reintroduce the
 			// disagreement about what it is relative to that rejection removed.
-			sinks = append(sinks, Sink{Name: s.name, Path: s.jsonlFile, MaxFiles: mf})
+			sinks = append(sinks, Sink{Name: s.name, Path: s.jsonlFile, MaxFiles: mf, Compress: s.compress})
 		}
 	}
 	if len(sinks) == 0 {

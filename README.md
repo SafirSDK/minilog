@@ -303,6 +303,7 @@ It reports:
   deliberately does not fail to start over this; it retries the lookup in the background, so the
   only symptom at runtime is that nothing is forwarded.
 - **`max_size = 0`**, as a warning: rotation is off, which is a valid choice and worth stating.
+  With `compress = true` as well, a second warning says that nothing will be compressed.
 
 Every check runs even after one has failed, so one run lists every problem — a preflight that
 stopped at the first fault would force the fix-rerun-fix-rerun cycle it exists to prevent. The exit
@@ -420,8 +421,11 @@ With `compress = true`, generations `.2` and older are gzipped — `syslog.2.log
 `syslog.3.jsonl.gz`, … — while the active file and `.1` stay plain. Logs typically shrink about
 ten-fold. `zcat`, `zgrep`, `gzip -d` and 7-Zip read them.
 
-Compression happens in the background after a rotation, so incoming messages are never held up
-by it; the next rotation waits for it to finish before renaming anything. It writes
+Compression happens in the background after a rotation, so incoming messages are not held up by
+it. The next rotation does wait for it to finish before renaming anything, though: with a
+`max_size` small enough to fill up in the seconds it takes to compress one generation, writes to
+that sink pause until it is done (and with `workers = 1`, so does receiving). At the default
+100MB a rotation is normally minutes away when the previous compression ends. It writes
 `….gz.tmp`, syncs it to disk, renames it into place and only then removes the plain file, so a
 full disk, a crash or a power loss leaves the plain generation intact. A failure is reported to
 syslog or the Event Log, the generation is kept uncompressed, and the sink carries on; a stray
@@ -434,10 +438,12 @@ place: they still move along and expire as usual. Only generation `.2` is compre
 rotation, and at startup — so plain generations from before `compress` was switched on, or from a
 failed compression, stay plain until they expire.
 
-The [web viewer](#web-viewer) scrolls, filters and searches the plain generations only — reading
-at arbitrary positions inside a gzip file would mean decompressing it from the start each time.
-When scrolling reaches the oldest plain line and compressed generations exist, it says so;
-**Export** reads every generation, compressed ones included.
+The [web viewer](#web-viewer) scrolls, filters and searches the active file and `.1` of a sink
+with `compress` — reading at arbitrary positions inside a gzip file would mean decompressing it
+from the start each time. It reads `compress` from the same `minilog.conf`. When scrolling reaches
+the oldest line of `.1` and older generations exist, it says so; **Export** reads every
+generation, compressed ones included. For a sink without `compress` that has `.gz` generations
+from when it was on, scrolling stops at the newest of them, so it never jumps over one unseen.
 
 ### `[web_viewer]`
 
