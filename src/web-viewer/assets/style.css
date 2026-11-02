@@ -58,7 +58,7 @@ html, body {
 }
 
 .toolbar-left   { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.toolbar-center { display: flex; align-items: center; flex: 1; justify-content: center; }
+.toolbar-center { display: flex; align-items: center; flex: 1; justify-content: center; gap: 6px; }
 .toolbar-right  { display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: nowrap; }
 
 .logo-icon {
@@ -118,6 +118,23 @@ html, body {
   white-space: nowrap;
 }
 .toolbar-clear-btn:hover { background: var(--border); color: var(--text-strong); }
+
+/* Shows whether the view follows new lines; clicking switches it. */
+.toolbar-follow-btn {
+  background: none;
+  border: 1px solid #3fb950;
+  border-radius: 4px;
+  color: #3fb950;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 84px;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.toolbar-follow-btn:hover { background: var(--surface-2); }
+.toolbar-follow-btn[aria-pressed="false"] { border-color: var(--sev-warn); color: var(--sev-warn); }
 
 /* ── Form controls ────────────────────────────────────────── */
 

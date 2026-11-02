@@ -973,6 +973,9 @@ listen address is bound, and reports a failed run to the SCM as a service-specif
 
 - Sink selector (one tab per `[output.*]` section)
 - Infinite scroll — loads older pages as you scroll up; live-tail polling for new entries
+- Follow / Paused toggle (also Space) — shows whether new entries are being added; scrolling up
+  pauses, scrolling to the bottom follows again, and nothing is added while paused, so the lines
+  being read stay put however fast new ones arrive
 - Column visibility toggle (Msg Time, Rcv Time, Source, Hostname, App, PID, Severity, Proto, Msg ID, Message)
 - Severity and facility filter dropdowns
 - Include / exclude text pattern filters

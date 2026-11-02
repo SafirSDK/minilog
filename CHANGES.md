@@ -2,6 +2,15 @@
 
 ## v1.4.1 — 2026-11-02
 
+### New
+
+- **The web viewer has a Follow / Paused toggle.** A toolbar button shows whether new lines are
+  being added, and clicking it, or pressing Space, switches between the two. Pausing works at the
+  bottom too, to read what is on screen while traffic keeps arriving; resuming there carries on
+  from where it paused, and from further up it jumps to the newest lines. The button only shows
+  and changes the same state scrolling does, so scrolling up still pauses and scrolling to the
+  bottom still follows. Plain Space no longer pages down in the log; PageDown does.
+
 ### Fixed
 
 - **The web viewer can be scrolled away from the live tail under heavy traffic.** The view followed
@@ -11,6 +20,10 @@
   scrolling down to the bottom, or "Jump to tail", rejoins it. While away from the tail no new lines
   are added, so the lines being read are no longer pushed out of the view within seconds; scrolling
   back to the bottom carries on from where it stopped. (#49)
+- **Following on from a search result no longer skips lines.** A match outside the loaded lines
+  is shown with the lines around it, and scrolling to the bottom of those lines used to start
+  following from the newest line, with everything in between silently missing. It now stays
+  paused there, and Follow or "Jump to tail" goes to the newest lines.
 
 ## v1.4.0 — 2026-09-23
 

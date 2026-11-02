@@ -37,6 +37,7 @@ let tailOffset      = 0;   // logical offset the live tail has read up to
 let chainEnd        = 0;   // tail_offset of the last response, for rotation detection
 let atTail          = true;
 let lastScrollTop   = 0;   // to tell which way the last scroll went
+let tailResumable   = true; // the rows on screen end where the cursor is
 let pollTimer       = 0;
 let loadingUp       = false;
 let polling         = false;
@@ -73,6 +74,7 @@ const statusDot     = document.getElementById('status-dot');
 const searchInput   = document.getElementById('search');
 const topSentinel   = document.getElementById('top-sentinel');
 const jumpTailBtn   = document.getElementById('jump-tail-btn');
+const followBtn     = document.getElementById('follow-btn');
 const matchNav      = document.getElementById('match-nav');
 const matchCounter  = document.getElementById('match-counter');
 const matchPrev     = document.getElementById('match-prev');
@@ -109,6 +111,7 @@ function lsSet(key, val) {
 // ── Initialisation ────────────────────────────────────────────────────────────
 
 async function init() {
+  setAtTail(atTail);
   loadState();
   buildColChips();
   buildSevChips();
@@ -199,7 +202,8 @@ function filterParams() {
 async function loadTail() {
   stopPoll();
   clearDOM();
-  atTail = true;
+  setAtTail(true);
+  tailResumable = true;
   hideOverlays();
   pendingSearch      = '';
   searchMatches      = [];
@@ -330,7 +334,7 @@ function attachTopObserver() {
 async function loadOlder() {
   if (loadingUp || topOffset === 0) return;
   loadingUp = true;
-  atTail = false;
+  setAtTail(false);
   showJumpTail();
 
   const p = filterParams();
@@ -519,14 +523,17 @@ async function jumpToMatch(idx) {
   if (found) {
     found.classList.add('row-match', 'row-current');
     found.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    atTail = false;
+    setAtTail(false);
     return;
   }
 
   // Not in DOM — fetch a context window around the match offset
   stopPoll();
   clearDOM();
-  atTail = false;
+  setAtTail(false);
+  // The cursor below moves to the end of the chain, not to the end of this
+  // window, so following on from here would skip everything in between.
+  tailResumable = false;
 
   const p = filterParams();
   p.set('offset', String(match.offset));
@@ -850,7 +857,16 @@ function bindControls() {
         !e.target.closest('input, select, textarea')) {
       leaveTailUpward();
     }
+    // A focused button takes Space as a click of its own; leave it that.
+    // Shift+Space still pages up, and a held key does not flicker the toggle.
+    if (e.key === ' ' && !e.repeat && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
+        !e.target.closest('input, select, textarea, button')) {
+      e.preventDefault();
+      toggleFollow();
+    }
   });
+
+  followBtn.addEventListener('click', toggleFollow);
 
   // Search input
   searchInput.addEventListener('keydown', e => {
@@ -897,16 +913,44 @@ function bindControls() {
     lastScrollTop = mainEl.scrollTop;
     if (!isNearBottom()) {
       leaveTail();
-    } else if (movedDown) {
-      atTail = true;
+    } else if (movedDown && tailResumable) {
+      setAtTail(true);
       if (!pendingSearch) hideOverlays();
     }
   });
 }
 
+function setAtTail(on) {
+  atTail = on;
+  followBtn.setAttribute('aria-pressed', String(on));
+  followBtn.textContent = on ? '● Following' : '❚❚ Paused';
+  followBtn.title = on
+    ? 'New lines are shown as they arrive. Click, press Space or scroll up to pause.'
+    : 'Paused: no new lines are added. Click, press Space or scroll to the bottom to follow again.';
+}
+
 function leaveTail() {
-  atTail = false;
+  setAtTail(false);
   showJumpTail();
+}
+
+// The button mirrors atTail rather than being a setting of its own: scrolling
+// up still pauses and scrolling to the bottom still follows, so it can never
+// hold the view at the tail against the user.
+function toggleFollow() {
+  if (atTail) {
+    leaveTail();
+  } else if (isNearBottom() && tailResumable && !pendingSearch) {
+    // Still at the bottom (paused here, not scrolled away): carry on from the
+    // cursor, so nothing between the pause and now is skipped.
+    setAtTail(true);
+    hideOverlays();
+    scrollToBottom();
+  } else {
+    // Following ends a search, as scrolling the results away would not.
+    if (pendingSearch) clearSearch();
+    loadTail();
+  }
 }
 
 // For user input that scrolls up: there is nothing to leave for while the view
@@ -934,7 +978,8 @@ function clearView() {
   clearSearch();
   stopPoll();
   clearDOM();
-  atTail = true;
+  setAtTail(true);
+  tailResumable = true;
   hideOverlays();
   updateEmptyState();
   startPoll();
