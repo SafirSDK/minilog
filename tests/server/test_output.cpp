@@ -968,6 +968,8 @@ BOOST_AUTO_TEST_CASE(shutdown_does_not_wait_for_a_compression_a_rotation_is_wait
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     lf.close();
     runner.join();
+    ioc.restart();
+    ioc.poll();
 
     // The rotation went ahead once the compression stopped, so the 60 MB
     // generation is .3 now — still plain, as it would not be had it been waited for.
@@ -2116,10 +2118,11 @@ BOOST_AUTO_TEST_CASE(a_resumed_shift_keeps_the_generation_above_its_gap)
     cfg.maxSize          = 1;
     cfg.maxFiles         = 4;
     cfg.includeMalformed = true;
-    std::ofstream(dir / "syslog.4.log") << "oldest\n";
-    std::ofstream(dir / "syslog.2.log") << "older\n";
-    std::ofstream(dir / "syslog.1.log") << "old\n";
-    std::ofstream(dir / "syslog.log") << "current\n";
+    // Binary, as the sink writes: text mode on Windows would add a \r.
+    std::ofstream(dir / "syslog.4.log", std::ios::binary) << "oldest\n";
+    std::ofstream(dir / "syslog.2.log", std::ios::binary) << "older\n";
+    std::ofstream(dir / "syslog.1.log", std::ios::binary) << "old\n";
+    std::ofstream(dir / "syslog.log", std::ios::binary) << "current\n";
 
     LogFile lf(ioc, cfg, kTestRetry);
     writeSync(lf, rfc3164Msg("new")); // the active file is over max_size: rotates first

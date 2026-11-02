@@ -832,6 +832,13 @@ void LogFile::scheduleCompression()
     // plain. Older plain generations — left by a failed compression, or from
     // before `compress` was switched on — are left as they are rather than all
     // compressed at once.
+    //
+    // Nothing is started once the sink is closing: the job would only stop at
+    // its first block, after creating a .tmp for nothing.
+    if (m_cancelCompression)
+    {
+        return;
+    }
     std::vector<fs::path> plain;
     for (const auto& file : {m_cfg.textFile, m_cfg.jsonlFile})
     {
