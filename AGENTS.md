@@ -93,6 +93,13 @@ split as `ReceiveBackoff` and `AdmissionControl`. `LogFile::close()` sets a shut
 cancelling the timer: a pending retry keeps `io_context::run()` from returning, and `cancel()` alone
 does not stop a handler that was already queued.
 
+A failed **rotation** is not a sink failure (#50): `rotate()` gets a reason back from
+`shiftFiles` instead of calling `failSink`, reopens the active files, and `rotationFailed()` sets
+`m_rotationRetryAt` (now + the retry interval) and reports through its own `SinkRecovery`,
+`m_rotationRecovery`; `rotateIfNeeded()` does not try again before then. Renames and removals go
+through `retryWhileInUse()`, which on Windows retries a sharing violation for up to 750 ms. Only a
+failure to *open* the files afterwards closes the sink.
+
 A failure inside `openAtStartup()` is the one that is **not** retried or rate-limited: `main()` turns
 it into `EXIT_FAILURE` without ever running the `io_context`, so there is nothing alive to retry on
 and the message must not promise one.

@@ -40,6 +40,11 @@
 
 ### Fixed
 
+- **A rotation that fails no longer closes the sink.** On Windows, another program with one of
+  the log files open — antivirus, a backup, an editor — made the rotation's rename fail, which
+  closed the sink and dropped every message for 30 seconds. Such a rename is now retried for up to
+  750 ms; if it still fails, the sink keeps writing to its current files past `max_size` and tries
+  the rotation again every 30 seconds, reporting it once and then at most once a minute. (#50)
 - **Hiding one severity in the web viewer no longer hides four others.** The severity chips send
   the short syslog names (`err`, `warn`, `crit`, `emerg`) while minilog writes `ERROR`, `WARNING`,
   `CRITICAL` and `EMERGENCY`, and the filter compared the two exactly. So hiding any severity —

@@ -1941,12 +1941,14 @@ BOOST_AUTO_TEST_CASE(closing_a_sink_after_its_retry_came_due_does_not_reopen_it)
     BOOST_CHECK(!fs::exists(cfg.jsonlFile));
 }
 
-BOOST_AUTO_TEST_CASE(recovers_from_a_rotation_abandoned_half_way)
+BOOST_AUTO_TEST_CASE(a_rotation_abandoned_half_way_does_not_stop_the_sink)
 {
     // Rotation shifts the text chain and the jsonl chain in turn, so a failure
     // between the two leaves the pair half-shifted: the text file has become .1
-    // while the jsonl file is still the active one. Reopening does not repair
-    // that — it appends to whatever is on disk and takes the sizes from there.
+    // while the jsonl file is still the active one. That used to close the sink
+    // for the retry interval; since #50 the sink keeps writing — to a fresh text
+    // file and to the jsonl file it already had — and the jsonl chain catches up
+    // when the rotation is tried again.
     OutputConfig cfg;
     cfg.name             = "main";
     cfg.textFile         = (dir / "syslog.log").string();
@@ -1956,7 +1958,7 @@ BOOST_AUTO_TEST_CASE(recovers_from_a_rotation_abandoned_half_way)
     cfg.includeMalformed = true;
 
     // A non-empty directory where the rotated jsonl generation belongs: removing
-    // it fails, which is what aborts the rotation part way through. Portable —
+    // it fails, which is what stops the rotation part way through. Portable —
     // no filesystem removes a directory that has a file in it.
     const auto blocker = dir / "syslog.1.jsonl";
     fs::create_directories(blocker);
@@ -1965,33 +1967,124 @@ BOOST_AUTO_TEST_CASE(recovers_from_a_rotation_abandoned_half_way)
     LogFile lf(ioc, cfg, kTestRetry);
 
     writeSync(lf, messageWith("first"));
-    BOOST_REQUIRE(fs::exists(cfg.textFile));
-    BOOST_REQUIRE(fs::exists(cfg.jsonlFile));
+    writeSync(lf, messageWith("second")); // rotates the text file, not the jsonl one
 
-    // Rotates: the text file moves to syslog.1.log, then the jsonl chain cannot
-    // be shifted and the sink closes.
-    writeSync(lf, messageWith("second"));
-    BOOST_REQUIRE(fs::exists(dir / "syslog.1.log"));
-    BOOST_REQUIRE(!fs::exists(cfg.textFile));
-    BOOST_REQUIRE(readAll(cfg.jsonlFile).find("first") != std::string::npos);
+    BOOST_CHECK(readAll(dir / "syslog.1.log").find("first") != std::string::npos);
+    BOOST_CHECK(readAll(cfg.textFile).find("second") != std::string::npos);
+    const auto jsonl = readAll(cfg.jsonlFile);
+    BOOST_CHECK(jsonl.find("first") != std::string::npos);
+    BOOST_CHECK(jsonl.find("second") != std::string::npos); // not dropped
 
+    // Once the obstacle is gone and the retry interval has passed, the next
+    // write rotates both, and the jsonl records carry into the chain.
     fs::remove_all(blocker);
-    BOOST_REQUIRE(runUntilIdle(kRecoveryTimeout));
-
-    // The reopened sink writes to both files again, and the jsonl record that
-    // the aborted rotation left in the active file is carried into the chain by
-    // the rotation that follows rather than lost. Its text counterpart is gone,
-    // but for an ordinary reason: max_files = 1 keeps one generation, and this
-    // write is the second rotation of that chain.
+    std::this_thread::sleep_for(kTestRetry * 3);
     writeSync(lf, messageWith("third"));
-    BOOST_CHECK(readAll(cfg.textFile).find("third") != std::string::npos);
+
+    const auto rotated = readAll(dir / "syslog.1.jsonl");
+    BOOST_CHECK(rotated.find("first") != std::string::npos);
+    BOOST_CHECK(rotated.find("second") != std::string::npos);
     BOOST_CHECK(readAll(cfg.jsonlFile).find("third") != std::string::npos);
-    BOOST_CHECK(readAll(dir / "syslog.1.jsonl").find("first") != std::string::npos);
+    BOOST_CHECK(readAll(cfg.textFile).find("third") != std::string::npos);
 
     lf.close();
     ioc.restart();
     ioc.poll();
 }
+
+BOOST_AUTO_TEST_CASE(a_failed_rotation_is_not_tried_again_on_every_write)
+{
+    // An attempt can spend most of a second retrying a file in use, so after
+    // a failure the next one waits for the retry interval. Here every attempt
+    // rotates the text file before the jsonl one fails, so the text chain
+    // shows how many attempts there were.
+    OutputConfig cfg;
+    cfg.name             = "main";
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 1;
+    cfg.includeMalformed = true;
+    fs::create_directories(dir / "syslog.1.jsonl" / "occupied");
+
+    LogFile lf(ioc, cfg, std::chrono::seconds(30));
+    for (int i = 0; i < 10; ++i)
+    {
+        writeSync(lf, rfc3164Msg("m" + std::to_string(i)));
+    }
+
+    // One failed attempt, at the second write; the eight after it all went to
+    // the text file that attempt opened, none rotated it away.
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "m0\n");
+    BOOST_CHECK_EQUAL(readAll(cfg.textFile), "m1\nm2\nm3\nm4\nm5\nm6\nm7\nm8\nm9\n");
+    const auto jsonl = readAll(cfg.jsonlFile);
+    BOOST_CHECK_EQUAL(std::count(jsonl.begin(), jsonl.end(), '\n'), 10); // none dropped
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
+#ifdef _WIN32
+// The real failure of #50: on Windows a file another program has open without
+// sharing delete cannot be renamed. std::ifstream opens that way under MSVC,
+// so holding one open reproduces what antivirus or a backup tool does.
+
+BOOST_AUTO_TEST_CASE(a_file_held_open_briefly_does_not_fail_the_rotation)
+{
+    OutputConfig cfg = sinkConfig(dir / "syslog.jsonl", 1);
+    cfg.name         = "main";
+    LogFile lf(ioc, cfg, std::chrono::seconds(30));
+    writeSync(lf, messageWith("A"));
+    writeSync(lf, messageWith("B")); // A → .1
+
+    // Held for 100 ms from just before the rotation that has to rename it:
+    // the retries (50, 100, 200, 400 ms) outlast that.
+    auto holder = std::make_unique<std::ifstream>(dir / "syslog.1.jsonl");
+    BOOST_REQUIRE(holder->is_open());
+    std::thread release(
+        [&holder]
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            holder.reset();
+        });
+    writeSync(lf, messageWith("C")); // .1 → .2 waits out the hold
+    release.join();
+
+    BOOST_CHECK(readAll(dir / "syslog.2.jsonl").find("\"A\"") != std::string::npos);
+    BOOST_CHECK(readAll(dir / "syslog.1.jsonl").find("\"B\"") != std::string::npos);
+    BOOST_CHECK(readAll(dir / "syslog.jsonl").find("\"C\"") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(a_file_held_open_for_long_postpones_the_rotation_without_losing_writes)
+{
+    OutputConfig cfg = sinkConfig(dir / "syslog.jsonl", 1);
+    cfg.name         = "main";
+    LogFile lf(ioc, cfg, std::chrono::milliseconds(200));
+    writeSync(lf, messageWith("A"));
+    writeSync(lf, messageWith("B")); // A → .1
+
+    {
+        std::ifstream holder(dir / "syslog.1.jsonl");
+        BOOST_REQUIRE(holder.is_open());
+        writeSync(lf, messageWith("C")); // the rotation fails after its retries
+        writeSync(lf, messageWith("D")); // and is not tried again yet
+    }
+    const auto active = readAll(dir / "syslog.jsonl");
+    BOOST_CHECK(active.find("\"B\"") != std::string::npos);
+    BOOST_CHECK(active.find("\"C\"") != std::string::npos);
+    BOOST_CHECK(active.find("\"D\"") != std::string::npos);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    writeSync(lf, messageWith("E")); // released, and the interval has passed
+
+    BOOST_CHECK(readAll(dir / "syslog.2.jsonl").find("\"A\"") != std::string::npos);
+    const auto rotated = readAll(dir / "syslog.1.jsonl");
+    BOOST_CHECK(rotated.find("\"B\"") != std::string::npos);
+    BOOST_CHECK(rotated.find("\"D\"") != std::string::npos);
+    BOOST_CHECK(readAll(dir / "syslog.jsonl").find("\"E\"") != std::string::npos);
+}
+#endif
 
 BOOST_AUTO_TEST_SUITE_END()
 

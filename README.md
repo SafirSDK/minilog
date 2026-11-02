@@ -331,8 +331,8 @@ Errors (bad config, bind failure, write failure) are reported to the Windows Eve
 Once the UDP socket is bound, minilog logs one informational line the same way —
 `minilog: listening on UDP 127.0.0.1:514` — naming the address and port it actually receives on.
 
-**Sink failures are isolated, and a closed sink retries.** If a sink cannot write, rotate or
-reopen its files — a denied directory, a full disk, a network path that has gone away — that sink
+**Sink failures are isolated, and a closed sink retries.** If a sink cannot write or reopen its
+files — a denied directory, a full disk, a network path that has gone away — that sink
 is taken out of service: the failure is reported, every message routed to it is dropped, and the
 other sinks and the forwarder keep running with the process up.
 
@@ -348,9 +348,14 @@ began. A fault that never clears therefore costs one log line a minute and one o
 30 seconds, indefinitely — which is the intended cost of never having to restart minilog to
 recover a sink.
 
-Reopening does not repair a rotation that failed part way through: the sink appends to whatever is
-on disk and takes its rotation accounting from the file sizes it finds, so a generation may be
-missing or a file short. The next rotation proceeds from there.
+**A rotation that fails does not close the sink.** On Windows, another program that has one of
+the log files open — antivirus scanning it, a backup, someone viewing a rotated generation in an
+editor — makes renaming it fail. minilog retries such a rename for up to 750 ms, which outlasts a
+typical scan without any report. If it still fails, the sink keeps writing to its current files,
+past `max_size`, and tries the rotation again every 30 seconds; the failure is reported once, then
+at most once a minute while it lasts, and once when a rotation succeeds again. Nothing is dropped.
+A rotation that stopped part way — the text file rotated and the JSONL file not, say — leaves the
+two a generation apart until the next attempt catches up; generations are never reordered.
 
 **An unrecognised key is a config error, and so is a value that cannot be read.** minilog rejects
 a key it does not know in `[server]`, `[output.*]`, `[forwarding]` or `[web_viewer]`, naming the

@@ -29,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 namespace minilog
@@ -56,6 +57,31 @@ std::string formatInterval(std::chrono::milliseconds interval)
                " s";
     }
     return std::to_string(interval.count()) + " ms";
+}
+
+// Run a filesystem operation that reports through `ec`, retrying it briefly if
+// the file is in use. On Windows a file that another program has open without
+// sharing delete cannot be renamed or removed; antivirus does exactly that to a
+// file it has just seen closed, typically for milliseconds. Four retries over
+// 750 ms let it go first, so a scan does not even count as a failed rotation.
+// Elsewhere an open file never blocks either operation, and nothing is retried.
+template <typename Op> void retryWhileInUse(Op op, std::error_code& ec)
+{
+    op(ec);
+#ifdef _WIN32
+    constexpr int kAccessDenied     = 5;  // ERROR_ACCESS_DENIED: also a pending delete
+    constexpr int kSharingViolation = 32; // ERROR_SHARING_VIOLATION
+    for (const int ms : {50, 100, 200, 400})
+    {
+        if (!ec || (ec.value() != kSharingViolation && ec.value() != kAccessDenied))
+        {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        ec.clear();
+        op(ec);
+    }
+#endif
 }
 
 std::string currentTimestamp()
@@ -440,14 +466,13 @@ void LogFile::scheduleRetry()
         });
 }
 
-// A rotation abandoned partway leaves the generation chain half-shifted — with
-// both a text and a jsonl file configured, one chain can be shifted and the
-// other not, and the active file of a shifted one has already become .1. The
-// retry does not try to repair that and does not need to: openFiles() appends to
-// the active path and creates it when the rename took, which is exactly where a
-// successful rotate() would have left it, and the sizes it records come from
-// file_size() rather than from what they were before the failure. So the
-// accounting matches what is on disk and the next write rotates from there.
+// A rotation that fails part way no longer comes here — it is postponed while
+// the sink keeps writing (see rotate()). What does is a failure to open the
+// files, including right after a rotation. The retry needs no repair for that:
+// openFiles() appends to the active path and creates it when the rename took,
+// which is exactly where a successful rotate() would have left it, and the
+// sizes it records come from file_size(). So the accounting matches what is on
+// disk and the next write rotates from there.
 void LogFile::attemptReopen()
 {
     // Cleared first so that openFiles() reports a failure through failSink() like
@@ -538,6 +563,13 @@ void LogFile::rotateIfNeeded()
     {
         return;
     }
+    // A rotation that failed is not tried again on every write — each attempt
+    // can spend most of a second retrying a file that is in use — but after the
+    // retry interval, and the files grow past max_size until then.
+    if (m_rotationRetryAt && std::chrono::steady_clock::now() < *m_rotationRetryAt)
+    {
+        return;
+    }
     if (m_textSize >= m_cfg.maxSize || m_jsonlSize >= m_cfg.maxSize)
     {
         rotate();
@@ -552,11 +584,20 @@ void LogFile::rotate()
     closeFiles();
 
     // Every step below uses the error_code overloads: a throw from here would
-    // escape the strand handler and abort the process. Any failure closes the
-    // sink and abandons the rotation rather than pressing on with a half-shifted
-    // chain, so shiftFiles reports whether it is still safe to continue.
-    auto shiftFiles = [&](const fs::path& base)
+    // escape the strand handler and abort the process. shiftFiles stops at the
+    // first step that fails and returns why, or "" when it got through.
+    //
+    // A failure here does not close the sink, unlike a failed write: on Windows
+    // another program that merely has one of these files open makes its rename
+    // fail, and that is normal rather than broken storage (#50). The rotation is
+    // postponed instead and the sink goes on writing to its current files. A
+    // shift abandoned partway is safe to resume: it works oldest first and the
+    // next attempt probes what is there, so it only ever leaves a gap in the
+    // numbering for the next one to close, never two generations out of order.
+    auto shiftFiles = [&](const fs::path& base) -> std::string
     {
+        std::string failure;
+
         // exists() with an error_code leaves ec clear for a file that simply is
         // not there, so nullopt means a real failure — a denied or unreachable
         // directory — rather than absence.
@@ -566,7 +607,7 @@ void LogFile::rotate()
             const bool found = fs::exists(p, ec);
             if (ec)
             {
-                failSink("rotation probe failed for '" + p.string() + "': " + ec.message());
+                failure = "probing '" + p.string() + "' failed: " + ec.message();
                 return std::nullopt;
             }
             return found;
@@ -592,7 +633,7 @@ void LogFile::rotate()
                 const auto found = probe(p);
                 if (!found)
                 {
-                    return false;
+                    return failure;
                 }
                 if (*found)
                 {
@@ -611,19 +652,17 @@ void LogFile::rotate()
                     const auto found = probe(p);
                     if (!found)
                     {
-                        return false;
+                        return failure;
                     }
                     if (!*found)
                     {
                         continue;
                     }
                     std::error_code ec;
-                    fs::remove(p, ec);
+                    retryWhileInUse([&](std::error_code& e) { fs::remove(p, e); }, ec);
                     if (ec)
                     {
-                        failSink("rotation remove failed for '" + p.string() +
-                                 "': " + ec.message());
-                        return false;
+                        return "removing '" + p.string() + "' failed: " + ec.message();
                     }
                 }
             }
@@ -640,19 +679,17 @@ void LogFile::rotate()
                 const auto found = probe(from[i]);
                 if (!found)
                 {
-                    return false;
+                    return failure;
                 }
                 if (!*found)
                 {
                     continue;
                 }
                 std::error_code ec;
-                fs::rename(from[i], to[i], ec);
+                retryWhileInUse([&](std::error_code& e) { fs::rename(from[i], to[i], e); }, ec);
                 if (ec)
                 {
-                    failSink("rotation rename failed for '" + from[i].string() +
-                             "': " + ec.message());
-                    return false;
+                    return "renaming '" + from[i].string() + "' failed: " + ec.message();
                 }
             }
         }
@@ -661,36 +698,100 @@ void LogFile::rotate()
         const auto found = probe(base);
         if (!found)
         {
-            return false;
+            return failure;
         }
         if (*found)
         {
             std::error_code ec;
-            fs::rename(base, rotatedPath(base, 1), ec);
+            retryWhileInUse([&](std::error_code& e) { fs::rename(base, rotatedPath(base, 1), e); },
+                            ec);
             if (ec)
             {
-                failSink("rotation rename failed for '" + base.string() + "': " + ec.message());
-                return false;
+                return "renaming '" + base.string() + "' failed: " + ec.message();
             }
         }
-        return true;
+        return {};
     };
 
-    if (!m_cfg.textFile.empty() && !shiftFiles(fs::path(m_cfg.textFile)))
+    // The text file first and then the JSONL file, as before. A failure in the
+    // first leaves the second alone, so both stay where they were; a failure in
+    // the second leaves the first rotated, and the two are a generation apart
+    // until the second catches up.
+    std::string failure;
+    for (const auto& file : {m_cfg.textFile, m_cfg.jsonlFile})
     {
-        return;
-    }
-    if (!m_cfg.jsonlFile.empty() && !shiftFiles(fs::path(m_cfg.jsonlFile)))
-    {
-        return;
+        if (!file.empty())
+        {
+            failure = shiftFiles(fs::path(file));
+            if (!failure.empty())
+            {
+                break;
+            }
+        }
     }
 
+    // Opens whatever is at the active paths: a fresh file where the rename
+    // went through, the file it had been writing to where it did not. A
+    // failure to open is a storage failure like any other and closes the sink.
     openFiles();
+    if (m_closed)
+    {
+        return;
+    }
 
-    if (m_cfg.compress && !m_closed)
+    if (failure.empty())
+    {
+        rotationSucceeded();
+    }
+    else
+    {
+        rotationFailed(failure);
+    }
+
+    // Whatever happened, .2 is compressed if it is plain: after a rotation that
+    // went through it is the one that has just moved there, and after one that
+    // stopped short nothing about it changed.
+    if (m_cfg.compress)
     {
         scheduleCompression();
     }
+}
+
+void LogFile::rotationFailed(const std::string& reason)
+{
+    const auto now      = std::chrono::steady_clock::now();
+    m_rotationRetryAt   = now + m_retryInterval;
+    const auto decision = m_rotationRecovery.onFailure(now);
+    if (!decision.report)
+    {
+        return;
+    }
+    if (decision.firstFailure)
+    {
+        osLogError("minilog: sink '" + m_cfg.name + "': rotation failed: " + reason +
+                   "; still writing to the current file past max_size, retrying every " +
+                   formatInterval(m_retryInterval));
+    }
+    else
+    {
+        osLogError("minilog: sink '" + m_cfg.name + "': rotation still failing after " +
+                   std::to_string(decision.closedFor.count()) + " s: " + reason + " (" +
+                   std::to_string(decision.suppressed) +
+                   " failed attempt(s) since the last report)");
+    }
+}
+
+void LogFile::rotationSucceeded()
+{
+    if (!m_rotationRetryAt)
+    {
+        return;
+    }
+    m_rotationRetryAt.reset();
+    const auto outage = m_rotationRecovery.onRecovered(std::chrono::steady_clock::now());
+    osLogInfo("minilog: sink '" + m_cfg.name + "' rotated again after " +
+              std::to_string(outage.closedFor.count()) + " s and " +
+              std::to_string(outage.failures) + " failed attempt(s)");
 }
 
 void LogFile::scheduleCompression()

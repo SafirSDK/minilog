@@ -81,6 +81,14 @@ private:
     void doWrite(const SyslogMessage& msg);
     void rotateIfNeeded();
     void rotate();
+
+    // A rotation that could not finish — on Windows, typically a file another
+    // program has open (#50). The sink keeps writing to its current files and
+    // tries again after m_retryInterval; reported as SinkRecovery decides.
+    void rotationFailed(const std::string& reason);
+
+    // Reports the end of a run of failed rotations, if there was one.
+    void rotationSucceeded();
     void openFiles();
     void closeFiles();
 
@@ -128,6 +136,12 @@ private:
     // there too, since it is constructed with the strand as its executor.
     boost::asio::steady_timer m_retryTimer;
     SinkRecovery m_recovery;
+    // The same reporting policy, for rotations that failed while the sink went
+    // on writing. Its own instance: the sink is not closed, and the two can
+    // overlap.
+    SinkRecovery m_rotationRecovery;
+    // Set while rotation is failing: no attempt before then.
+    std::optional<std::chrono::steady_clock::time_point> m_rotationRetryAt;
     bool m_closed = false;
     // Set by close() and never cleared: a sink closed for shutdown must not be
     // reopened by a retry, and cancel() alone does not cover a handler that was
