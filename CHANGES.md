@@ -11,6 +11,14 @@
   and changes the same state scrolling does, so scrolling up still pauses and scrolling to the
   bottom still follows. Plain Space no longer pages down in the log; PageDown does.
 
+### Changed
+
+- **minilog logs a line once it is receiving.** After binding its UDP socket it writes
+  `minilog: listening on UDP <address>:<port>` as an informational message — to stderr, and to
+  syslog on Linux or the Event Log on Windows — so one more entry appears per start. It names the
+  address and port actually bound. The binary tests wait for this line instead of probing the port,
+  which could take the port from the server at the moment it bound and fail its start (#48).
+
 ### Fixed
 
 - **The web viewer can be scrolled away from the live tail under heavy traffic.** The view followed

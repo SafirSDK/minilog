@@ -116,6 +116,11 @@ uint16_t UdpServer::localPort() const
     return m_socket.local_endpoint().port();
 }
 
+boost::asio::ip::udp::endpoint UdpServer::localEndpoint() const
+{
+    return m_socket.local_endpoint();
+}
+
 void UdpServer::receive()
 {
     m_socket.async_receive_from(boost::asio::buffer(m_recvBuffer),

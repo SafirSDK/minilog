@@ -23,7 +23,7 @@ from pathlib import Path
 
 # The server-side helpers (process flags, shutdown) live beside this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_binary import _POPEN_FLAGS, terminate  # noqa: E402
+from test_binary import _POPEN_FLAGS, SERVER_READY, terminate  # noqa: E402
 
 SERVER: str = ""  # set from argv before test discovery
 SEND: str = ""
@@ -44,28 +44,6 @@ def free_port(host: str) -> int:
     with socket.socket(family(host), socket.SOCK_DGRAM) as s:
         s.bind((host, 0))
         return s.getsockname()[1]
-
-
-def wait_for_listener(host: str, port: int, timeout: float = 5.0) -> bool:
-    """Block until a process has bound UDP *host*:*port* (server is ready).
-
-    test_binary.wait_for_port does the same for 127.0.0.1 only; the server
-    here may be on ::1, see test_localhost_by_name.
-    """
-    deadline = time.monotonic() + timeout
-    # On Windows, SO_EXCLUSIVEADDRUSE creates a race: the probe socket can
-    # briefly hold the port between the server's open() and bind() calls.  A
-    # short initial wait lets the server complete its bind before probing.
-    if sys.platform == "win32":
-        time.sleep(0.3)
-    while time.monotonic() < deadline:
-        with socket.socket(family(host), socket.SOCK_DGRAM) as probe:
-            try:
-                probe.bind((host, port))
-            except OSError:
-                return True  # Cannot bind — server owns it.
-        time.sleep(0.02)
-    return False
 
 
 def first_resolved(name: str, port: int) -> str:
@@ -130,7 +108,15 @@ def run_send(*args: str, stdin: str | None = None) -> subprocess.CompletedProces
 
 
 class ServerFixture:
-    """A minilog listening on an ephemeral port, writing JSONL into a tempdir."""
+    """A minilog listening on an ephemeral port, writing JSONL into a tempdir.
+
+    Ready once minilog logs that it is listening, as test_binary.RunningServer
+    explains: probing the port by binding it can take it from the server (#48),
+    and a port free_port() handed out can be taken by someone else before the
+    server binds it, so a start that fails to bind is retried on a new port.
+    """
+
+    ATTEMPTS = 3
 
     def __init__(self, host: str = "127.0.0.1"):
         self.host = host
@@ -138,20 +124,46 @@ class ServerFixture:
     def __enter__(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self._tmp.name)
-        self.port = free_port(self.host)
         self.jsonl = self.dir / "syslog.jsonl"
-        conf = write_config(self.dir, self.host, self.port)
-        self.proc = subprocess.Popen([SERVER, str(conf)], **_POPEN_FLAGS)
-        if not wait_for_listener(self.host, self.port):
-            self.proc.kill()
-            raise AssertionError("server did not start in time")
-        return self
+        for attempt in range(1, self.ATTEMPTS + 1):
+            self.port = free_port(self.host)
+            conf = write_config(self.dir, self.host, self.port)
+            self._stderr_path = self.dir / f"minilog-stderr-{attempt}.txt"
+            self._err = self._stderr_path.open("w")
+            self.proc = subprocess.Popen([SERVER, str(conf)], stderr=self._err, **_POPEN_FLAGS)
+            if self._wait_ready():
+                return self
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.wait(timeout=10)
+            self._err.close()
+            if "failed to bind" not in self._stderr():
+                break
+        stderr = self._stderr()
+        self._tmp.cleanup()
+        raise AssertionError(f"server did not start: {stderr!r}")
 
     def __exit__(self, *exc):
-        terminate(self.proc)
-        self.proc.wait(timeout=10)
-        self._tmp.cleanup()
+        try:
+            terminate(self.proc)
+            self.proc.wait(timeout=10)
+        finally:
+            self._err.close()
+            self._tmp.cleanup()
         return False
+
+    def _wait_ready(self, timeout: float = 10.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if SERVER_READY in self._stderr():
+                return True
+            if self.proc.poll() is not None:
+                return False
+            time.sleep(0.02)
+        return False
+
+    def _stderr(self) -> str:
+        return self._stderr_path.read_text(errors="replace")
 
     def send(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
         return run_send("--port", str(self.port), *args, stdin=stdin)

@@ -328,6 +328,8 @@ needing write access — to hand to whoever provisions those rules and ACLs.
 minilog reads a single INI file passed on the command line. There is no config reload; restart the process to pick up changes.
 
 Errors (bad config, bind failure, write failure) are reported to the Windows Event Log on Windows, and to the system syslog on Linux — plus stderr in both cases.
+Once the UDP socket is bound, minilog logs one informational line the same way —
+`minilog: listening on UDP 127.0.0.1:514` — naming the address and port it actually receives on.
 
 **Sink failures are isolated, and a closed sink retries.** If a sink cannot write, rotate or
 reopen its files — a denied directory, a full disk, a network path that has gone away — that sink

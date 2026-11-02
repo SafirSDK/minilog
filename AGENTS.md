@@ -13,6 +13,10 @@ directly in PowerShell/CMD.
 - Branches: work lands on `develop`; `master` only receives release fast-forwards
 - Build: CMake + Boost (system package on Linux, Conan on Windows); Boost is the only external dep
 - Test framework: Boost.Test + Python binary tests (`tests/binary/test_binary.py`)
+- Binary tests start minilog through `RunningServer` (`test_binary.py`) or `ServerFixture`
+  (`test_send_binary.py`), which wait for its `minilog: listening on UDP` line and retry a start
+  that failed to bind on a new port. Never detect the server by binding its port: the probe can
+  take the port from the server at the instant it binds (#48)
 - Build presets: `linux-debug`, `linux-release`, `linux-docker`, `linux-coverage`, `linux-asan`,
   `linux-tsan`, `linux-asan-extended`, `linux-tsan-extended`, `linux-fuzz`, `windows-release`
 
@@ -204,13 +208,6 @@ an entry once its cause is found and fixed, or once it has gone a few releases w
   2026-09-19), so nothing was dropped by admission, and twenty small datagrams are far below the
   16 MB budget in any case. The first suspect is the 0.3 s the test allows between the last send
   and the signal; if it recurs, record it here and look there rather than loosening the count.
-- **Windows `test_binary.py` bind-probe race (#48).** Failed once in
-  `test_unresolvable_forwarding_host_starts_and_reports` (run 35861209546, 2026-09-23, commit
-  484fbca, which touches neither the test nor the server): the server logged WSAEADDRINUSE on its
-  bind and exited, and the test found an empty log. `wait_for_port()` detects the server by trying
-  to bind the port itself, and the server binds with `SO_EXCLUSIVEADDRUSE`, so a probe holding the
-  port at the wrong instant makes the *server* fail; a fixed 0.3 s sleep is the only guard.
-  `test_send_binary.py` copies the pattern. #48 lists the fixes to pick from if it recurs.
 
 ## Release checklist
 

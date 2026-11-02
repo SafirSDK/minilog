@@ -48,6 +48,9 @@ public:
     // Returns the actual bound port (useful when udpPort=0 was requested).
     [[nodiscard]] uint16_t localPort() const;
 
+    // Returns the actual bound address and port.
+    [[nodiscard]] boost::asio::ip::udp::endpoint localEndpoint() const;
+
     // Datagrams refused so far because the receive queue was at its budget.
     [[nodiscard]] uint64_t droppedDatagrams() const { return m_admission.droppedTotal(); }
 

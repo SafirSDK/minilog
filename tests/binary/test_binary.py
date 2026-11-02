@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 
 BINARY: str = ""  # set from argv[1] before test discovery
@@ -39,26 +40,6 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_for_port(port: int, timeout: float = 5.0) -> bool:
-    """Block until a process has bound to *port* (server is ready)."""
-    deadline = time.monotonic() + timeout
-    # On Windows, SO_EXCLUSIVEADDRUSE creates a race: the probe socket can
-    # briefly hold the port between the server's open() and bind() calls,
-    # causing the server's bind() to fail with WSAEADDRINUSE.  A short
-    # initial wait lets the server complete its bind before we start probing.
-    if sys.platform == "win32":
-        time.sleep(0.3)
-    while time.monotonic() < deadline:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            try:
-                probe.bind(("127.0.0.1", port))
-                # Could bind — server not yet up; release and retry.
-            except OSError:
-                return True  # Cannot bind — server owns it.
-        time.sleep(0.02)
-    return False
-
-
 def wait_for_text(path: Path, needle: str, timeout: float = 10.0) -> bool:
     """Block until *needle* appears in the file at *path*.
 
@@ -72,6 +53,69 @@ def wait_for_text(path: Path, needle: str, timeout: float = 10.0) -> bool:
             return True
         time.sleep(0.02)
     return False
+
+
+# Logged by minilog once its socket is bound.
+SERVER_READY = "minilog: listening on UDP"
+
+
+class RunningServer:
+    """A minilog started on a fresh port, receiving by the time it is entered.
+
+    Readiness is the line minilog logs once its socket is bound, never a probe of
+    the port: a probe that binds the port itself can hold it at the instant the
+    server binds, and the server then exits with "address in use" (#48). The port
+    comes from free_port(), which another process can still take before minilog
+    binds it, so a start that fails to bind is retried on a new port.
+
+    *make_conf* writes the config for a given port and returns its path. stderr
+    goes to a file in *d*, for stderr() or for wait_for_text() on stderr_path.
+    Leaving the block stops the server; proc.returncode is set afterwards.
+    """
+
+    ATTEMPTS = 3
+
+    def __init__(self, d: Path, make_conf: Callable[[int], Path]):
+        self.dir = d
+        self._make_conf = make_conf
+
+    def __enter__(self) -> "RunningServer":
+        for attempt in range(1, self.ATTEMPTS + 1):
+            self.port = free_port()
+            self.conf = self._make_conf(self.port)
+            self.stderr_path = self.dir / f"minilog-stderr-{attempt}.txt"
+            self._err = self.stderr_path.open("w")
+            self.proc = subprocess.Popen([BINARY, str(self.conf)], stderr=self._err, **_POPEN_FLAGS)
+            if self._wait_ready():
+                return self
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.wait(timeout=10)
+            self._err.close()
+            if "failed to bind" not in self.stderr():
+                break
+        raise AssertionError(f"server did not start: {self.stderr()!r}")
+
+    def __exit__(self, *exc) -> bool:
+        try:
+            terminate(self.proc)
+            self.proc.wait(timeout=10)
+        finally:
+            self._err.close()
+        return False
+
+    def _wait_ready(self, timeout: float = 10.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if SERVER_READY in self.stderr():
+                return True
+            if self.proc.poll() is not None:
+                return False
+            time.sleep(0.02)
+        return False
+
+    def stderr(self) -> str:
+        return self.stderr_path.read_text(errors="replace")
 
 
 def send_udp(msg: str, port: int) -> None:
@@ -296,29 +340,21 @@ class TestCheckMode(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = write_config(d, port)
-
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port), "server did not start in time")
+            with RunningServer(d, lambda port: write_config(d, port)) as srv:
                 r = subprocess.run(
-                    [BINARY, "--check", str(conf)],
+                    [BINARY, "--check", str(srv.conf)],
                     capture_output=True,
                     text=True,
                     timeout=10,
                 )
-                self.assertIn(str(port), r.stdout)
+                self.assertIn(str(srv.port), r.stdout)
                 self.assertIn("cannot bind UDP", r.stdout)
                 self.assertNotEqual(r.returncode, 0)
 
-                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: still alive", port)
+                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: still alive", srv.port)
                 self.assertTrue(wait_for_text(d / "syslog.log", "still alive"))
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
 
-            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(srv.proc.returncode, 0)
 
 
 # ── Basic smoke test ──────────────────────────────────────────────────────────
@@ -328,19 +364,11 @@ class TestSmoke(unittest.TestCase):
     def test_receive_and_write(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = write_config(d, port)
-
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port), "server did not start in time")
-                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: smoke test", port)
+            with RunningServer(d, lambda port: write_config(d, port)) as srv:
+                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: smoke test", srv.port)
                 time.sleep(0.3)
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
 
-            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(srv.proc.returncode, 0)
             log = (d / "syslog.log").read_text()
             self.assertIn("smoke test", log)
 
@@ -367,18 +395,10 @@ class TestSmoke(unittest.TestCase):
     def test_two_rfc_formats_both_written(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = write_config(d, port)
-
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port))
-                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: from3164", port)
-                send_udp("<34>1 2026-03-12T14:30:22Z host app 1 - - from5424", port)
+            with RunningServer(d, lambda port: write_config(d, port)) as srv:
+                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: from3164", srv.port)
+                send_udp("<34>1 2026-03-12T14:30:22Z host app 1 - - from5424", srv.port)
                 time.sleep(0.3)
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
 
             log = (d / "syslog.log").read_text()
             self.assertIn("from3164", log)
@@ -399,17 +419,9 @@ class TestLogInjection(unittest.TestCase):
     def _run_and_read(self, payload: str) -> str:
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = write_config(d, port)
-
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port), "server did not start in time")
-                send_udp(payload, port)
+            with RunningServer(d, lambda port: write_config(d, port)) as srv:
+                send_udp(payload, srv.port)
                 time.sleep(0.3)
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
 
             # Explicit UTF-8: Windows would otherwise decode with the locale
             # code page and mangle the non-ASCII case.
@@ -455,23 +467,15 @@ class TestGracefulShutdown(unittest.TestCase):
         """Messages received before SIGTERM must all appear in the output file."""
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = write_config(d, port)
-
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port))
-                n_messages = 20
+            n_messages = 20
+            with RunningServer(d, lambda port: write_config(d, port)) as srv:
                 for i in range(n_messages):
-                    send_udp(f"<34>Oct 11 22:14:15 mymachine su[1]: msg{i:04d}", port)
+                    send_udp(f"<34>Oct 11 22:14:15 mymachine su[1]: msg{i:04d}", srv.port)
                 # Give the server enough time to receive and process everything
                 # before signalling shutdown.
                 time.sleep(0.3)
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
 
-            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(srv.proc.returncode, 0)
             self.assertEqual(count_lines(d / "syslog.log"), n_messages)
 
 
@@ -487,24 +491,15 @@ class TestForwardToSelf(unittest.TestCase):
             tempfile.TemporaryDirectory() as db_str,
         ):
             da, db = Path(da_str), Path(db_str)
-            port_b = free_port()
-            port_a = free_port()
-            conf_b = write_config(db, port_b)
-            conf_a = write_config(da, port_a, forward_to=port_b)
-
-            proc_b = subprocess.Popen([BINARY, str(conf_b)], **_POPEN_FLAGS)
-            proc_a = subprocess.Popen([BINARY, str(conf_a)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port_b), "server B did not start")
-                self.assertTrue(wait_for_port(port_a), "server A did not start")
-                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: forwarded binary", port_a)
+            with (
+                RunningServer(db, lambda port: write_config(db, port)) as srv_b,
+                RunningServer(
+                    da, lambda port: write_config(da, port, forward_to=srv_b.port)
+                ) as srv_a,
+            ):
+                send_udp("<34>Oct 11 22:14:15 mymachine su[1]: forwarded binary", srv_a.port)
                 # Extra time for the A→B forwarding leg.
                 time.sleep(0.5)
-            finally:
-                terminate(proc_a)
-                proc_a.wait(timeout=10)
-                terminate(proc_b)
-                proc_b.wait(timeout=10)
 
             log_a = (da / "syslog.log").read_text()
             log_b = (db / "syslog.log").read_text()
@@ -523,18 +518,13 @@ class TestMultiWorker(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = write_config(d, port, workers=4)
-
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port))
+            with RunningServer(d, lambda port: write_config(d, port, workers=4)) as srv:
 
                 def sender(tid: int) -> None:
                     for i in range(n_per_thread):
                         send_udp(
                             f"<34>Oct 11 22:14:15 mymachine su[{tid}]: t{tid:02d}m{i:04d}",
-                            port,
+                            srv.port,
                         )
 
                 threads = [threading.Thread(target=sender, args=(t,)) for t in range(n_threads)]
@@ -543,9 +533,6 @@ class TestMultiWorker(unittest.TestCase):
                 for t in threads:
                     t.join()
                 time.sleep(0.5)
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
 
             lines = (d / "syslog.log").read_text().splitlines()
 
@@ -616,64 +603,52 @@ class TestInvalidAddresses(unittest.TestCase):
         # the whole collector over a forwarding destination would be worse than
         # losing forwarding.
         #
-        # stderr goes to a file so the report can be waited for. The lookup runs
-        # on the io_context rather than blocking the constructor, so the report
-        # arrives some time after the port is bound instead of before it — and
-        # reading stderr once, after stopping the process, would be a race with
-        # however long the resolver takes to answer.
+        # The report is waited for in stderr. The lookup runs on the io_context
+        # rather than blocking the constructor, so the report arrives some time
+        # after the port is bound instead of before it — and reading stderr
+        # once, after stopping the process, would be a race with however long
+        # the resolver takes to answer.
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = d / "minilog.conf"
-            conf.write_text(self._forwarding_config(d, port, "collector.invalid"))
-            err_path = d / "stderr.txt"
 
-            with err_path.open("w") as err:
-                proc = subprocess.Popen([BINARY, str(conf)], stderr=err, text=True, **_POPEN_FLAGS)
-                try:
-                    self.assertTrue(wait_for_port(port), "server did not bind")
+            def make_conf(port: int) -> Path:
+                conf = d / "minilog.conf"
+                conf.write_text(self._forwarding_config(d, port, "collector.invalid"))
+                return conf
 
-                    send_udp("<14>hello", port)
-                    time.sleep(0.3)
-                    self.assertIn("hello", (d / "syslog.log").read_text())
+            with RunningServer(d, make_conf) as srv:
+                send_udp("<14>hello", srv.port)
+                time.sleep(0.3)
+                self.assertIn("hello", (d / "syslog.log").read_text())
 
-                    # Generous, and free when it passes: the wait ends as soon
-                    # as the line appears. A resolver under load can take many
-                    # seconds to return NXDOMAIN for a name in a TLD it has to
-                    # ask upstream about, and that delay is now visible here
-                    # instead of in the time the server takes to bind.
-                    self.assertTrue(
-                        wait_for_text(err_path, "cannot resolve", timeout=60.0),
-                        f"no resolve failure reported: {err_path.read_text()!r}",
-                    )
-                finally:
-                    terminate(proc)
-                    proc.wait(timeout=10)
+                # Generous, and free when it passes: the wait ends as soon
+                # as the line appears. A resolver under load can take many
+                # seconds to return NXDOMAIN for a name in a TLD it has to
+                # ask upstream about, and that delay is now visible here
+                # instead of in the time the server takes to bind.
+                self.assertTrue(
+                    wait_for_text(srv.stderr_path, "cannot resolve", timeout=60.0),
+                    f"no resolve failure reported: {srv.stderr()!r}",
+                )
 
-            stderr = err_path.read_text()
-            self.assertEqual(proc.returncode, 0, f"stderr: {stderr}")
+            stderr = srv.stderr()
+            self.assertEqual(srv.proc.returncode, 0, f"stderr: {stderr}")
             self.assertIn("collector.invalid", stderr)
 
     def test_resolvable_hostname_as_forwarding_host_is_accepted(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = d / "minilog.conf"
-            conf.write_text(self._forwarding_config(d, port, "localhost"))
 
-            proc = subprocess.Popen(
-                [BINARY, str(conf)],
-                stderr=subprocess.PIPE,
-                text=True,
-                **_POPEN_FLAGS,
-            )
-            try:
-                self.assertTrue(wait_for_port(port), "server did not bind")
-            finally:
-                terminate(proc)
-                stderr = proc.communicate(timeout=10)[1]
+            def make_conf(port: int) -> Path:
+                conf = d / "minilog.conf"
+                conf.write_text(self._forwarding_config(d, port, "localhost"))
+                return conf
 
-            self.assertEqual(proc.returncode, 0, f"stderr: {stderr}")
+            with RunningServer(d, make_conf) as srv:
+                pass
+
+            stderr = srv.stderr()
+            self.assertEqual(srv.proc.returncode, 0, f"stderr: {stderr}")
             self.assertNotIn("cannot resolve", stderr)
 
     def test_hostname_as_server_host_is_a_config_error(self):
@@ -753,19 +728,11 @@ class TestSinkPathsCheckedAtStartup(unittest.TestCase):
     def test_usable_log_path_still_starts(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            port = free_port()
-            conf = write_config(d, port)
-
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port), "server did not start in time")
+            with RunningServer(d, lambda port: write_config(d, port)) as srv:
                 # Opened eagerly now, so the file exists before any message.
                 self.assertTrue((d / "syslog.log").exists())
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
 
-            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(srv.proc.returncode, 0)
 
 
 # ── Filesystem failure handling ───────────────────────────────────────────────
@@ -785,39 +752,32 @@ class TestFilesystemFailure(unittest.TestCase):
             d = Path(d)
             log_dir = d / "logs"
             log_dir.mkdir()
-            port = free_port()
-            conf = write_config(d, port, max_size="200B", log_dir=log_dir)
-
             filler = "x" * 60
-            proc = subprocess.Popen([BINARY, str(conf)], **_POPEN_FLAGS)
-            try:
-                self.assertTrue(wait_for_port(port), "server did not start in time")
-
+            with RunningServer(
+                d, lambda port: write_config(d, port, max_size="200B", log_dir=log_dir)
+            ) as srv:
                 # Push past max_size so that the next message triggers a rotation.
                 for i in range(10):
-                    send_udp(f"<34>Oct 11 22:14:15 host su[1]: before {i} {filler}", port)
+                    send_udp(f"<34>Oct 11 22:14:15 host su[1]: before {i} {filler}", srv.port)
                 time.sleep(0.3)
 
                 log_dir.chmod(0o000)
                 try:
                     for i in range(10):
-                        send_udp(f"<34>Oct 11 22:14:15 host su[1]: after {i} {filler}", port)
+                        send_udp(f"<34>Oct 11 22:14:15 host su[1]: after {i} {filler}", srv.port)
                     time.sleep(0.5)
                     self.assertIsNone(
-                        proc.poll(),
-                        f"server died on a denied log directory (exit {proc.returncode})",
+                        srv.proc.poll(),
+                        f"server died on a denied log directory (exit {srv.proc.returncode})",
                     )
                 finally:
                     log_dir.chmod(0o755)
 
                 # Still healthy once access is restored — the sink is out of
                 # service, but the process is not.
-                self.assertIsNone(proc.poll())
-            finally:
-                terminate(proc)
-                proc.wait(timeout=10)
+                self.assertIsNone(srv.proc.poll())
 
-            self.assertEqual(proc.returncode, 0, "server did not shut down cleanly")
+            self.assertEqual(srv.proc.returncode, 0, "server did not shut down cleanly")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

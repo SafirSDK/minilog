@@ -33,6 +33,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -137,6 +138,13 @@ int runServer(const std::string& configPath)
     // tell the SCM the service is running. Any failure above returns non-zero
     // instead, which the service layer reports to the SCM as a failed start.
     minilog::reportServiceStarted();
+
+    // Says where minilog is receiving, and that it is: the binary tests wait
+    // for this line rather than probing the port, since a probe that binds the
+    // port can take it from the server at the moment the server binds (#48).
+    std::ostringstream listening;
+    listening << "minilog: listening on UDP " << server.localEndpoint();
+    minilog::osLogInfo(listening.str());
 
     // Spin up workers-1 additional threads; main thread also calls run().
     // Every thread goes through runIoContext: an exception escaping a std::thread's
