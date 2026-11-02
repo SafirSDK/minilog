@@ -75,6 +75,7 @@ const searchInput   = document.getElementById('search');
 const topSentinel   = document.getElementById('top-sentinel');
 const jumpTailBtn   = document.getElementById('jump-tail-btn');
 const followBtn     = document.getElementById('follow-btn');
+const followLabel   = document.getElementById('follow-label');
 const matchNav      = document.getElementById('match-nav');
 const matchCounter  = document.getElementById('match-counter');
 const matchPrev     = document.getElementById('match-prev');
@@ -87,6 +88,7 @@ const dropdowns = {
   sev:    { btn: document.getElementById('sev-btn'),    panel: document.getElementById('sev-panel') },
   fac:    { btn: document.getElementById('fac-btn'),    panel: document.getElementById('fac-panel') },
   filter: { btn: document.getElementById('filter-btn'), panel: document.getElementById('filter-panel') },
+  export: { btn: document.getElementById('export-btn'), panel: document.getElementById('export-panel') },
 };
 
 // ── localStorage ─────────────────────────────────────────────────────────────
@@ -98,6 +100,7 @@ const LS = {
   FAC:      'minilog-fac-active',
   INC:      'minilog-inc',
   EXC:      'minilog-exc',
+  EXPORT_FORMAT: 'minilog-export-format',
 };
 
 function lsGet(key, def) {
@@ -807,6 +810,112 @@ function toggleDropdown(key) {
   else closeDropdown(key);
 }
 
+// ── Export ────────────────────────────────────────────────────────────────────
+
+const exportFormat  = document.getElementById('export-format');
+const exportFrom    = document.getElementById('export-from');
+const exportTo      = document.getElementById('export-to');
+const exportApply   = document.getElementById('export-apply-filters');
+const exportSummary = document.getElementById('export-filter-summary');
+const exportError   = document.getElementById('export-error');
+
+// What "Apply current filters" would apply, or null when nothing is filtered.
+// Spelled out because the default exclude patterns filter most views without
+// the user having set anything. The search box is not a filter: it finds lines
+// rather than hiding them, so an export never includes it.
+function exportFilterSummary() {
+  const parts = [];
+  const allowedSev = SEV_NAMES.filter(s => !hiddenSeverities.has(s));
+  if (allowedSev.length < SEV_NAMES.length) {
+    parts.push(allowedSev.length ? `severity ${allowedSev.join(', ')}` : 'no severities');
+  }
+  if (activeFacilities.size > 0) parts.push(`facility ${[...activeFacilities].join(', ')}`);
+  const quoted = list => list.map(x => `"${x}"`).join(', ');
+  if (includePatterns.length > 0) parts.push(`including ${quoted(includePatterns)}`);
+  if (excludePatterns.length > 0) parts.push(`excluding ${quoted(excludePatterns)}`);
+  return parts.length > 0 ? parts.join('; ') : null;
+}
+
+function updateExportPanel() {
+  const summary = exportFilterSummary();
+  exportApply.disabled = summary === null;
+  if (summary === null) exportApply.checked = false;
+  exportSummary.textContent = summary === null ? 'No filters are active.' : `Filters: ${summary}.`;
+  exportError.hidden = true;
+}
+
+// A datetime-local value in local time, as UTC ISO 8601; '' when empty.
+function exportTime(input) {
+  return input.value ? new Date(input.value).toISOString() : '';
+}
+
+function toLocalInput(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+         `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function applyExportPreset(preset) {
+  const now = new Date();
+  let from = null;
+  if (preset === 'hour') from = new Date(now.getTime() - 3600e3);
+  if (preset === 'day')  from = new Date(now.getTime() - 86400e3);
+  if (preset === 'today') from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  exportFrom.value = from ? toLocalInput(from) : '';
+  exportTo.value = '';
+  exportError.hidden = true;
+}
+
+function showExportError(msg) {
+  exportError.textContent = msg;
+  exportError.hidden = false;
+}
+
+function saveExport() {
+  if (exportFrom.validity.badInput || exportTo.validity.badInput) {
+    showExportError('Enter a complete date and time, or leave it empty.');
+    return;
+  }
+  const from = exportTime(exportFrom);
+  const to   = exportTime(exportTo);
+  if (from && to && from >= to) {
+    showExportError('From must be before To.');
+    return;
+  }
+
+  const p = exportApply.checked ? filterParams() : new URLSearchParams({ sink: activeSink });
+  p.delete('since'); // Clear Screen hides lines from the view; they still exist.
+  p.set('format', exportFormat.value);
+  if (from) p.set('from', from);
+  if (to)   p.set('to', to);
+
+  // A plain download: the browser streams the response to disk, so the size of
+  // an export is never held in the page.
+  const a = document.createElement('a');
+  a.href = '/export?' + p;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  closeDropdown('export');
+}
+
+function bindExport() {
+  exportFormat.value = lsGet(LS.EXPORT_FORMAT, 'jsonl');
+  if (!exportFormat.value) exportFormat.value = 'jsonl';
+  exportFormat.addEventListener('change', () => lsSet(LS.EXPORT_FORMAT, exportFormat.value));
+
+  // Refreshed on every open: the filters may have changed since the last one.
+  dropdowns.export.btn.addEventListener('click', updateExportPanel);
+  for (const btn of document.querySelectorAll('[data-preset]')) {
+    btn.addEventListener('click', () => applyExportPreset(btn.dataset.preset));
+  }
+  for (const input of [exportFrom, exportTo]) {
+    input.addEventListener('input', () => { exportError.hidden = true; });
+  }
+  document.getElementById('export-save').addEventListener('click', saveExport);
+}
+
 // ── Control bindings ──────────────────────────────────────────────────────────
 
 function resetSettings() {
@@ -867,6 +976,7 @@ function bindControls() {
   });
 
   followBtn.addEventListener('click', toggleFollow);
+  bindExport();
 
   // Search input
   searchInput.addEventListener('keydown', e => {
@@ -923,10 +1033,18 @@ function bindControls() {
 function setAtTail(on) {
   atTail = on;
   followBtn.setAttribute('aria-pressed', String(on));
-  followBtn.textContent = on ? '● Following' : '❚❚ Paused';
-  followBtn.title = on
+  followLabel.textContent = on ? 'Following' : 'Paused';
+  updateFollowTitle();
+}
+
+// The button's dot is the connection status, so its title covers both.
+function updateFollowTitle() {
+  const state = atTail
     ? 'New lines are shown as they arrive. Click, press Space or scroll up to pause.'
     : 'Paused: no new lines are added. Click, press Space or scroll to the bottom to follow again.';
+  const conn = statusDot.classList.contains('disconnected') ? 'Disconnected from the viewer. '
+             : statusDot.classList.contains('connected') ? '' : 'Connecting… ';
+  followBtn.title = conn + state;
 }
 
 function leaveTail() {
@@ -1029,7 +1147,7 @@ function updateEmptyState() {
 
 function setStatus(state) {
   statusDot.className = 'status-dot ' + state;
-  statusDot.title = state === 'connected' ? 'Connected' : 'Disconnected';
+  updateFollowTitle();
 }
 
 // ── Chip factory ──────────────────────────────────────────────────────────────

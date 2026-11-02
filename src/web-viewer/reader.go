@@ -24,6 +24,11 @@ type Filter struct {
 	Exclude    []string // lowercase substrings; any match → skip line
 }
 
+// Empty reports whether f lets every line through.
+func (f *Filter) Empty() bool {
+	return len(f.Severities) == 0 && len(f.Facilities) == 0 && len(f.Include) == 0 && len(f.Exclude) == 0
+}
+
 // Match reports whether line passes all filter conditions.
 // line should be the raw (non-lowercased) JSONL record bytes.
 func (f *Filter) Match(line []byte) bool {
@@ -146,21 +151,9 @@ type FileChain struct {
 // Rotation naming: syslog.N.jsonl … syslog.1.jsonl, syslog.jsonl.
 // MaxFiles controls how many rotated generations to probe.
 func NewFileChain(sink Sink) (*FileChain, error) {
-	base := sink.Path
-	ext := filepath.Ext(base)
-	stem := strings.TrimSuffix(base, ext)
-
-	var candidates []string
-	// Oldest generations first.
-	for n := sink.MaxFiles; n >= 1; n-- {
-		candidates = append(candidates, fmt.Sprintf("%s.%d%s", stem, n, ext))
-	}
-	// Active file last (newest).
-	candidates = append(candidates, base)
-
 	var files []chainFile
 	var offset int64
-	for _, path := range candidates {
+	for _, path := range chainPaths(sink) {
 		info, err := os.Stat(path)
 		if err != nil || info.Size() == 0 {
 			continue
@@ -170,6 +163,20 @@ func NewFileChain(sink Sink) (*FileChain, error) {
 	}
 
 	return &FileChain{files: files, total: offset}, nil
+}
+
+// chainPaths returns every path a generation of sink can have, oldest first
+// and the active file last. Most of them usually do not exist.
+func chainPaths(sink Sink) []string {
+	base := sink.Path
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+
+	paths := make([]string, 0, sink.MaxFiles+1)
+	for n := sink.MaxFiles; n >= 1; n-- {
+		paths = append(paths, fmt.Sprintf("%s.%d%s", stem, n, ext))
+	}
+	return append(paths, base)
 }
 
 // TailOffset returns the current logical end of the chain.
@@ -290,7 +297,7 @@ func (fc *FileChain) ReadForward(logicalOffset int64, count int, f *Filter) (
 	for fileIdx < len(fc.files) && len(lines) < count && !budgetHit {
 		cf := fc.files[fileIdx]
 
-		fh, ferr := os.Open(cf.path)
+		fh, ferr := openShared(cf.path)
 		if ferr != nil {
 			fileIdx++
 			physOffset = 0
@@ -378,7 +385,7 @@ const backwardChunkSize = 64 * 1024 // 64 KB per backward read
 // meaningless, so the caller must give up on the file rather than splice
 // together bytes from two generations.
 func readChunk(path string, start, end int64) ([]byte, error) {
-	fh, err := os.Open(path)
+	fh, err := openShared(path)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +591,7 @@ func (fc *FileChain) Search(q string, limit int, f *Filter, since int64) (offset
 	qLower := []byte(strings.ToLower(q))
 
 	for _, cf := range fc.files {
-		fh, ferr := os.Open(cf.path)
+		fh, ferr := openShared(cf.path)
 		if ferr != nil {
 			continue
 		}

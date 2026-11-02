@@ -11,8 +11,19 @@
   and changes the same state scrolling does, so scrolling up still pauses and scrolling to the
   bottom still follows. Plain Space no longer pages down in the log; PageDown does.
 
+- **The web viewer can export.** An Export… dropdown saves a time range of the whole rotation
+  chain — by receive time, either end open — as JSONL (the stored records), text (each record
+  rebuilt as a text-sink line) or CSV for spreadsheets. The current filters apply only when
+  "Apply current filters" is ticked, which it is not by default; the search box never applies.
+  The download streams, with no size limit. New endpoint: `GET /export`. (#43)
+
 ### Changed
 
+- **The web viewer's toolbar is reordered.** Left to right: the sink, the severity, facility and
+  pattern filters with Reset, and the search box; then, at the far right, Follow, Clear Screen,
+  Columns and Export. The connection status dot is now the dot inside the Follow button — green
+  when connected, red when the viewer cannot be reached. On a narrow window the search box
+  narrows and the version label hides, so every control stays on screen down to 1024 px.
 - **minilog logs a line once it is receiving.** After binding its UDP socket it writes
   `minilog: listening on UDP <address>:<port>` as an informational message — to stderr, and to
   syslog on Linux or the Event Log on Windows — so one more entry appears per start. It names the
@@ -28,6 +39,10 @@
   scrolling down to the bottom, or "Jump to tail", rejoins it. While away from the tail no new lines
   are added, so the lines being read are no longer pushed out of the view within seconds; scrolling
   back to the bottom carries on from where it stopped. (#49)
+- **The web viewer no longer makes a rotation fail on Windows.** It opened log files without
+  `FILE_SHARE_DELETE`, and while one was open the server could not rename it, so a rotation that
+  coincided with a viewer read took the sink out of service until its next retry. Every read now
+  opens files the way the cli-viewer already did.
 - **Following on from a search result no longer skips lines.** A match outside the loaded lines
   is shown with the lines around it, and scrolling to the bottom of those lines used to start
   following from the newest line, with everything in between silently missing. It now stays

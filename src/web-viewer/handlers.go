@@ -183,6 +183,11 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 
+	// GET /export — the whole chain, or a time range of it, as a download.
+	mux.HandleFunc("GET /export", func(w http.ResponseWriter, r *http.Request) {
+		handleExport(w, r, sinkMap)
+	})
+
 	// GET /search — full-chain search with filters.
 	mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
 		sink, ok := resolveSink(w, r, sinkMap)

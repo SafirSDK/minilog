@@ -15,20 +15,8 @@
       <span class="logo-version" id="logo-version"></span>
       <select id="sink-select" aria-label="Select sink"></select>
     </div>
+    <!-- What is shown: which lines, then finding one among them -->
     <div class="toolbar-center">
-      <button class="toolbar-follow-btn" id="follow-btn" aria-pressed="true"></button>
-      <button class="toolbar-clear-btn" id="clear-btn" title="Hide all current messages — only new incoming entries will appear">Clear Screen</button>
-    </div>
-    <div class="toolbar-right">
-      <!-- Columns dropdown -->
-      <div class="dropdown" id="col-dropdown">
-        <button class="dropdown-btn" id="col-btn" aria-haspopup="true" aria-expanded="false">
-          Columns
-        </button>
-        <div class="dropdown-panel" id="col-panel" hidden>
-          <div class="chip-group" id="col-chips"></div>
-        </div>
-      </div>
       <!-- Severity dropdown -->
       <div class="dropdown" id="sev-dropdown">
         <button class="dropdown-btn" id="sev-btn" aria-haspopup="true" aria-expanded="false">
@@ -71,7 +59,7 @@
           </div>
         </div>
       </div>
-      <!-- Reset belongs with the filter group -->
+      <!-- Reset belongs with the filters -->
       <button class="toolbar-reset-btn" id="reset-btn" title="Restore all filters, columns, and settings to defaults and show all previous log entries">Reset</button>
       <!-- Search -->
       <div class="search-wrap">
@@ -84,7 +72,63 @@
           <button id="match-close" title="Clear search">✕</button>
         </div>
       </div>
-      <div class="status-dot" id="status-dot" title="Disconnected"></div>
+    </div>
+    <!-- The live feed, then how the view looks and what to do with it -->
+    <div class="toolbar-right">
+      <button class="toolbar-follow-btn" id="follow-btn" aria-pressed="true"><span class="status-dot" id="status-dot"></span><span id="follow-label"></span></button>
+      <button class="toolbar-clear-btn" id="clear-btn" title="Hide all current messages — only new incoming entries will appear">Clear Screen</button>
+      <!-- Columns dropdown -->
+      <div class="dropdown" id="col-dropdown">
+        <button class="dropdown-btn" id="col-btn" aria-haspopup="true" aria-expanded="false">
+          Columns
+        </button>
+        <div class="dropdown-panel" id="col-panel" hidden>
+          <div class="chip-group" id="col-chips"></div>
+        </div>
+      </div>
+      <!-- Export dropdown -->
+      <div class="dropdown" id="export-dropdown">
+        <button class="dropdown-btn" id="export-btn" aria-haspopup="true" aria-expanded="false">
+          Export…
+        </button>
+        <div class="dropdown-panel dropdown-panel--wide" id="export-panel" hidden>
+          <div class="filter-section">
+            <label class="filter-section-label" for="export-format">Format</label>
+            <select id="export-format">
+              <option value="jsonl">JSONL</option>
+              <option value="text">Text (syslog lines)</option>
+              <option value="csv">CSV</option>
+            </select>
+          </div>
+          <div class="filter-section filter-section--sep">
+            <div class="filter-section-label">Time range (received)</div>
+            <div class="export-range">
+              <label for="export-from">From</label>
+              <input id="export-from" type="datetime-local" step="1" />
+              <label for="export-to">To</label>
+              <input id="export-to" type="datetime-local" step="1" />
+            </div>
+            <div class="export-presets">
+              <button class="filter-add-btn" data-preset="hour">Last hour</button>
+              <button class="filter-add-btn" data-preset="day">Last 24 h</button>
+              <button class="filter-add-btn" data-preset="today">Today</button>
+              <button class="filter-add-btn" data-preset="all">All</button>
+            </div>
+            <div class="export-hint">Empty means from the start / up to now.</div>
+          </div>
+          <div class="filter-section filter-section--sep">
+            <label class="export-check">
+              <input id="export-apply-filters" type="checkbox" />
+              Apply current filters
+            </label>
+            <div class="export-hint" id="export-filter-summary"></div>
+          </div>
+          <div class="filter-section filter-section--sep export-actions">
+            <span class="export-error" id="export-error" hidden></span>
+            <button class="toolbar-clear-btn" id="export-save">Save</button>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 

@@ -161,7 +161,14 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   - `config.go` — INI parser, `Sink` / `Config` structs, `loadConfig()`, `listenAddr()`
   - `reader.go` — `FileChain` (logical byte-offset abstraction over rotation chain),
     `ReadForward()`, `ReadBackward()`, `Search()`, `Filter` struct
-  - `handlers.go` — HTTP routes: `GET /sinks`, `GET /lines`, `GET /search`, `GET /version`
+  - `handlers.go` — HTTP routes: `GET /sinks`, `GET /lines`, `GET /search`, `GET /export`,
+    `GET /version`
+  - `export.go` — `/export`: streams the chain generation by generation (all opened up front, so
+    a rotation mid-download does not change what is read), as JSONL, rebuilt text-sink lines or
+    CSV. `escapeControlChars` there must match the server's in `output/log_file.cpp`
+  - `open_windows.go` / `open_other.go` — `openShared()`, used for every log read: on Windows it
+    adds `FILE_SHARE_DELETE`, without which an open viewer handle makes the server's rotation
+    rename fail and take the sink out of service
   - `service_windows.go` — Windows NT service install/stop/uninstall/run via
     `golang.org/x/sys/windows/svc`, including recovery actions (two restarts, 5 s apart, 300 s
     reset period)

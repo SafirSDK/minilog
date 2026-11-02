@@ -933,7 +933,8 @@ port = 9514
 Anyone who can reach the listen address can read all exposed log data. Set
 `[web_viewer] host = 127.0.0.1` to restrict access to the local machine, or place the viewer
 behind a reverse proxy that provides authentication. Do not expose it on an untrusted network
-without additional protection.
+without additional protection. Export makes that one click: a whole rotation chain downloads as
+a single file, though paging through `/lines` already reached the same data.
 
 **Response headers.** Every response carries a `Content-Security-Policy` of `default-src 'none'`
 with `script-src`, `style-src` and `connect-src` at `'self'`, `img-src 'self' data:` (the search
@@ -982,6 +983,27 @@ listen address is bound, and reports a failed run to the SCM as a service-specif
 - Severity and facility filter dropdowns
 - Include / exclude text pattern filters
 - Full-chain search (searches across all rotated generations, returns total match count)
+- Export… — saves a time range of the whole rotation chain as JSONL, text or CSV (see below)
+
+**Export.** The Export… dropdown saves records by *receive* time (`rcv`), from the whole rotation
+chain. Leaving From or To empty means from the start or up to now. The current severity,
+facility, include and exclude filters apply only when "Apply current filters" is ticked — it is
+off by default, so an export is a copy of the log for the time range — and the search box never
+applies. Clear Screen does not affect exports. The file streams to disk, with no size limit.
+
+| Format | Content |
+|--------|---------|
+| JSONL | the stored records, byte for byte |
+| Text (syslog lines) | each record rebuilt as the line the [text sink](#text-file) writes, escaped the same way |
+| CSV | a header row, then one row per record with a column per JSONL field; UTF-8 with a byte order mark, so Excel reads it correctly |
+
+The text format is rebuilt from the JSONL, not copied from the text file, which the viewer does
+not read. A malformed message comes back exactly, because its `message` is the whole datagram;
+an RFC 3164 or RFC 5424 line can differ from the original in the sender's spacing in the header;
+and invalid UTF-8 was already replaced with U+FFFD when the JSONL was written. In CSV, a cell that
+begins with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`, so that a
+spreadsheet shows it as text instead of running it as a formula — every value is chosen by
+whoever sent the datagram.
 
 **REST API:**
 
@@ -990,6 +1012,7 @@ listen address is bound, and reports a failed run to the SCM as a service-specif
 | `GET /sinks` | JSON array of `{name}` objects, one per configured output sink |
 | `GET /lines?sink=NAME&[tail=true\|offset=N&dir=forward\|backward]&count=N&sev=…&fac=…&inc=…&exc=…` | Page of log lines with offsets |
 | `GET /search?sink=NAME&q=TEXT&limit=N&sev=…&fac=…&inc=…&exc=…` | Full-chain search |
+| `GET /export?sink=NAME&format=jsonl\|text\|csv&from=T&to=T&sev=…&fac=…&inc=…&exc=…` | Download of every matching record, `from` inclusive and `to` exclusive (RFC 3339, either optional); no line cap |
 
 `count` and `limit` default to 200 and are clamped to **5000**; a larger value is silently
 reduced rather than rejected. The clamp bounds how many lines one request returns. It is not
