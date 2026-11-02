@@ -24,6 +24,44 @@ type Filter struct {
 	Exclude    []string // lowercase substrings; any match → skip line
 }
 
+// severityAliases maps every severity name to its number: the names minilog
+// writes into the JSONL (EMERGENCY, CRITICAL, ERROR, WARNING, …) and the
+// syslog(3) spellings the UI's severity chips send (EMERG, CRIT, ERR, WARN).
+// It mirrors kSeverityAliases in src/server/parser/syslog_names.hpp.
+var severityAliases = map[string]int{
+	"emergency": 0, "emerg": 0, "panic": 0,
+	"alert":    1,
+	"critical": 2, "crit": 2,
+	"error": 3, "err": 3,
+	"warning": 4, "warn": 4,
+	"notice": 5,
+	"info":   6, "informational": 6,
+	"debug": 7,
+}
+
+// expandSeverities turns each requested severity into every name that means
+// it, so that a filter on "err" matches the "ERROR" minilog writes. Without
+// this, hiding one severity in the UI hid EMERGENCY, CRITICAL, ERROR and
+// WARNING as well: the chips send the short names, and Match compares names
+// exactly. A name that is not a severity is kept as given. names must already
+// be lowercased.
+func expandSeverities(names []string) []string {
+	var out []string
+	for _, n := range names {
+		code, ok := severityAliases[n]
+		if !ok {
+			out = append(out, n)
+			continue
+		}
+		for alias, c := range severityAliases {
+			if c == code {
+				out = append(out, alias)
+			}
+		}
+	}
+	return out
+}
+
 // Empty reports whether f lets every line through.
 func (f *Filter) Empty() bool {
 	return len(f.Severities) == 0 && len(f.Facilities) == 0 && len(f.Include) == 0 && len(f.Exclude) == 0

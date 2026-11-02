@@ -482,16 +482,13 @@ func fieldString(raw json.RawMessage) (string, bool) {
 	return string(raw), true
 }
 
-// facilityCodes and severityCodes map the names minilog writes (the tables in
-// src/server/parser/syslog_names.hpp) back to their numbers, for the PRI.
+// facilityCodes maps the facility names minilog writes (kFacilityNames in
+// src/server/parser/syslog_names.hpp) back to their numbers, for the PRI;
+// severityAliases in reader.go does the same for severities.
 var facilityCodes = map[string]int{
 	"kern": 0, "user": 1, "mail": 2, "daemon": 3, "auth": 4, "syslog": 5, "lpr": 6, "news": 7,
 	"uucp": 8, "clock": 9, "authpriv": 10, "ftp": 11, "ntp": 12, "audit": 13, "alert": 14, "clock2": 15,
 	"local0": 16, "local1": 17, "local2": 18, "local3": 19, "local4": 20, "local5": 21, "local6": 22, "local7": 23,
-}
-
-var severityCodes = map[string]int{
-	"emergency": 0, "alert": 1, "critical": 2, "error": 3, "warning": 4, "notice": 5, "info": 6, "debug": 7,
 }
 
 // syslogLine rebuilds the datagram a record was parsed from, as far as the
@@ -514,7 +511,7 @@ func syslogLine(r *record) string {
 	fac, _ := fieldString(r.Facility)
 	sev, _ := fieldString(r.Severity)
 	f, fok := facilityCodes[strings.ToLower(fac)]
-	s, sok := severityCodes[strings.ToLower(sev)]
+	s, sok := severityAliases[strings.ToLower(sev)]
 	if fok && sok {
 		pri = fmt.Sprintf("<%d>", f*8+s)
 	}

@@ -257,8 +257,9 @@ func resolveSink(w http.ResponseWriter, r *http.Request, sinkMap map[string]Sink
 // parseFilter extracts filter parameters from the request query string.
 //
 // Query params:
-//   - sev=3,4,5   comma-separated severity codes (absent = all)
-//   - fac=3,4     comma-separated facility codes (absent = all)
+//   - sev=err,warn  comma-separated severity names, short or long; each also
+//     matches its other spellings, see expandSeverities (absent = all)
+//   - fac=daemon,auth  comma-separated facility names (absent = all)
 //   - inc=nginx   repeatable include pattern
 //   - exc=debug   repeatable exclude pattern
 func parseFilter(r *http.Request) *Filter {
@@ -266,11 +267,13 @@ func parseFilter(r *http.Request) *Filter {
 	f := &Filter{}
 
 	if sev := q.Get("sev"); sev != "" {
+		var names []string
 		for _, s := range strings.Split(sev, ",") {
 			if t := strings.ToLower(strings.TrimSpace(s)); t != "" {
-				f.Severities = append(f.Severities, t)
+				names = append(names, t)
 			}
 		}
+		f.Severities = expandSeverities(names)
 	}
 
 	if fac := q.Get("fac"); fac != "" {

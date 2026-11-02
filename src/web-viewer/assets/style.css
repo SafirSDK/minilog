@@ -503,9 +503,12 @@ select option { background: var(--surface-2); }
   letter-spacing: 0.4px;
   color: #fff;
 }
+/* The long names are what minilog writes; the short ones are kept for JSONL
+   written elsewhere. */
+.badge-emergency, .badge-critical,
 .badge-emerg, .badge-alert, .badge-crit  { background: var(--sev-emerg); }
-.badge-err                               { background: var(--sev-err);   }
-.badge-warn                              { background: var(--sev-warn); color: #000; }
+.badge-error, .badge-err                 { background: var(--sev-err);   }
+.badge-warning, .badge-warn              { background: var(--sev-warn); color: #000; }
 .badge-notice, .badge-info               { background: var(--sev-info);  }
 .badge-debug                             { background: var(--surface-2); color: var(--sev-debug); border: 1px solid var(--border); }
 .badge-unknown                           { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }

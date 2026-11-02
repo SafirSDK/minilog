@@ -206,6 +206,49 @@ func TestHandler_Lines_SeverityFilter(t *testing.T) {
 	}
 }
 
+// What the UI sends with only DEBUG hidden: the short syslog(3) names, while
+// minilog writes the long ones. Every severity but DEBUG must come back; the
+// four whose names differ (EMERGENCY, CRITICAL, ERROR, WARNING) used to be
+// hidden along with it.
+func TestHandler_Lines_SeverityFilter_ShortNamesMatchWhatMinilogWrites(t *testing.T) {
+	dir := t.TempDir()
+	written := []string{"EMERGENCY", "ALERT", "CRITICAL", "ERROR", "WARNING", "NOTICE", "INFO", "DEBUG"}
+	var lines []string
+	for _, sev := range written {
+		lines = append(lines, makeLine("m-"+sev, sev, "daemon"))
+	}
+	sink := makeSink(t, dir, "main", lines)
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+
+	resp := get(t, ts, "/lines?sink=main&tail=true&count=10&sev=emerg,alert,crit,err,warn,notice,info")
+	var result linesResponse
+	decodeJSON(t, resp, &result)
+
+	got := strings.Join(result.Lines, "\n")
+	for _, sev := range written[:7] {
+		if !strings.Contains(got, "m-"+sev) {
+			t.Errorf("%s was filtered out", sev)
+		}
+	}
+	if strings.Contains(got, "m-DEBUG") {
+		t.Error("DEBUG was not filtered out")
+	}
+}
+
+func TestExpandSeverities(t *testing.T) {
+	got := expandSeverities([]string{"err", "warning", "nonsense"})
+	want := map[string]bool{"err": true, "error": true, "warn": true, "warning": true, "nonsense": true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for _, n := range got {
+		if !want[n] {
+			t.Errorf("unexpected %q in %v", n, got)
+		}
+	}
+}
+
 func TestHandler_Lines_ExcludeFilter(t *testing.T) {
 	dir := t.TempDir()
 	sink := makeSink(t, dir, "main", []string{

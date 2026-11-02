@@ -32,6 +32,12 @@
 
 ### Fixed
 
+- **Hiding one severity in the web viewer no longer hides four others.** The severity chips send
+  the short syslog names (`err`, `warn`, `crit`, `emerg`) while minilog writes `ERROR`, `WARNING`,
+  `CRITICAL` and `EMERGENCY`, and the filter compared the two exactly. So hiding any severity —
+  DEBUG, say — also hid every error, warning, critical and emergency record. Each name now also
+  matches its other spellings. The same four severities were also shown as plain text rather than
+  coloured badges, for the same reason; they are coloured now.
 - **The web viewer can be scrolled away from the live tail under heavy traffic.** The view followed
   new lines whenever it was within 80px of the bottom, so a small wheel step, or a scrollbar thumb
   moved only a little, was pulled back to the bottom by the next update. Scrolling up with the
