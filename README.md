@@ -427,10 +427,12 @@ full disk, a crash or a power loss leaves the plain generation intact. A failure
 syslog or the Event Log, the generation is kept uncompressed, and the sink carries on; a stray
 `.gz.tmp` is removed at the next start.
 
-`max_files` counts generations whether compressed or not. Switching `compress` off later leaves
-the existing `.gz` generations in place: they still move along and expire as usual. Only the
-generation that has just become `.2` is compressed at each rotation, so plain generations from
-before `compress` was switched on, or from a failed compression, stay plain until they expire.
+Stopping minilog cancels a compression in progress rather than waiting for it; that generation,
+like one a crash interrupted, is compressed at the next start. `max_files` counts generations
+whether compressed or not. Switching `compress` off later leaves the existing `.gz` generations in
+place: they still move along and expire as usual. Only generation `.2` is compressed — after each
+rotation, and at startup — so plain generations from before `compress` was switched on, or from a
+failed compression, stay plain until they expire.
 
 The [web viewer](#web-viewer) scrolls, filters and searches the plain generations only — reading
 at arbitrary positions inside a gzip file would mean decompressing it from the start each time.

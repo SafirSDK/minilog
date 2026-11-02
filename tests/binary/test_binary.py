@@ -807,7 +807,9 @@ class TestCompressedRotation(unittest.TestCase):
                 while time.monotonic() < deadline and not (d / "syslog.3.log.gz").exists():
                     time.sleep(0.05)
                 time.sleep(0.5)
-            self.assertEqual(srv.proc.returncode, 0)
+            # Where a failed rotation or compression is reported.
+            stderr = srv.stderr()
+            self.assertEqual(srv.proc.returncode, 0, stderr)
 
             self.assertTrue((d / "syslog.1.log").exists())
             self.assertFalse((d / "syslog.1.log.gz").exists())
@@ -821,7 +823,38 @@ class TestCompressedRotation(unittest.TestCase):
                 data = gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_bytes()
                 text += data.decode()
             text += (d / "syslog.log").read_text()
-            self.assertEqual(text.splitlines(), sent)
+            self.assertEqual(text.splitlines(), sent, f"server stderr:\n{stderr}")
+
+    def test_a_restart_carries_on_with_the_same_chain(self):
+        """Stopped and started again on the same files, minilog keeps shifting the
+        compressed generations it already wrote; nothing is lost or repeated."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            sent = []
+            stderr = ""
+            for run in range(2):
+                with RunningServer(
+                    d, lambda port: write_config(d, port, max_size="500B", compress=True)
+                ) as srv:
+                    for i in range(30):
+                        msg = (
+                            f"<34>Oct 11 22:14:15 host su[1]: run {run} message {i:02d} " + "y" * 40
+                        )
+                        send_udp(msg, srv.port)
+                        sent.append(msg)
+                        time.sleep(0.005)
+                    time.sleep(1.0)
+                stderr += srv.stderr()
+                self.assertEqual(srv.proc.returncode, 0, stderr)
+
+            generations = sorted((int(p.name.split(".")[1]), p) for p in d.glob("syslog.*.log*"))
+            text = ""
+            for _, p in reversed(generations):
+                data = gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_bytes()
+                text += data.decode()
+            text += (d / "syslog.log").read_text()
+            self.assertEqual(text.splitlines(), sent, f"server stderr:\n{stderr}")
+            self.assertFalse(list(d.glob("*.tmp")))
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -26,9 +26,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -615,6 +618,71 @@ OutputConfig compressedConfig(const fs::path& dir, int maxFiles = 0)
     return cfg;
 }
 
+// Every generation of base (e.g. dir/"syslog.log"), plain or gzipped, oldest
+// first and the active file last, concatenated. Fails the test if a
+// generation exists in both forms.
+std::string wholeChain(const fs::path& base)
+{
+    const auto stem = base.stem().string();
+    const auto ext  = base.extension().string();
+    int highest     = 0;
+    for (const auto& e : fs::directory_iterator(base.parent_path()))
+    {
+        const auto name = e.path().filename().string();
+        int n           = 0;
+        char rest[32]   = {};
+        if (std::sscanf(name.c_str(), (stem + ".%d%31s").c_str(), &n, rest) == 2)
+        {
+            highest = std::max(highest, n);
+        }
+    }
+    std::string out;
+    for (int n = highest; n >= 1; --n)
+    {
+        const auto plain    = base.parent_path() / (stem + "." + std::to_string(n) + ext);
+        const bool hasPlain = fs::exists(plain);
+        const bool hasGz    = fs::exists(gzipPath(plain));
+        BOOST_CHECK_MESSAGE(!(hasPlain && hasGz), "generation " << n << " exists in both forms");
+        if (hasGz)
+        {
+            out += gunzip(gzipPath(plain));
+        }
+        else if (hasPlain)
+        {
+            std::ifstream f(plain, std::ios::binary);
+            out += std::string(std::istreambuf_iterator<char>(f), {});
+        }
+    }
+    std::ifstream f(base, std::ios::binary);
+    out += std::string(std::istreambuf_iterator<char>(f), {});
+    return out;
+}
+
+// A file of `bytes` bytes of log-like lines that compress slowly enough for a
+// compression of it to be caught in progress: varied enough that gzip has
+// real work to do.
+void writeBigFile(const fs::path& p, std::size_t bytes)
+{
+    std::ofstream f(p, std::ios::binary);
+    std::uint64_t x = 0x9E3779B97F4A7C15ULL;
+    std::string line;
+    std::size_t written = 0;
+    while (written < bytes)
+    {
+        line.clear();
+        for (int i = 0; i < 12; ++i)
+        {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            line += std::to_string(x % 1000003) + ' ';
+        }
+        line += '\n';
+        f << line;
+        written += line.size();
+    }
+}
+
 bool anyTempFile(const fs::path& dir)
 {
     for (const auto& e : fs::directory_iterator(dir))
@@ -744,6 +812,189 @@ BOOST_AUTO_TEST_CASE(a_failed_compression_keeps_the_plain_file_and_the_sink)
     BOOST_CHECK_EQUAL(readAll(dir / "syslog.3.log"), "A\n");    // kept plain, and shifted
     BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), "D\n");      // sink still writing
     BOOST_CHECK(fs::is_directory(dir / "syslog.2.log.gz.tmp")); // not ours to remove
+}
+
+BOOST_AUTO_TEST_CASE(many_rotations_keep_every_record_once_and_in_order)
+{
+    std::string expectedText;
+    {
+        OutputConfig cfg = compressedConfig(dir);
+        cfg.maxSize      = 300; // a handful of records per generation
+        LogFile lf(ioc, cfg);
+        for (int i = 0; i < 400; ++i)
+        {
+            const std::string m = "record " + std::to_string(i);
+            writeSync(lf, messageWith(m));
+            expectedText += "<34>Oct 11 22:14:15 mymachine su[123]: " + m + "\n";
+        }
+    } // destroyed: a compression still running is cancelled, leaving .2 plain
+
+    BOOST_CHECK(fs::exists(dir / "syslog.40.log.gz")); // many generations, really compressed
+    BOOST_CHECK_EQUAL(wholeChain(dir / "syslog.log"), expectedText);
+
+    // The JSONL chain holds the same 400 records in the same order.
+    const auto jsonl = wholeChain(dir / "syslog.jsonl");
+    std::istringstream lines(jsonl);
+    std::string line;
+    int i = 0;
+    while (std::getline(lines, line))
+    {
+        const auto rec = bj::parse(line).as_object();
+        BOOST_REQUIRE_LT(i, 400);
+        BOOST_CHECK_EQUAL(rec.at("message").as_string(), "record " + std::to_string(i));
+        ++i;
+    }
+    BOOST_CHECK_EQUAL(i, 400);
+    BOOST_CHECK(!anyTempFile(dir));
+}
+
+// A 60 MB generation that becomes .2 at the first write: the active file is
+// already over max_size, so that write rotates, and the writes after it are
+// small enough not to rotate again (a rotation would wait for the compression).
+void setUpLongCompression(const fs::path& dir)
+{
+    writeBigFile(dir / "syslog.1.log", 60u * 1024 * 1024);
+    writeBigFile(dir / "syslog.log", 2u * 1024 * 1024);
+}
+
+OutputConfig longCompressionConfig(const fs::path& dir)
+{
+    OutputConfig cfg = compressedConfig(dir);
+    cfg.jsonlFile.clear();
+    cfg.maxSize = 1024 * 1024;
+    return cfg;
+}
+
+BOOST_AUTO_TEST_CASE(writes_are_not_held_up_by_a_compression)
+{
+    setUpLongCompression(dir);
+    LogFile lf(ioc, longCompressionConfig(dir));
+
+    writeSync(lf, rfc3164Msg("rotates")); // .1 (60 MB) becomes .2 and starts compressing
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 50; ++i)
+    {
+        writeSync(lf, rfc3164Msg("during"));
+    }
+    const auto elapsed          = std::chrono::steady_clock::now() - start;
+    const bool stillCompressing = fs::exists(gzipTempPath(dir / "syslog.2.log"));
+
+    BOOST_CHECK_LT(elapsed, std::chrono::milliseconds(500));
+    BOOST_WARN_MESSAGE(stillCompressing,
+                       "compression finished before the writes did; the timing proves nothing");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log").size(), 8u + 50u * 7u);
+}
+
+BOOST_AUTO_TEST_CASE(cancelling_is_prompt)
+{
+    setUpLongCompression(dir);
+    auto lf = std::make_unique<LogFile>(ioc, longCompressionConfig(dir));
+    writeSync(*lf, rfc3164Msg("rotates"));
+    BOOST_REQUIRE(waitForFile(gzipTempPath(dir / "syslog.2.log")));
+
+    const auto start = std::chrono::steady_clock::now();
+    lf.reset(); // the destructor cancels the job and waits for it to stop
+    BOOST_CHECK_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(500));
+    BOOST_CHECK(!anyTempFile(dir));
+}
+
+BOOST_AUTO_TEST_CASE(shutdown_cancels_a_compression_and_the_next_start_finishes_it)
+{
+    setUpLongCompression(dir);
+    const auto bigSize = fs::file_size(dir / "syslog.1.log");
+    {
+        LogFile lf(ioc, longCompressionConfig(dir));
+        writeSync(lf, rfc3164Msg("rotates"));
+        BOOST_REQUIRE(waitForFile(gzipTempPath(dir / "syslog.2.log")));
+        lf.close();
+        ioc.restart();
+        ioc.poll();
+    }
+
+    BOOST_CHECK_EQUAL(fs::file_size(dir / "syslog.2.log"), bigSize); // intact
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log.gz"));
+    BOOST_CHECK(!anyTempFile(dir));
+
+    LogFile lf(ioc, longCompressionConfig(dir));
+    BOOST_REQUIRE(lf.openAtStartup());
+    BOOST_REQUIRE(waitUntil([&] { return !fs::exists(dir / "syslog.2.log"); },
+                            std::chrono::seconds(60),
+                            std::chrono::milliseconds(20)));
+    BOOST_CHECK(fs::exists(dir / "syslog.2.log.gz"));
+    BOOST_CHECK_EQUAL(gunzip(dir / "syslog.2.log.gz").size(), bigSize);
+}
+
+BOOST_AUTO_TEST_CASE(both_forms_of_a_generation_move_and_expire_together)
+{
+    // A crash between a compression's rename and its removal of the plain file
+    // leaves both; they hold the same records and must stay in step.
+    std::ofstream(dir / "copy.log") << "old\n";
+    std::atomic<bool> cancel{false};
+    BOOST_REQUIRE_EQUAL(gzipFile(dir / "copy.log", cancel), "");
+    fs::rename(dir / "copy.log.gz", dir / "syslog.2.log.gz");
+    std::ofstream(dir / "syslog.2.log") << "old\n";
+
+    OutputConfig cfg = compressedConfig(dir, 3);
+    cfg.jsonlFile.clear();
+    cfg.compress = false;
+    LogFile lf(ioc, cfg);
+    writeSync(lf, rfc3164Msg("A"));
+    writeSync(lf, rfc3164Msg("B")); // .2 → .3, both forms
+    BOOST_CHECK(fs::exists(dir / "syslog.3.log"));
+    BOOST_CHECK(fs::exists(dir / "syslog.3.log.gz"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log.gz"));
+
+    writeSync(lf, rfc3164Msg("C")); // .3 is the last kept; .3 → would be .4: both go
+    BOOST_CHECK(!fs::exists(dir / "syslog.4.log"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.4.log.gz"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.3.log.gz"));
+}
+
+BOOST_AUTO_TEST_CASE(a_sink_with_one_file_compresses_just_that_one)
+{
+    for (const bool textOnly : {true, false})
+    {
+        const auto sub = dir / (textOnly ? "text" : "jsonl");
+        fs::create_directories(sub);
+        OutputConfig cfg = compressedConfig(sub);
+        (textOnly ? cfg.jsonlFile : cfg.textFile).clear();
+        LogFile lf(ioc, cfg);
+        for (const char* m : {"A", "B", "C"})
+        {
+            writeSync(lf, rfc3164Msg(m));
+        }
+        const auto gz = sub / (textOnly ? "syslog.2.log.gz" : "syslog.2.jsonl.gz");
+        BOOST_CHECK_MESSAGE(waitForFile(gz), gz);
+        BOOST_CHECK(!fs::exists(sub / (textOnly ? "syslog.2.jsonl" : "syslog.2.log")));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(max_files_one_never_compresses_and_two_compresses_the_last)
+{
+    {
+        const auto one = dir / "one";
+        fs::create_directories(one);
+        LogFile lf(ioc, compressedConfig(one, 1));
+        for (int i = 0; i < 4; ++i)
+        {
+            writeSync(lf, rfc3164Msg("x"));
+        }
+        BOOST_CHECK(fs::exists(one / "syslog.1.log"));
+        BOOST_CHECK(!fs::exists(one / "syslog.2.log"));
+        BOOST_CHECK(!fs::exists(one / "syslog.2.log.gz"));
+    }
+    {
+        const auto two = dir / "two";
+        fs::create_directories(two);
+        LogFile lf(ioc, compressedConfig(two, 2));
+        for (int i = 0; i < 5; ++i)
+        {
+            writeSync(lf, rfc3164Msg("x"));
+        }
+        BOOST_CHECK(waitForFile(two / "syslog.2.log.gz"));
+        BOOST_CHECK(!fs::exists(two / "syslog.3.log.gz"));
+        BOOST_CHECK(!fs::exists(two / "syslog.3.log"));
+    }
 }
 
 BOOST_AUTO_TEST_CASE(gzip_file_round_trips_and_removes_the_plain_file)

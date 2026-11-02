@@ -296,6 +296,14 @@ bool LogFile::openAtStartup()
     removeStaleCompressions();
     openFiles();
     m_startingUp = false;
+
+    // A shutdown cancels a compression in progress and a crash interrupts one,
+    // either way leaving .2 plain — and nothing else would ever compress it,
+    // since each rotation compresses only the generation it has just made .2.
+    if (m_cfg.compress && !m_closed)
+    {
+        scheduleCompression();
+    }
     return !m_closed;
 }
 
@@ -686,10 +694,11 @@ void LogFile::scheduleCompression()
 {
     namespace fs = std::filesystem;
 
-    // The generation that has just become .2 was .1 until this rotation, and
-    // .1 is never compressed, so it is plain. Older plain generations — left by
-    // a failure, or from before `compress` was switched on — are left as they
-    // are rather than all compressed at once.
+    // Called after a rotation, when the generation that has just become .2 was
+    // .1 and so is plain, and at startup, for a .2 a shutdown or crash left
+    // plain. Older plain generations — left by a failed compression, or from
+    // before `compress` was switched on — are left as they are rather than all
+    // compressed at once.
     std::vector<fs::path> plain;
     for (const auto& file : {m_cfg.textFile, m_cfg.jsonlFile})
     {

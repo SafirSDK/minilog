@@ -83,8 +83,8 @@ private:
     void openFiles();
     void closeFiles();
 
-    // With `compress`, gzip the generation that has just become .2, off the
-    // strand; see m_compressor.
+    // With `compress`, gzip generation .2 if it is plain, off the strand; see
+    // m_compressor. After each rotation, and once at startup.
     void scheduleCompression();
 
     // Block until a compression in progress has finished. Rotation calls this

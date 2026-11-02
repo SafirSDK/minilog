@@ -18,6 +18,7 @@
 #include "udp_server.hpp"
 
 #include "forwarder/forwarder.hpp"
+#include "output/compress.hpp"
 #include "output/output_manager.hpp"
 
 #include <boost/asio/io_context.hpp>
@@ -30,9 +31,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
+#include <zlib.h>
 
 using namespace minilog;
 namespace fs = std::filesystem;
@@ -372,6 +376,118 @@ BOOST_AUTO_TEST_CASE(correct_file_count_after_flood)
             BOOST_CHECK_MESSAGE(!line.empty(), "empty line in " << entry.path());
         }
     }
+}
+
+namespace
+{
+
+std::string readGenerationFile(const fs::path& p)
+{
+    if (p.extension() != ".gz")
+    {
+        std::ifstream f(p, std::ios::binary);
+        return {std::istreambuf_iterator<char>(f), {}};
+    }
+#ifdef _WIN32
+    gzFile f = gzopen_w(p.c_str(), "rb");
+#else
+    gzFile f = gzopen(p.c_str(), "rb");
+#endif
+    std::string out;
+    if (f == nullptr)
+    {
+        return out;
+    }
+    char buf[8192];
+    int n = 0;
+    while ((n = gzread(f, buf, sizeof buf)) > 0)
+    {
+        out.append(buf, static_cast<std::size_t>(n));
+    }
+    gzclose(f);
+    return out;
+}
+
+// Every line in every generation of the sink's text file, plain or gzipped.
+std::vector<std::string> allChainLines(const fs::path& dir)
+{
+    std::vector<std::string> lines;
+    for (const auto& e : fs::directory_iterator(dir))
+    {
+        const auto name = e.path().filename().string();
+        if (!name.starts_with("syslog.") || name.ends_with(".tmp") ||
+            name.find(".log") == std::string::npos)
+        {
+            continue;
+        }
+        std::istringstream in(readGenerationFile(e.path()));
+        std::string line;
+        while (std::getline(in, line))
+        {
+            lines.push_back(line);
+        }
+    }
+    return lines;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(compressed_chain_holds_every_datagram_once)
+{
+    // The same flood with compress on and four io threads: rotations come
+    // quickly, each schedules a compression and waits for the last one, while
+    // other threads keep receiving. Every datagram must be in the chain once,
+    // whole, plain or gzipped.
+    auto cfg                = makeConfig(true, true);
+    cfg.outputs[0].maxSize  = 2048;
+    cfg.outputs[0].maxFiles = 0;
+    cfg.outputs[0].compress = true;
+
+    constexpr int N = 20 * MINILOG_STRESS_MULTIPLIER;
+    {
+        OutputManager om(ioc, cfg);
+        UdpServer server(ioc, cfg, om, nullptr);
+        server.start();
+        const uint16_t port = server.localPort();
+        auto ioThreads      = startIoc(4);
+
+        for (int i = 0; i < N; ++i)
+        {
+            sendUdp("<34>Oct 11 22:14:15 host app[1]: compressed flood " + std::to_string(i), port);
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (std::chrono::steady_clock::now() < deadline &&
+               static_cast<int>(allChainLines(dir).size()) < N)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        shutdown(server, ioThreads);
+    } // OutputManager and its LogFile go here, cancelling any compression still running
+
+    std::map<int, int> seen;
+    for (const auto& line : allChainLines(dir))
+    {
+        const auto at = line.find("compressed flood ");
+        BOOST_REQUIRE_MESSAGE(at != std::string::npos, "unexpected line: " << line);
+        ++seen[std::stoi(line.substr(at + 17))];
+    }
+    for (const auto& [i, count] : seen)
+    {
+        BOOST_CHECK_MESSAGE(count == 1, "datagram " << i << " appears " << count << " times");
+        BOOST_CHECK(i >= 0 && i < N);
+    }
+#if !MINILOG_STRESS_LOSSY
+    BOOST_CHECK_EQUAL(static_cast<int>(seen.size()), N);
+#endif
+
+    int compressed = 0;
+    for (const auto& e : fs::directory_iterator(dir))
+    {
+        const auto name = e.path().filename().string();
+        BOOST_CHECK_MESSAGE(!name.ends_with(".tmp"), "left behind: " << name);
+        compressed += name.ends_with(".gz") ? 1 : 0;
+    }
+    BOOST_CHECK_GT(compressed, 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -542,3 +542,53 @@ func TestHandler_Lines_ReportsCompressedHistoryOnTailAndBackwardReads(t *testing
 		t.Error("a sink without compressed generations reported some")
 	}
 }
+
+// minilog compresses a generation while an export is reading the chain: the
+// .gz appears and the plain file is removed. The export opened the plain file
+// first and must read it to the end, once, without the .gz being read too.
+func TestExport_CompressionFinishingMidExportChangesNothing(t *testing.T) {
+	dir := t.TempDir()
+	recs := []string{
+		simple("2026-11-02T10:00:00Z", "INFO", "gen2").line(t),
+		simple("2026-11-02T10:00:01Z", "INFO", "gen1").line(t),
+		simple("2026-11-02T10:00:02Z", "INFO", "active").line(t),
+	}
+	sink := makeSink(t, dir, "main", []string{recs[2]})
+	gen2 := filepath.Join(dir, "main.2.jsonl")
+	for path, rec := range map[string]string{gen2: recs[0], filepath.Join(dir, "main.1.jsonl"): recs[1]} {
+		if err := os.WriteFile(path, []byte(rec+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	files, err := openGenerations(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeGenerations(files)
+
+	writeGzip(t, gen2+".gz", recs[0])
+	if err := os.Remove(gen2); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+	if err := exportRecords(context.Background(), files, "", "", &Filter{}, &jsonlWriter{bw}); err != nil {
+		t.Fatal(err)
+	}
+	bw.Flush()
+	if want := strings.Join(recs, "\n") + "\n"; buf.String() != want {
+		t.Errorf("got  %q\nwant %q", buf.String(), want)
+	}
+}
+
+func TestExport_TimeRangeAcrossCompressedGenerations(t *testing.T) {
+	sink, _ := compressedChain(t, t.TempDir())
+
+	body, _ := exportBody(t, []Sink{sink}, "sink=main&format=text&from=2026-11-02T10:00:01Z&to=2026-11-02T10:00:03Z")
+	if !strings.Contains(body, "gen2") || !strings.Contains(body, "gen1") ||
+		strings.Contains(body, "gen3") || strings.Contains(body, "active") {
+		t.Errorf("body = %q", body)
+	}
+}
