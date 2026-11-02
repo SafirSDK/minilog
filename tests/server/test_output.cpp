@@ -39,6 +39,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <csignal>
+#include <sys/resource.h>
 #include <unistd.h>
 #endif
 
@@ -1037,6 +1039,69 @@ BOOST_AUTO_TEST_CASE(gzip_file_round_trips_and_removes_the_plain_file)
     BOOST_CHECK(gunzip(gzipPath(plain)) == content);
     BOOST_CHECK_LT(fs::file_size(gzipPath(plain)), content.size() / 4);
 }
+
+BOOST_AUTO_TEST_CASE(gzip_file_reports_a_source_it_cannot_open_or_read)
+{
+    std::atomic<bool> cancel{false};
+    const auto missing = dir / "missing.2.log";
+    BOOST_CHECK_NE(gzipFile(missing, cancel), "");
+    BOOST_CHECK(!fs::exists(gzipPath(missing)));
+    BOOST_CHECK(!fs::exists(gzipTempPath(missing)));
+
+    // A directory opens on some platforms and then fails to read, and fails to
+    // open on others; either way nothing is left behind.
+    const auto notAFile = dir / "dir.2.log";
+    fs::create_directories(notAFile);
+    BOOST_CHECK_NE(gzipFile(notAFile, cancel), "");
+    BOOST_CHECK(fs::is_directory(notAFile));
+    BOOST_CHECK(!fs::exists(gzipPath(notAFile)));
+    BOOST_CHECK(!fs::exists(gzipTempPath(notAFile)));
+}
+
+BOOST_AUTO_TEST_CASE(a_failed_rename_into_place_keeps_the_plain_file_and_no_temp)
+{
+    const auto plain = dir / "data.2.log";
+    std::ofstream(plain, std::ios::binary) << "records\n";
+    // A non-empty directory where the .gz goes: the rename onto it fails.
+    fs::create_directories(gzipPath(plain) / "blocker");
+
+    std::atomic<bool> cancel{false};
+    const auto error = gzipFile(plain, cancel);
+    BOOST_CHECK(error.find("rename") != std::string::npos);
+    BOOST_CHECK_EQUAL(readAll(plain), "records\n");
+    BOOST_CHECK(!fs::exists(gzipTempPath(plain)));
+}
+
+#ifndef _WIN32
+// The README's promise: a full disk partway through a compression leaves the
+// plain generation whole and nothing else behind. A file size limit is how a
+// test can run out of disk: writes past it fail with EFBIG, as they would with
+// ENOSPC, and the process carries on (with SIGXFSZ ignored).
+BOOST_AUTO_TEST_CASE(a_full_disk_mid_compression_keeps_the_plain_file)
+{
+    const auto plain = dir / "big.2.log";
+    writeBigFile(plain, 4u * 1024 * 1024); // about 1.7 MB once compressed
+    const auto size = fs::file_size(plain);
+
+    rlimit previous{};
+    BOOST_REQUIRE_EQUAL(getrlimit(RLIMIT_FSIZE, &previous), 0);
+    rlimit small               = previous;
+    small.rlim_cur             = 256 * 1024;
+    const auto previousHandler = std::signal(SIGXFSZ, SIG_IGN);
+    BOOST_REQUIRE_EQUAL(setrlimit(RLIMIT_FSIZE, &small), 0);
+
+    std::atomic<bool> cancel{false};
+    const std::string error = gzipFile(plain, cancel);
+
+    setrlimit(RLIMIT_FSIZE, &previous);
+    std::signal(SIGXFSZ, previousHandler);
+
+    BOOST_CHECK_NE(error, "");
+    BOOST_CHECK_EQUAL(fs::file_size(plain), size);
+    BOOST_CHECK(!fs::exists(gzipPath(plain)));
+    BOOST_CHECK(!fs::exists(gzipTempPath(plain)));
+}
+#endif
 
 BOOST_AUTO_TEST_CASE(a_cancelled_compression_leaves_only_the_plain_file)
 {

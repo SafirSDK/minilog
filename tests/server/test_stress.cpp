@@ -408,7 +408,50 @@ std::string readGenerationFile(const fs::path& p)
     return out;
 }
 
+// Block until no file in dir has appeared, gone or changed size for a second
+// and a half: every datagram written and every compression finished.
+//
+// Only a directory listing and file sizes, never a read. On Windows an open
+// file cannot be renamed, so reading the chain while the server rotates it
+// makes the rotation fail and closes the sink — which a first version of this
+// test did.
+bool waitUntilQuiet(const fs::path& dir)
+{
+    const auto snapshot = [&dir]()
+    {
+        std::map<std::string, std::uintmax_t> files;
+        std::error_code ec;
+        for (fs::directory_iterator it(dir, ec); !ec && it != fs::directory_iterator();
+             it.increment(ec))
+        {
+            std::error_code sizeEc;
+            files[it->path().filename().string()] = fs::file_size(it->path(), sizeEc);
+        }
+        return files;
+    };
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    auto last           = snapshot();
+    auto since          = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        auto now = snapshot();
+        if (now != last)
+        {
+            last  = std::move(now);
+            since = std::chrono::steady_clock::now();
+        }
+        else if (std::chrono::steady_clock::now() - since >= std::chrono::milliseconds(1500))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Every line in every generation of the sink's text file, plain or gzipped.
+// Read only once the server has stopped; see waitUntilQuiet.
 std::vector<std::string> allChainLines(const fs::path& dir)
 {
     std::vector<std::string> lines;
@@ -455,12 +498,7 @@ BOOST_AUTO_TEST_CASE(compressed_chain_holds_every_datagram_once)
         {
             sendUdp("<34>Oct 11 22:14:15 host app[1]: compressed flood " + std::to_string(i), port);
         }
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-        while (std::chrono::steady_clock::now() < deadline &&
-               static_cast<int>(allChainLines(dir).size()) < N)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
+        BOOST_CHECK_MESSAGE(waitUntilQuiet(dir), "the sink never stopped writing");
         shutdown(server, ioThreads);
     } // OutputManager and its LogFile go here, cancelling any compression still running
 

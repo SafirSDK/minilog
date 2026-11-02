@@ -668,3 +668,32 @@ func TestFileChain_WithCompressAndNoHistoryReportsNoneOlder(t *testing.T) {
 		t.Error("reported older history that does not exist")
 	}
 }
+
+// A rotation that lands while an export is opening the chain leaves handles on
+// files that have since moved; stillNamed is what notices, so that the set is
+// opened again rather than read in the wrong order.
+func TestExport_NoticesAFileMovedWhileTheChainWasOpened(t *testing.T) {
+	dir := t.TempDir()
+	sink, _ := compressedChain(t, dir)
+
+	files, paths, err := tryOpenGenerations(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeGenerations(files)
+	if !stillNamed(files, paths) {
+		t.Fatal("an untouched chain was reported as moved")
+	}
+
+	// What a rotation does to the newest names: the active file becomes .1.
+	gen1 := filepath.Join(dir, "main.1.jsonl")
+	if err := os.Remove(gen1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(sink.Path, gen1); err != nil {
+		t.Fatal(err)
+	}
+	if stillNamed(files, paths) {
+		t.Error("a chain whose files moved was reported as unchanged")
+	}
+}
