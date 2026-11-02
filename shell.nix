@@ -14,8 +14,9 @@ pkgs.mkShell {
     clang
     go
 
-    # Boost (used directly on Linux; Conan only manages it on Windows)
+    # Boost and zlib (used directly on Linux; Conan only manages them on Windows)
     boost
+    zlib
 
     # Dependency management (for Windows cross-build and conanfile.py)
     #conan

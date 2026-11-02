@@ -108,6 +108,12 @@ facility = *
 ; rather than a silent default, the same as a key minilog does not know.
 include_malformed = true
 
+; gzip rotated generations .2 and older — syslog.2.log.gz, syslog.3.jsonl.gz,
+; and so on — in the background after each rotation. The active file and .1
+; stay plain, and they are all the web viewer can scroll and search; its Export
+; reads the compressed ones too. Logs shrink about ten-fold. Off by default.
+;compress = true
+
 
 ; ─── Example: a second output section filtering to auth/authpriv only ────────
 ;[output.auth]

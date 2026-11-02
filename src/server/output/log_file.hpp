@@ -22,11 +22,14 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
+#include <boost/asio/thread_pool.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <string>
 
 namespace minilog
@@ -55,6 +58,8 @@ public:
     explicit LogFile(boost::asio::io_context& ioc,
                      OutputConfig cfg,
                      std::chrono::milliseconds retryInterval = SinkRecovery::kRetryInterval);
+    // Waits for a compression in progress to stop, which it does at its next
+    // block once cancelled; see m_compressor.
     ~LogFile();
 
     // Open the output files now, reporting failure instead of discovering it on
@@ -77,6 +82,19 @@ private:
     void rotate();
     void openFiles();
     void closeFiles();
+
+    // With `compress`, gzip the generation that has just become .2, off the
+    // strand; see m_compressor.
+    void scheduleCompression();
+
+    // Block until a compression in progress has finished. Rotation calls this
+    // before renaming anything, so that no file is renamed or removed while the
+    // compressor still has it open — on Windows that rename fails, and a failed
+    // rotation takes the sink out of service.
+    void waitForCompression();
+
+    // Remove .gz.tmp files a crash left behind. Startup only.
+    void removeStaleCompressions();
 
     // Report a failure and take this sink out of service: every later write is
     // dropped, so a storage problem degrades one sink instead of stopping the
@@ -121,6 +139,20 @@ private:
     std::ofstream m_jsonlStream;
     uint64_t m_textSize  = 0;
     uint64_t m_jsonlSize = 0;
+
+    // The compression in progress, if any. Accessed only on m_strand.
+    std::future<void> m_compression;
+
+    // Set to stop a compression early: by close(), and by the destructor.
+    // Declared before m_compressor so that it outlives the thread that reads it.
+    std::atomic<bool> m_cancelCompression{false};
+
+    // Compressing 100 MB takes seconds, and the strand is where this sink's
+    // writes happen, so it runs on a thread of its own rather than on the
+    // strand or on the io_context, whose threads are also receiving datagrams.
+    // One thread, one job at a time: rotation waits for the previous job, so a
+    // second can never be queued behind the first.
+    boost::asio::thread_pool m_compressor{1};
 };
 
 } // namespace minilog

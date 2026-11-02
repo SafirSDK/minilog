@@ -15,7 +15,7 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
 - Parses RFC 3164, RFC 5424, and unrecognised ("UNKNOWN") datagrams
 - Multiple named output sections, each independently filtered by facility
 - Per-output text file (raw payload) and/or JSONL file (structured)
-- Log rotation by file size with configurable retention count
+- Log rotation by file size with configurable retention count, and optional gzip of older generations
 - UDP forwarding with per-facility filtering and message truncation
 - Windows service installation/removal via CLI flags
 - Web viewer — browser UI with paging, filtering, search across rotated log files (installed by default on Windows)
@@ -35,7 +35,6 @@ A small UDP syslog server that understands RFC 3164 and RFC 5424. Receives datag
   loopback test goes and no further
 - **No multicast or promiscuous capture** — minilog receives datagrams addressed to the host it runs on; it does not join multicast groups or sniff traffic addressed elsewhere (neither is part of the syslog RFCs)
 - **RFC 5424 structured data is not parsed** — it is just passed along to the output files
-- **Rotated files are not compressed** — generation files are plain text/JSONL; no gzip
 - **Web viewer has no authentication or TLS** — anyone who can reach the listen port can read all exposed logs; bind to localhost or place behind a reverse proxy on untrusted networks
 
 ## Standards conformance
@@ -81,9 +80,9 @@ setting that removes the limit.
 
 ## Requirements
 
-| Platform | Toolchain | Boost |
-|----------|-----------|-------|
-| Linux | GCC 12+ or Clang 16+, CMake 3.25+, Ninja | system package (`libboost-all-dev`) |
+| Platform | Toolchain | Boost and zlib |
+|----------|-----------|----------------|
+| Linux | GCC 12+ or Clang 16+, CMake 3.25+, Ninja | system packages (`libboost-all-dev`, `zlib1g-dev`) |
 | Windows | MSVC 2022+, CMake 3.25+, Ninja, Conan 2 | managed by Conan |
 
 ## Building
@@ -91,7 +90,7 @@ setting that removes the limit.
 ### Linux
 
 ```
-sudo apt-get install ninja-build libboost-all-dev
+sudo apt-get install ninja-build libboost-all-dev zlib1g-dev
 cmake --preset linux-release
 cmake --build --preset linux-release
 ```
@@ -403,6 +402,7 @@ a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\
 | `facility` | `*` | Comma-separated facility names to accept. `*` = all |
 | `exclude_facility` | — | Comma-separated facility names to leave out of whatever `facility` accepts. `facility = *` with `exclude_facility = local3` is "everything except local3". `*` is not allowed here |
 | `include_malformed` | `true` | Write unrecognised (UNKNOWN) datagrams. `true`, `false`, `1` or `0` |
+| `compress` | `false` | gzip rotated generations `.2` and older, both files; see [Compressed generations](#compressed-generations). `true`, `false`, `1` or `0` |
 
 A datagram that parsed as neither RFC has no facility, and only a sink whose `facility` is `*`
 receives it. `exclude_facility` cannot keep such a datagram out, since it has no facility to be
@@ -413,6 +413,29 @@ long, is not the wildcard, and would drop those datagrams too. Naming a facility
 
 Rotated filenames insert a generation number before the extension:
 `syslog.log` → `syslog.1.log`, `syslog.2.log`, …
+
+#### Compressed generations
+
+With `compress = true`, generations `.2` and older are gzipped — `syslog.2.log.gz`,
+`syslog.3.jsonl.gz`, … — while the active file and `.1` stay plain. Logs typically shrink about
+ten-fold. `zcat`, `zgrep`, `gzip -d` and 7-Zip read them.
+
+Compression happens in the background after a rotation, so incoming messages are never held up
+by it; the next rotation waits for it to finish before renaming anything. It writes
+`….gz.tmp`, syncs it to disk, renames it into place and only then removes the plain file, so a
+full disk, a crash or a power loss leaves the plain generation intact. A failure is reported to
+syslog or the Event Log, the generation is kept uncompressed, and the sink carries on; a stray
+`.gz.tmp` is removed at the next start.
+
+`max_files` counts generations whether compressed or not. Switching `compress` off later leaves
+the existing `.gz` generations in place: they still move along and expire as usual. Only the
+generation that has just become `.2` is compressed at each rotation, so plain generations from
+before `compress` was switched on, or from a failed compression, stay plain until they expire.
+
+The [web viewer](#web-viewer) scrolls, filters and searches the plain generations only — reading
+at arbitrary positions inside a gzip file would mean decompressing it from the start each time.
+When scrolling reaches the oldest plain line and compressed generations exist, it says so;
+**Export** reads every generation, compressed ones included.
 
 ### `[web_viewer]`
 
@@ -982,8 +1005,8 @@ listen address is bound, and reports a failed run to the SCM as a service-specif
 - Column visibility toggle (Msg Time, Rcv Time, Source, Hostname, App, PID, Severity, Proto, Msg ID, Message)
 - Severity and facility filter dropdowns
 - Include / exclude text pattern filters
-- Full-chain search (searches across all rotated generations, returns total match count)
-- Export… — saves a time range of the whole rotation chain as JSONL, text or CSV (see below)
+- Full-chain search (searches across all plain rotated generations, returns total match count)
+- Export… — saves a time range of the whole rotation chain, [compressed generations](#compressed-generations) included, as JSONL, text or CSV (see below)
 
 **Export.** The Export… dropdown saves records by *receive* time (`rcv`), from the whole rotation
 chain. Leaving From or To empty means from the start or up to now. The current severity,

@@ -53,6 +53,8 @@ add_compile_options(
 )
 
 find_package(Boost REQUIRED COMPONENTS json program_options unit_test_framework)
+# gzip for compressed rotated generations ([output.*] compress).
+find_package(ZLIB REQUIRED)
 
 # Platform-specific sources
 if(WIN32)
@@ -99,6 +101,7 @@ add_executable(minilog
     src/server/udp_server.cpp
     src/server/output/output_manager.cpp
     src/server/output/log_file.cpp
+    src/server/output/compress.cpp
     src/server/forwarder/forwarder.cpp
     ${PLATFORM_SOURCES}
 )
@@ -118,6 +121,7 @@ target_link_libraries(minilog PRIVATE
     Boost::headers
     Boost::json
     Boost::program_options
+    ZLIB::ZLIB
 )
 
 if(WIN32)

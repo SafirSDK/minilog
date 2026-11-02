@@ -15,16 +15,21 @@
 
 #include "log_file.hpp"
 
+#include "compress.hpp"
+
 #include "platform/os_log.hpp"
 
 #include <boost/asio/post.hpp>
 #include <boost/json.hpp>
 
+#include <array>
 #include <chrono>
 #include <format>
+#include <future>
 #include <optional>
 #include <string>
 #include <system_error>
+#include <vector>
 
 namespace minilog
 {
@@ -272,16 +277,23 @@ LogFile::LogFile(boost::asio::io_context& ioc,
 {
 }
 
-// Deliberately trivial, and defaulted rather than left empty so that it reads as
-// a decision: closeFiles() must not be called here, because it would race with
-// strand work that may still be queued.  The std::ofstream members close
-// themselves on destruction.  For an explicit close, use close(), which posts to
-// the strand.
-LogFile::~LogFile() = default;
+// closeFiles() must not be called here, because it would race with strand work
+// that may still be queued. The std::ofstream members close themselves on
+// destruction. For an explicit close, use close(), which posts to the strand.
+//
+// A compression still running is told to stop and waited for: it holds a
+// reference to this object's cancel flag, and m_compressor's own destructor
+// would wait for it anyway — only for the whole file rather than one block.
+LogFile::~LogFile()
+{
+    m_cancelCompression = true;
+    m_compressor.join();
+}
 
 bool LogFile::openAtStartup()
 {
     m_startingUp = true;
+    removeStaleCompressions();
     openFiles();
     m_startingUp = false;
     return !m_closed;
@@ -315,8 +327,9 @@ void LogFile::close()
     boost::asio::post(m_strand,
                       [this]()
                       {
-                          m_shuttingDown = true;
-                          m_closed       = true;
+                          m_shuttingDown      = true;
+                          m_closed            = true;
+                          m_cancelCompression = true;
                           try
                           {
                               // A pending retry is outstanding work, and run()
@@ -524,6 +537,7 @@ void LogFile::rotate()
 {
     namespace fs = std::filesystem;
 
+    waitForCompression();
     closeFiles();
 
     // Every step below uses the error_code overloads: a throw from here would
@@ -547,6 +561,14 @@ void LogFile::rotate()
             return found;
         };
 
+        // A generation is there in either form, plain or compressed. Both are
+        // handled whatever `compress` says, so that switching it off does not
+        // strand the .gz generations already written. Both forms can also exist
+        // at once, briefly, between a compression's rename and its removal of
+        // the plain file — or for good, if a crash came in between; they hold
+        // the same records and simply move and expire together.
+        auto forms = [](const fs::path& plain) { return std::array{plain, gzipPath(plain)}; };
+
         // Find the highest rotated generation that exists.
         // Probe up to the limit (or a reasonable cap when unlimited) so that
         // gaps left by manually deleted files don't cause orphaned generations.
@@ -554,14 +576,17 @@ void LogFile::rotate()
         int highest          = 0;
         for (int n = 1; n <= probeLimit; ++n)
         {
-            const auto found = probe(rotatedPath(base, n));
-            if (!found)
+            for (const auto& p : forms(rotatedPath(base, n)))
             {
-                return false;
-            }
-            if (*found)
-            {
-                highest = n;
+                const auto found = probe(p);
+                if (!found)
+                {
+                    return false;
+                }
+                if (*found)
+                {
+                    highest = n;
+                }
             }
         }
 
@@ -570,8 +595,38 @@ void LogFile::rotate()
         {
             for (int n = highest; n >= m_cfg.maxFiles; --n)
             {
-                const auto p     = rotatedPath(base, n);
-                const auto found = probe(p);
+                for (const auto& p : forms(rotatedPath(base, n)))
+                {
+                    const auto found = probe(p);
+                    if (!found)
+                    {
+                        return false;
+                    }
+                    if (!*found)
+                    {
+                        continue;
+                    }
+                    std::error_code ec;
+                    fs::remove(p, ec);
+                    if (ec)
+                    {
+                        failSink("rotation remove failed for '" + p.string() +
+                                 "': " + ec.message());
+                        return false;
+                    }
+                }
+            }
+            highest = m_cfg.maxFiles - 1;
+        }
+
+        // Shift existing rotated files up by one.
+        for (int n = highest; n >= 1; --n)
+        {
+            const auto from = forms(rotatedPath(base, n));
+            const auto to   = forms(rotatedPath(base, n + 1));
+            for (std::size_t i = 0; i < from.size(); ++i)
+            {
+                const auto found = probe(from[i]);
                 if (!found)
                 {
                     return false;
@@ -581,35 +636,13 @@ void LogFile::rotate()
                     continue;
                 }
                 std::error_code ec;
-                fs::remove(p, ec);
+                fs::rename(from[i], to[i], ec);
                 if (ec)
                 {
-                    failSink("rotation remove failed for '" + p.string() + "': " + ec.message());
+                    failSink("rotation rename failed for '" + from[i].string() +
+                             "': " + ec.message());
                     return false;
                 }
-            }
-            highest = m_cfg.maxFiles - 1;
-        }
-
-        // Shift existing rotated files up by one.
-        for (int n = highest; n >= 1; --n)
-        {
-            const auto from  = rotatedPath(base, n);
-            const auto found = probe(from);
-            if (!found)
-            {
-                return false;
-            }
-            if (!*found)
-            {
-                continue;
-            }
-            std::error_code ec;
-            fs::rename(from, rotatedPath(base, n + 1), ec);
-            if (ec)
-            {
-                failSink("rotation rename failed for '" + from.string() + "': " + ec.message());
-                return false;
             }
         }
 
@@ -642,6 +675,95 @@ void LogFile::rotate()
     }
 
     openFiles();
+
+    if (m_cfg.compress && !m_closed)
+    {
+        scheduleCompression();
+    }
+}
+
+void LogFile::scheduleCompression()
+{
+    namespace fs = std::filesystem;
+
+    // The generation that has just become .2 was .1 until this rotation, and
+    // .1 is never compressed, so it is plain. Older plain generations — left by
+    // a failure, or from before `compress` was switched on — are left as they
+    // are rather than all compressed at once.
+    std::vector<fs::path> plain;
+    for (const auto& file : {m_cfg.textFile, m_cfg.jsonlFile})
+    {
+        if (file.empty())
+        {
+            continue;
+        }
+        const auto p = rotatedPath(fs::path(file), 2);
+        std::error_code ec;
+        if (fs::exists(p, ec))
+        {
+            plain.push_back(p);
+        }
+    }
+    if (plain.empty())
+    {
+        return;
+    }
+
+    std::packaged_task<void()> job(
+        [plain = std::move(plain), name = m_cfg.name, &cancel = m_cancelCompression]()
+        {
+            for (const auto& p : plain)
+            {
+                const std::string error = gzipFile(p, cancel);
+                if (!error.empty())
+                {
+                    if (cancel)
+                    {
+                        return; // shutting down; the plain file stays, as intended
+                    }
+                    osLogError("minilog: sink '" + name + "': compressing '" + p.string() +
+                               "' failed: " + error + "; it is kept uncompressed");
+                }
+            }
+        });
+    m_compression = job.get_future();
+    boost::asio::post(m_compressor, std::move(job));
+}
+
+void LogFile::waitForCompression()
+{
+    if (!m_compression.valid())
+    {
+        return;
+    }
+    try
+    {
+        m_compression.get();
+    }
+    catch (...)
+    {
+        // The job reports its own failures; what reaches here is one while
+        // reporting (out of memory). The plain file is still there either way.
+    }
+}
+
+void LogFile::removeStaleCompressions()
+{
+    namespace fs = std::filesystem;
+
+    const int probeLimit = (m_cfg.maxFiles > 0) ? m_cfg.maxFiles : kMaxFilesLimit;
+    for (const auto& file : {m_cfg.textFile, m_cfg.jsonlFile})
+    {
+        if (file.empty())
+        {
+            continue;
+        }
+        for (int n = 1; n <= probeLimit + 1; ++n)
+        {
+            std::error_code ec;
+            fs::remove(gzipTempPath(rotatedPath(fs::path(file), n)), ec);
+        }
+    }
 }
 
 void LogFile::openFiles()

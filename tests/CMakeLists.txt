@@ -14,6 +14,7 @@ function(add_boost_test name source)
         Boost::unit_test_framework
         Boost::headers
         Boost::json
+        ZLIB::ZLIB
     )
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
@@ -51,6 +52,7 @@ add_boost_test(test_output     server/test_output.cpp)
 target_sources(test_output     PRIVATE
     ../src/server/config/config.cpp
     ../src/server/output/log_file.cpp
+    ../src/server/output/compress.cpp
     ../src/server/output/output_manager.cpp
     ../src/server/parser/syslog_parser.cpp
 )
@@ -81,6 +83,7 @@ target_sources(test_integration PRIVATE
     ../src/server/config/config.cpp
     ../src/server/parser/syslog_parser.cpp
     ../src/server/output/log_file.cpp
+    ../src/server/output/compress.cpp
     ../src/server/output/output_manager.cpp
     ../src/server/forwarder/forwarder.cpp
     ../src/server/udp_server.cpp
@@ -114,6 +117,7 @@ target_sources(test_stress PRIVATE
     ../src/server/config/config.cpp
     ../src/server/parser/syslog_parser.cpp
     ../src/server/output/log_file.cpp
+    ../src/server/output/compress.cpp
     ../src/server/output/output_manager.cpp
     ../src/server/forwarder/forwarder.cpp
     ../src/server/udp_server.cpp

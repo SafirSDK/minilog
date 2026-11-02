@@ -14,14 +14,17 @@
  ******************************************************************************/
 
 #define BOOST_TEST_MODULE test_output
+#include "output/compress.hpp"
 #include "output/log_file.hpp"
 #include "output/output_manager.hpp"
 #include "output/sink_recovery.hpp"
+#include "platform/wait_until.hpp"
 
 #include <boost/json.hpp>
 #include <boost/test/unit_test.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +32,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <zlib.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -559,6 +563,217 @@ BOOST_AUTO_TEST_CASE(jsonl_only_rotates_on_size)
     BOOST_CHECK(fs::exists(dir / "syslog.jsonl"));
     BOOST_CHECK(fs::exists(dir / "syslog.1.jsonl"));
     BOOST_CHECK(!fs::exists(dir / "syslog.2.jsonl"));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ─── Compression ────────────────────────────────────────────────────────────
+
+namespace
+{
+
+// The decompressed contents of a gzip file, or "<unreadable>".
+std::string gunzip(const fs::path& p)
+{
+#ifdef _WIN32
+    gzFile f = gzopen_w(p.c_str(), "rb");
+#else
+    gzFile f = gzopen(p.c_str(), "rb");
+#endif
+    if (f == nullptr)
+    {
+        return "<unreadable>";
+    }
+    std::string out;
+    char buf[4096];
+    int n = 0;
+    while ((n = gzread(f, buf, sizeof buf)) > 0)
+    {
+        out.append(buf, static_cast<std::size_t>(n));
+    }
+    const bool ok = n == 0;
+    gzclose(f);
+    return ok ? out : "<unreadable>";
+}
+
+// Compression runs on a thread of its own, so its result has to be waited for.
+bool waitForFile(const fs::path& p)
+{
+    return waitUntil(
+        [&] { return fs::exists(p); }, std::chrono::seconds(10), std::chrono::milliseconds(5));
+}
+
+OutputConfig compressedConfig(const fs::path& dir, int maxFiles = 0)
+{
+    OutputConfig cfg;
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.maxSize          = 1; // rotate before every write after the first
+    cfg.maxFiles         = maxFiles;
+    cfg.includeMalformed = true;
+    cfg.compress         = true;
+    return cfg;
+}
+
+bool anyTempFile(const fs::path& dir)
+{
+    for (const auto& e : fs::directory_iterator(dir))
+    {
+        if (e.path().string().ends_with(".tmp"))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+BOOST_FIXTURE_TEST_SUITE(compression, Fixture)
+
+BOOST_AUTO_TEST_CASE(off_by_default_leaves_every_generation_plain)
+{
+    OutputConfig cfg = compressedConfig(dir);
+    cfg.compress     = false;
+    {
+        LogFile lf(ioc, cfg);
+        for (const char* m : {"A", "B", "C", "D"})
+        {
+            writeSync(lf, rfc3164Msg(m));
+        }
+    }
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.3.log"), "A\n");
+    BOOST_CHECK(!fs::exists(dir / "syslog.3.log.gz"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log.gz"));
+}
+
+BOOST_AUTO_TEST_CASE(generation_two_and_older_are_gzipped_and_hold_the_same_records)
+{
+    LogFile lf(ioc, compressedConfig(dir));
+    for (const char* m : {"A", "B", "C", "D"})
+    {
+        writeSync(lf, rfc3164Msg(m));
+    }
+    // .3 was compressed when it was .2; the last rotation made B into .2.
+    BOOST_REQUIRE(waitForFile(dir / "syslog.2.log.gz"));
+    BOOST_REQUIRE(waitForFile(dir / "syslog.2.jsonl.gz"));
+    BOOST_REQUIRE(waitUntil([&] { return !fs::exists(dir / "syslog.2.jsonl"); },
+                            std::chrono::seconds(10),
+                            std::chrono::milliseconds(5)));
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), "D\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "C\n");
+    BOOST_CHECK_EQUAL(gunzip(dir / "syslog.2.log.gz"), "B\n");
+    BOOST_CHECK_EQUAL(gunzip(dir / "syslog.3.log.gz"), "A\n");
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.3.log"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.1.log.gz"));
+
+    // The JSONL generation is the record minilog wrote, byte for byte.
+    const auto record = gunzip(dir / "syslog.2.jsonl.gz");
+    BOOST_CHECK(record.find("\"rcv\":") != std::string::npos);
+    BOOST_CHECK(record.ends_with("\n"));
+    BOOST_CHECK(!anyTempFile(dir));
+}
+
+BOOST_AUTO_TEST_CASE(max_files_expires_compressed_generations)
+{
+    {
+        LogFile lf(ioc, compressedConfig(dir, 3));
+        for (int i = 0; i < 7; ++i)
+        {
+            writeSync(lf, rfc3164Msg("x"));
+        }
+        BOOST_REQUIRE(waitForFile(dir / "syslog.2.log.gz"));
+    }
+    BOOST_CHECK(fs::exists(dir / "syslog.1.log"));
+    BOOST_CHECK(fs::exists(dir / "syslog.2.log.gz"));
+    BOOST_CHECK(fs::exists(dir / "syslog.3.log.gz"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.4.log.gz"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.4.log"));
+}
+
+BOOST_AUTO_TEST_CASE(switching_it_off_still_moves_the_compressed_generations)
+{
+    {
+        LogFile lf(ioc, compressedConfig(dir));
+        for (const char* m : {"A", "B", "C"})
+        {
+            writeSync(lf, rfc3164Msg(m));
+        }
+        BOOST_REQUIRE(waitForFile(dir / "syslog.2.log.gz"));
+    }
+
+    OutputConfig cfg = compressedConfig(dir);
+    cfg.compress     = false;
+    LogFile lf(ioc, cfg);
+    writeSync(lf, rfc3164Msg("D"));
+
+    BOOST_CHECK_EQUAL(gunzip(dir / "syslog.3.log.gz"), "A\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.2.log"), "B\n");
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log.gz"));
+}
+
+BOOST_AUTO_TEST_CASE(a_crash_s_leftover_temp_file_is_removed_at_startup)
+{
+    std::ofstream(dir / "syslog.3.log.gz.tmp") << "partial";
+    std::ofstream(dir / "syslog.2.jsonl.gz.tmp") << "partial";
+
+    LogFile lf(ioc, compressedConfig(dir, 5));
+    BOOST_REQUIRE(lf.openAtStartup());
+
+    BOOST_CHECK(!fs::exists(dir / "syslog.3.log.gz.tmp"));
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.jsonl.gz.tmp"));
+}
+
+BOOST_AUTO_TEST_CASE(a_failed_compression_keeps_the_plain_file_and_the_sink)
+{
+    // A directory where the temporary file would go makes the compression fail.
+    fs::create_directories(dir / "syslog.2.log.gz.tmp" / "blocker");
+
+    OutputConfig cfg = compressedConfig(dir);
+    cfg.jsonlFile.clear();
+    LogFile lf(ioc, cfg);
+    for (const char* m : {"A", "B", "C"})
+    {
+        writeSync(lf, rfc3164Msg(m));
+    }
+    // The next rotation waits for the failed job, so after it the outcome is settled.
+    writeSync(lf, rfc3164Msg("D"));
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.3.log"), "A\n");    // kept plain, and shifted
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.log"), "D\n");      // sink still writing
+    BOOST_CHECK(fs::is_directory(dir / "syslog.2.log.gz.tmp")); // not ours to remove
+}
+
+BOOST_AUTO_TEST_CASE(gzip_file_round_trips_and_removes_the_plain_file)
+{
+    const auto plain = dir / "data.1.log";
+    std::string content;
+    for (int i = 0; i < 100000; ++i)
+    {
+        content += "line " + std::to_string(i) + " \xC3\xA9\x01\n";
+    }
+    std::ofstream(plain, std::ios::binary) << content;
+
+    std::atomic<bool> cancel{false};
+    BOOST_CHECK_EQUAL(gzipFile(plain, cancel), "");
+    BOOST_CHECK(!fs::exists(plain));
+    BOOST_CHECK(!fs::exists(gzipTempPath(plain)));
+    BOOST_CHECK(gunzip(gzipPath(plain)) == content);
+    BOOST_CHECK_LT(fs::file_size(gzipPath(plain)), content.size() / 4);
+}
+
+BOOST_AUTO_TEST_CASE(a_cancelled_compression_leaves_only_the_plain_file)
+{
+    const auto plain = dir / "data.2.log";
+    std::ofstream(plain, std::ios::binary) << "some records\n";
+
+    std::atomic<bool> cancel{true};
+    BOOST_CHECK_NE(gzipFile(plain, cancel), "");
+    BOOST_CHECK_EQUAL(readAll(plain), "some records\n");
+    BOOST_CHECK(!fs::exists(gzipPath(plain)));
+    BOOST_CHECK(!fs::exists(gzipTempPath(plain)));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

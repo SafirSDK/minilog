@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -124,11 +125,20 @@ func handleExport(w http.ResponseWriter, r *http.Request, sinkMap map[string]Sin
 func exportRecords(ctx context.Context, files []generation, from, to string, f *Filter, out recordWriter) error {
 	filtering := !f.Empty()
 	for i, g := range files {
+		var r io.Reader = io.NewSectionReader(g.file, 0, g.size)
+		if g.compressed {
+			zr, err := gzip.NewReader(r)
+			if err != nil {
+				return fmt.Errorf("%s: %w", g.file.Name(), err)
+			}
+			r = zr
+		}
 		// The active file is the last one, and minilog may be partway through
-		// writing a record at the size it was opened with.
-		active := i == len(files)-1
+		// writing a record at the size it was opened with. A compressed file
+		// is complete: minilog renames it into place only once it is.
+		active := i == len(files)-1 && !g.compressed
 		n := 0
-		err := eachLine(io.NewSectionReader(g.file, 0, g.size), active, func(line []byte) error {
+		err := eachLine(r, active, func(line []byte) error {
 			n++
 			if n%4096 == 0 && ctx.Err() != nil {
 				return ctx.Err()
@@ -213,9 +223,10 @@ func fileNamePart(s string) string {
 // when it was opened. Nothing past that size is read: for the active file it is
 // still being written.
 type generation struct {
-	file *os.File
-	size int64
-	info os.FileInfo
+	file       *os.File
+	size       int64
+	info       os.FileInfo
+	compressed bool // gzipped by minilog's `compress`; read through gzip
 }
 
 // openGenerations opens every non-empty generation of sink, oldest first.
@@ -248,8 +259,17 @@ func openGenerations(sink Sink) ([]generation, error) {
 func tryOpenGenerations(sink Sink) ([]generation, []string, error) {
 	var files []generation
 	var paths []string
-	for _, path := range chainPaths(sink) {
+	for _, plain := range chainPaths(sink) {
+		// A generation is plain or gzipped. Both exist only briefly, between
+		// minilog's rename of the .gz into place and its removal of the plain
+		// file (or for good after a crash in between); they hold the same
+		// records, and the plain one is read.
+		path, compressed := plain, false
 		fh, err := openShared(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			path, compressed = plain+".gz", true
+			fh, err = openShared(path)
+		}
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -267,7 +287,7 @@ func tryOpenGenerations(sink Sink) ([]generation, []string, error) {
 			fh.Close()
 			continue
 		}
-		files = append(files, generation{file: fh, size: info.Size(), info: info})
+		files = append(files, generation{file: fh, size: info.Size(), info: info, compressed: compressed})
 		paths = append(paths, path)
 	}
 	return files, paths, nil

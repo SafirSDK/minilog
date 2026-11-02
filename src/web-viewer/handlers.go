@@ -127,6 +127,11 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 			NextOffset  int64    `json:"next_offset"`
 			Total       int64    `json:"total"`
 			TailOffset  int64    `json:"tail_offset"`
+			// Whether older, gzipped generations exist beyond the start of the
+			// chain. Only on tail and backward reads, the ones that can reach
+			// that start: the forward reads are the live poll, twice a second,
+			// and checking costs a stat per generation.
+			CompressedHistory bool `json:"compressed_history,omitempty"`
 		}
 
 		resp := response{
@@ -169,6 +174,10 @@ func registerHandlers(mux *http.ServeMux, sinks []Sink) {
 		if err != nil {
 			http.Error(w, "read error: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		if tail || dir == "backward" {
+			resp.CompressedHistory = hasCompressedHistory(sink)
 		}
 
 		if len(rawLines) > 0 {

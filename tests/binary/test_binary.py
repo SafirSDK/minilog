@@ -9,6 +9,7 @@ Or directly for development:
     python3 tests/test_binary.py ./build/linux-debug/minilog
 """
 
+import gzip
 import os
 import signal
 import socket
@@ -131,6 +132,7 @@ def write_config(
     max_size: str = "100MB",
     forward_to: int = 0,
     log_dir: Path | None = None,
+    compress: bool = False,
 ) -> Path:
     log_file = (log_dir or d) / "syslog.log"
     conf = d / "minilog.conf"
@@ -147,6 +149,8 @@ def write_config(
         "facility = *",
         "include_malformed = true",
     ]
+    if compress:
+        lines.append("compress = true")
     if forward_to:
         lines += [
             "",
@@ -778,6 +782,46 @@ class TestFilesystemFailure(unittest.TestCase):
                 self.assertIsNone(srv.proc.poll())
 
             self.assertEqual(srv.proc.returncode, 0, "server did not shut down cleanly")
+
+
+# ── Compressed rotation ───────────────────────────────────────────────────────
+
+
+class TestCompressedRotation(unittest.TestCase):
+    def test_older_generations_are_gzipped_and_hold_every_message(self):
+        """With compress = true, .1 stays plain and .2 and older become .gz;
+        together they still hold every message sent, in order."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            sent = [
+                f"<34>Oct 11 22:14:15 host su[1]: message {i:03d} " + "x" * 40 for i in range(60)
+            ]
+            with RunningServer(
+                d, lambda port: write_config(d, port, max_size="500B", compress=True)
+            ) as srv:
+                for msg in sent:
+                    send_udp(msg, srv.port)
+                    time.sleep(0.005)  # keep them in order on the way in
+                # Compression runs in the background after each rotation.
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and not (d / "syslog.3.log.gz").exists():
+                    time.sleep(0.05)
+                time.sleep(0.5)
+            self.assertEqual(srv.proc.returncode, 0)
+
+            self.assertTrue((d / "syslog.1.log").exists())
+            self.assertFalse((d / "syslog.1.log.gz").exists())
+            self.assertFalse((d / "syslog.2.log").exists())
+            self.assertFalse(list(d.glob("*.tmp")))
+
+            generations = sorted((int(p.name.split(".")[1]), p) for p in d.glob("syslog.*.log*"))
+            self.assertGreaterEqual(len(generations), 3)
+            text = ""
+            for _, p in reversed(generations):  # oldest first
+                data = gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_bytes()
+                text += data.decode()
+            text += (d / "syslog.log").read_text()
+            self.assertEqual(text.splitlines(), sent)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

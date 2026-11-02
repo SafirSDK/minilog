@@ -449,7 +449,8 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
                       "max_files",
                       "facility",
                       "exclude_facility",
-                      "include_malformed"});
+                      "include_malformed",
+                      "compress"});
 
     OutputConfig outCfg;
     outCfg.name      = name;
@@ -512,6 +513,8 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
                                           "include_malformed",
                                           "[output." + name + "] include_malformed",
                                           outCfg.includeMalformed);
+    outCfg.compress =
+        requireBool(sec, "compress", "[output." + name + "] compress", outCfg.compress);
 
     return outCfg;
 }

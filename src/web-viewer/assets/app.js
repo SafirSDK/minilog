@@ -42,6 +42,7 @@ let pollTimer       = 0;
 let loadingUp       = false;
 let polling         = false;
 let clearOffset     = null;
+let olderCompressed = false; // gzipped generations exist beyond the chain's start
 
 let searchMatches      = [];
 let searchTotalMatches = 0;
@@ -76,6 +77,7 @@ const topSentinel   = document.getElementById('top-sentinel');
 const jumpTailBtn   = document.getElementById('jump-tail-btn');
 const followBtn     = document.getElementById('follow-btn');
 const followLabel   = document.getElementById('follow-label');
+const olderNote     = document.getElementById('older-note');
 const matchNav      = document.getElementById('match-nav');
 const matchCounter  = document.getElementById('match-counter');
 const matchPrev     = document.getElementById('match-prev');
@@ -232,9 +234,11 @@ async function loadTail() {
   tailOffset = data.tail_offset ?? 0;
   chainEnd   = tailOffset;
   topOffset  = data.first_offset ?? 0;
+  olderCompressed = Boolean(data.compressed_history);
 
   renderRows(data.lines ?? [], data.offsets ?? [], false);
   updateEmptyState();
+  updateOlderNote();
   scrollToBottom();
   attachTopObserver();
   startPoll();
@@ -365,6 +369,8 @@ async function loadOlder() {
     topOffset = data.first_offset ?? topOffset;
     updateEmptyState();
   }
+  olderCompressed = Boolean(data.compressed_history);
+  updateOlderNote();
 
   // Re-attach observer to the new first row
   if (topOffset === 0) {
@@ -461,6 +467,7 @@ function pruneTop() {
       topOffset = parseInt(next.dataset.offset, 10);
     }
   }
+  updateOlderNote(); // the chain's start may just have been dropped from view
 }
 
 // ── Server search ─────────────────────────────────────────────────────────────
@@ -914,6 +921,11 @@ function bindExport() {
     input.addEventListener('input', () => { exportError.hidden = true; });
   }
   document.getElementById('export-save').addEventListener('click', saveExport);
+  document.getElementById('older-note-export').addEventListener('click', e => {
+    e.stopPropagation(); // the document's click handler would close it again
+    openDropdown('export');
+    updateExportPanel();
+  });
 }
 
 // ── Control bindings ──────────────────────────────────────────────────────────
@@ -1125,6 +1137,7 @@ function hideOverlays() {
 function clearDOM() {
   logBody.innerHTML = '';
   topOffset = 0;
+  olderNote.hidden = true;
   expandedRow = null;
   if (topObserver) { topObserver.disconnect(); topObserver = null; }
 }
@@ -1143,6 +1156,14 @@ function isNearBottom() {
 
 function updateEmptyState() {
   emptyState.hidden = logBody.rows.length > 0;
+}
+
+// The note sits above the oldest line scrolling can reach, so it shows only
+// once that line is loaded — and not after Clear Screen, whose view starts
+// where the user cleared it rather than where the chain does.
+function updateOlderNote() {
+  olderNote.hidden = !(olderCompressed && topOffset === 0 && clearOffset === null &&
+                       logBody.rows.length > 0);
 }
 
 function setStatus(state) {

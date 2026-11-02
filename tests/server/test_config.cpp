@@ -1306,6 +1306,19 @@ BOOST_AUTO_TEST_CASE(include_malformed_not_a_bool_is_rejected)
         kOutputPrefix + "include_malformed = yess\n", "[output.main] include_malformed", "yess");
 }
 
+BOOST_AUTO_TEST_CASE(compress_is_off_unless_asked_for)
+{
+    {
+        TempFile tmp(kOutputPrefix);
+        BOOST_CHECK(!loadConfig(tmp.path).outputs[0].compress);
+    }
+    {
+        TempFile tmp(kOutputPrefix + "compress = true\n");
+        BOOST_CHECK(loadConfig(tmp.path).outputs[0].compress);
+    }
+    expectRejected(kOutputPrefix + "compress = gzip\n", "[output.main] compress", "gzip");
+}
+
 BOOST_AUTO_TEST_CASE(max_message_size_not_a_number_is_rejected)
 {
     // "2k" is the mistake worth expecting here: max_size takes a unit suffix

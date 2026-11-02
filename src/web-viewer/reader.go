@@ -203,8 +203,22 @@ func NewFileChain(sink Sink) (*FileChain, error) {
 	return &FileChain{files: files, total: offset}, nil
 }
 
-// chainPaths returns every path a generation of sink can have, oldest first
-// and the active file last. Most of them usually do not exist.
+// hasCompressedHistory reports whether any rotated generation of sink is
+// gzipped. Those are outside the FileChain — scrolling needs random access,
+// which a gzip file does not give — and reachable only through /export.
+func hasCompressedHistory(sink Sink) bool {
+	paths := chainPaths(sink)
+	for _, p := range paths[:len(paths)-1] { // the active file is never compressed
+		if _, err := os.Stat(p + ".gz"); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// chainPaths returns every path a plain generation of sink can have, oldest
+// first and the active file last. Most of them usually do not exist. A
+// compressed generation is the same path with ".gz" appended.
 func chainPaths(sink Sink) []string {
 	base := sink.Path
 	ext := filepath.Ext(base)

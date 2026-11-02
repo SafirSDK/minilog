@@ -17,6 +17,14 @@
   "Apply current filters" is ticked, which it is not by default; the search box never applies.
   The download streams, with no size limit. New endpoint: `GET /export`. (#43)
 
+- **Rotated generations can be gzipped.** A new per-output setting, `compress = true` (off by
+  default), compresses generations `.2` and older — `syslog.2.log.gz`, `syslog.3.jsonl.gz`, … —
+  in the background after each rotation; the active file and `.1` stay plain. Logs typically
+  shrink about ten-fold. A failed compression keeps the plain file and is reported, and the sink
+  carries on. The web viewer scrolls, filters and searches the plain generations, says when
+  older ones are compressed, and its Export reads them all. Building minilog now needs zlib
+  (`zlib1g-dev` on Linux; Conan provides it on Windows, linked statically). (#42)
+
 ### Changed
 
 - **The web viewer's toolbar is reordered.** Left to right: the sink, the severity, facility and

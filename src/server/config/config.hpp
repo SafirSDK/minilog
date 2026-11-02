@@ -42,6 +42,8 @@ struct OutputConfig
     std::vector<int> facilities;         // empty = all (wildcard)
     std::vector<int> excludedFacilities; // removed from whatever `facilities` accepts
     bool includeMalformed = true;
+    // gzip rotated generations .2 and older; the active file and .1 stay plain.
+    bool compress = false;
 };
 
 struct ForwardingConfig

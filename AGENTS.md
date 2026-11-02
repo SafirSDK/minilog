@@ -11,7 +11,8 @@ commands (git, cmake, ctest, go, python, etc.) must be run via `wsl bash -c "...
 directly in PowerShell/CMD.
 
 - Branches: work lands on `develop`; `master` only receives release fast-forwards
-- Build: CMake + Boost (system package on Linux, Conan on Windows); Boost is the only external dep
+- Build: CMake + Boost and zlib (system packages on Linux, Conan on Windows); zlib is only for
+  gzip of rotated generations (`output/compress.cpp`). Nothing else external
 - Test framework: Boost.Test + Python binary tests (`tests/binary/test_binary.py`)
 - Binary tests start minilog through `RunningServer` (`test_binary.py`) or `ServerFixture`
   (`test_send_binary.py`), which wait for its `minilog: listening on UDP` line and retry a start
@@ -64,7 +65,16 @@ processing task  →  parse  →  post write to each matching sink strand
 
 ### Log rotation
 Triggered before each write if **either** `text_file` or `jsonl_file` exceeds `max_size`.
-Both files always rotate together.
+Both files always rotate together. A generation exists as `.N.ext` or `.N.ext.gz`; shifting and
+expiry handle both forms whatever `compress` says.
+
+With `compress`, the generation that has just become `.2` is gzipped by `gzipFile()`
+(`output/compress.cpp`) on `LogFile::m_compressor`, a one-thread `asio::thread_pool` — not on
+the strand (writes) or the io_context (receives), since 100 MB takes seconds. `rotate()` calls
+`waitForCompression()` before renaming anything: on Windows a file the compressor still holds
+cannot be renamed, and a failed rename closes the sink. `gzipFile` writes `.gz.tmp`, syncs,
+renames, then removes the plain file, so every failure leaves the plain generation;
+`m_cancelCompression` (set by `close()` and the destructor) stops it between blocks.
 
 ### Sink failure and recovery
 A filesystem error closes that one sink (`LogFile::failSink`) and drops every message routed to it;

@@ -56,13 +56,17 @@ class minilogConan(ConanFile):
     }
 
     def requirements(self):
-        # On Linux, Boost is provided by the distro (e.g. libboost-all-dev).
-        # Conan only manages Boost on Windows.
+        # On Linux, Boost and zlib are provided by the distro (e.g.
+        # libboost-all-dev, zlib1g-dev). Conan only manages them on Windows.
+        # zlib gzips rotated generations ([output.*] compress).
         if self.settings.os == "Windows":
             self.requires("boost/1.87.0")
+            self.requires("zlib/1.3.1")
 
     def configure(self):
         if self.settings.os == "Windows":
             self.options["boost/*"].shared = False
+            # Static, so the installer and the zip ship no zlib DLL.
+            self.options["zlib/*"].shared = False
             for lib in self._boost_all - self._boost_keep:
                 setattr(self.options["boost/*"], f"without_{lib}", True)

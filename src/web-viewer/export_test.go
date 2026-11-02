@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -418,5 +419,126 @@ func TestExport_StopsWhenTheRequestIsCancelled(t *testing.T) {
 	bw := bufio.NewWriter(io.Discard)
 	if err := exportRecords(ctx, files, "", "", &Filter{}, &jsonlWriter{bw}); err == nil {
 		t.Error("a cancelled export finished without an error")
+	}
+}
+
+// ── Compressed generations ───────────────────────────────────────────────────
+
+// writeGzip writes lines, newline-terminated, gzipped to path.
+func writeGzip(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	for _, l := range lines {
+		zw.Write([]byte(l + "\n"))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// compressedChain makes main.jsonl, a plain .1 and gzipped .2 and .3, one
+// record each, and returns the records oldest first.
+func compressedChain(t *testing.T, dir string) (Sink, []string) {
+	t.Helper()
+	recs := []string{
+		simple("2026-11-02T10:00:00Z", "INFO", "gen3").line(t),
+		simple("2026-11-02T10:00:01Z", "INFO", "gen2").line(t),
+		simple("2026-11-02T10:00:02Z", "INFO", "gen1").line(t),
+		simple("2026-11-02T10:00:03Z", "INFO", "active").line(t),
+	}
+	sink := makeSink(t, dir, "main", []string{recs[3]})
+	writeGzip(t, filepath.Join(dir, "main.3.jsonl.gz"), recs[0])
+	writeGzip(t, filepath.Join(dir, "main.2.jsonl.gz"), recs[1])
+	if err := os.WriteFile(filepath.Join(dir, "main.1.jsonl"), []byte(recs[2]+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return sink, recs
+}
+
+func TestExport_ReadsCompressedGenerations(t *testing.T) {
+	sink, recs := compressedChain(t, t.TempDir())
+
+	body, _ := exportBody(t, []Sink{sink}, "sink=main&format=jsonl")
+	if want := strings.Join(recs, "\n") + "\n"; body != want {
+		t.Errorf("got  %q\nwant %q", body, want)
+	}
+}
+
+func TestExport_PlainAndCompressedCopyIsReadOnce(t *testing.T) {
+	dir := t.TempDir()
+	sink, _ := compressedChain(t, dir)
+	// minilog renames the .gz into place before removing the plain file.
+	writeGzip(t, filepath.Join(dir, "main.1.jsonl.gz"), simple("2026-11-02T10:00:02Z", "INFO", "gen1").line(t))
+
+	body, _ := exportBody(t, []Sink{sink}, "sink=main&format=text")
+	if n := strings.Count(body, "gen1"); n != 1 {
+		t.Errorf("gen1 appears %d times: %q", n, body)
+	}
+}
+
+func TestExport_CorruptCompressedGenerationFailsTheDownload(t *testing.T) {
+	dir := t.TempDir()
+	sink, _ := compressedChain(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "main.2.jsonl.gz"), []byte("not gzip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := newTestServer(t, []Sink{sink})
+	defer ts.Close()
+	// The failure is in the first generation, so the connection can break
+	// before the status line is even sent; either way the download must not
+	// complete as if it were whole.
+	resp, err := http.Get(ts.URL + "/export?sink=main&format=jsonl")
+	if err == nil {
+		defer resp.Body.Close()
+		_, err = io.ReadAll(resp.Body)
+	}
+	if err == nil {
+		t.Error("a download with an unreadable generation completed as if whole")
+	}
+}
+
+func TestFileChain_LeavesCompressedGenerationsOut(t *testing.T) {
+	dir := t.TempDir()
+	sink, recs := compressedChain(t, dir)
+
+	fc, err := NewFileChain(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len(recs[2]) + 1 + len(recs[3]) + 1); fc.TailOffset() != want {
+		t.Errorf("chain is %d bytes, want %d (the plain generations only)", fc.TailOffset(), want)
+	}
+}
+
+func TestHandler_Lines_ReportsCompressedHistoryOnTailAndBackwardReads(t *testing.T) {
+	dir := t.TempDir()
+	sink, _ := compressedChain(t, dir)
+	plain := makeSink(t, t.TempDir(), "plain", []string{simple("2026-11-02T10:00:00Z", "INFO", "x").line(t)})
+	ts := newTestServer(t, []Sink{sink, plain})
+	defer ts.Close()
+
+	flag := func(path string) bool {
+		var r struct {
+			CompressedHistory bool `json:"compressed_history"`
+		}
+		decodeJSON(t, get(t, ts, path), &r)
+		return r.CompressedHistory
+	}
+	if !flag("/lines?sink=main&tail=true") {
+		t.Error("tail read: compressed_history not reported")
+	}
+	if !flag("/lines?sink=main&dir=backward&offset=100") {
+		t.Error("backward read: compressed_history not reported")
+	}
+	if flag("/lines?sink=main&offset=0") {
+		t.Error("forward read (the live poll) checked for compressed history")
+	}
+	if flag("/lines?sink=plain&tail=true") {
+		t.Error("a sink without compressed generations reported some")
 	}
 }
