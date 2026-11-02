@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.4.1 — 2026-11-02
+
+### Fixed
+
+- **The web viewer can be scrolled away from the live tail under heavy traffic.** The view followed
+  new lines whenever it was within 80px of the bottom, so a small wheel step, or a scrollbar thumb
+  moved only a little, was pulled back to the bottom by the next update. Scrolling up with the
+  wheel, the scrollbar, touch or ArrowUp/PageUp/Home now leaves the tail at once, and only
+  scrolling down to the bottom, or "Jump to tail", rejoins it. While away from the tail no new lines
+  are added, so the lines being read are no longer pushed out of the view within seconds; scrolling
+  back to the bottom carries on from where it stopped. (#49)
+
 ## v1.4.0 — 2026-09-23
 
 ### Upgrading from 1.3.0
