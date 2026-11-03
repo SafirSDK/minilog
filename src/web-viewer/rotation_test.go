@@ -373,6 +373,53 @@ func TestNoLineLoss(t *testing.T) {
 	})
 }
 
+// A rotation between NewFileChain's directory listing and its stat calls must
+// not drop a generation. The listing then has nothing at the name the oldest
+// generation was renamed to, and every other name holds the next newer file,
+// so a chain taken from it as it stands leaves out the oldest generation's
+// lines and moves every offset after them. Seen once in CI as one line
+// missing from TestNoLineLoss/concurrent_poll; here the rotation is put
+// exactly in that window.
+func TestAChainIsNotBuiltFromARotationHalfSeen(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "syslog.jsonl")
+	sink := Sink{Name: "main", Path: active, MaxFiles: 5}
+	for i, path := range []string{rotatedPath(active, 2), rotatedPath(active, 1), active} {
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("{\"n\":%d}\n", i+1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rotated := false
+	testHookAfterListing = func() {
+		if !rotated {
+			rotated = true
+			rotate(t, active, sink.MaxFiles)
+		}
+	}
+	t.Cleanup(func() { testHookAfterListing = nil })
+
+	fc, err := NewFileChain(sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rotated {
+		t.Fatal("the hook never ran")
+	}
+	lines, _, _, _, err := fc.ReadForward(0, 10, noFilter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, l := range lines {
+		got = append(got, string(l))
+	}
+	want := []string{`{"n":1}`, `{"n":2}`, `{"n":3}`}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("chain after a rotation during its build holds %v, want %v", got, want)
+	}
+}
+
 // ── Live tail: bursts larger than one batch ──────────────────────────────────
 
 // tailPoller mirrors the cursor handling of the browser's pollTail(): it reads

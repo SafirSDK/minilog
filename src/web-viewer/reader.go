@@ -223,12 +223,44 @@ type FileChain struct {
 //
 // Whatever is left out is reached through /export; OlderOutside says whether
 // there is any.
+//
+// The chain is a snapshot of files that rotation renames under it, so it is
+// checked once built: the same names in the directory, and the same file
+// behind each path it uses. A rotation between the listing and the stat calls
+// would otherwise drop a generation — the listing has none at the name it was
+// renamed to, and the name it had now holds the next newer one — and a read
+// from that chain would skip its lines. Rotation takes milliseconds, so a
+// rebuild almost always gets a still directory; the third build is taken
+// whatever it found.
 func NewFileChain(sink Sink) (*FileChain, error) {
+	dir := filepath.Dir(sink.Path)
+	before := listDir(dir)
+	for attempt := 1; ; attempt++ {
+		fc, infos := buildFileChain(sink, before)
+		after := listDir(dir)
+		if attempt == 3 || (after.same(before) && unchanged(fc, infos)) {
+			return fc, nil
+		}
+		before = after
+	}
+}
+
+// testHookAfterListing, when set, runs between listing the directory and
+// building a chain from it: where a rotation would break the snapshot.
+var testHookAfterListing func()
+
+// buildFileChain builds the chain from a listing of its directory, and
+// returns what os.Stat said of each file in it.
+func buildFileChain(sink Sink, names dirNames) (*FileChain, []os.FileInfo) {
+	if testHookAfterListing != nil {
+		testHookAfterListing()
+	}
 	paths := chainPaths(sink)
-	exists := dirListing(filepath.Dir(sink.Path))
+	exists := names.has
 
 	// Newest first; the active file, last in paths, is never compressed.
 	var newestFirst []chainFile
+	var newestInfos []os.FileInfo
 	olderOutside := false
 	for i := len(paths) - 1; i >= 0; i-- {
 		if sink.Compress && i < len(paths)-2 {
@@ -249,43 +281,80 @@ func NewFileChain(sink Sink) (*FileChain, error) {
 			continue
 		}
 		newestFirst = append(newestFirst, chainFile{path: paths[i], size: info.Size()})
+		newestInfos = append(newestInfos, info)
 	}
 
 	files := make([]chainFile, 0, len(newestFirst))
+	infos := make([]os.FileInfo, 0, len(newestFirst))
 	var offset int64
 	for i := len(newestFirst) - 1; i >= 0; i-- {
 		cf := newestFirst[i]
 		cf.start = offset
 		files = append(files, cf)
+		infos = append(infos, newestInfos[i])
 		offset += cf.size
 	}
-	return &FileChain{files: files, total: offset, olderOutside: olderOutside}, nil
+	return &FileChain{files: files, total: offset, olderOutside: olderOutside}, infos
+}
+
+// unchanged reports whether each file of fc is still the one os.Stat found
+// when the chain was built. Appends to it do not count.
+func unchanged(fc *FileChain, infos []os.FileInfo) bool {
+	for i, f := range fc.files {
+		now, err := os.Stat(f.path)
+		if err != nil || !os.SameFile(infos[i], now) {
+			return false
+		}
+	}
+	return true
 }
 
 // OlderOutside reports whether older generations exist than the chain starts
 // with — gzipped ones, or plain ones behind them — which only /export reads.
 func (fc *FileChain) OlderOutside() bool { return fc.olderOutside }
 
-// dirListing lists dir once and reports whether a path in it exists. This runs
-// on every /lines poll, and probing each possible generation instead would be
-// two stat calls per number: with max_files = 0, two thousand a poll, per
-// browser, nearly all for files that are not there. A file that goes between
-// the listing and its use fails its os.Stat or open as it always could. An
-// unreadable directory lists as empty, as each probe would have failed.
-func dirListing(dir string) func(path string) bool {
+// dirNames is the names in a directory, listed once. This runs on every
+// /lines poll, and probing each possible generation instead would be two stat
+// calls per number: with max_files = 0, two thousand a poll, per browser,
+// nearly all for files that are not there. An unreadable directory lists as
+// empty, as each probe would have failed.
+type dirNames map[string]struct{}
+
+func listDir(dir string) dirNames {
 	entries, _ := os.ReadDir(dir) // what was read before an error still counts
-	fold := func(s string) string { return s }
-	if runtime.GOOS == "windows" {
-		fold = strings.ToLower // NTFS names match regardless of case
-	}
-	names := make(map[string]struct{}, len(entries))
+	names := make(dirNames, len(entries))
 	for _, e := range entries {
-		names[fold(e.Name())] = struct{}{}
+		names[foldName(e.Name())] = struct{}{}
 	}
-	return func(path string) bool {
-		_, ok := names[fold(filepath.Base(path))]
-		return ok
+	return names
+}
+
+// has reports whether the listing holds a file at path.
+func (d dirNames) has(path string) bool {
+	_, ok := d[foldName(filepath.Base(path))]
+	return ok
+}
+
+// same reports whether two listings hold the same names.
+func (d dirNames) same(o dirNames) bool {
+	if len(d) != len(o) {
+		return false
 	}
+	for n := range d {
+		if _, ok := o[n]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// foldName is a file name as the filesystem compares it: NTFS names match
+// regardless of case.
+func foldName(s string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(s)
+	}
+	return s
 }
 
 // chainPaths returns every path a plain generation of sink can have, oldest

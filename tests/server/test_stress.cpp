@@ -32,6 +32,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -86,25 +87,67 @@ struct Fixture
         return cfg;
     }
 
-    static void sendUdp(const std::string& data, uint16_t port)
+    // Sends datagrams to the server on localhost from one socket. A send that
+    // fails is a lost datagram, which these tests allow for as they allow for
+    // the ones the OS drops: it must not throw, because on a sender thread a
+    // throw ends the whole test program without a word of why.
+    class UdpSender
     {
-        boost::asio::io_context senderIoc;
-        boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
-        const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), port);
-        sock.send_to(boost::asio::buffer(data), ep);
-    }
+    public:
+        explicit UdpSender(uint16_t port)
+            : m_sock(m_ioc), m_ep(boost::asio::ip::make_address("127.0.0.1"), port)
+        {
+            boost::system::error_code ec;
+            m_sock.open(boost::asio::ip::udp::v4(), ec);
+        }
 
-    // Start the io_context on `n` background threads.
+        void send(const std::string& data)
+        {
+            boost::system::error_code ec;
+            m_sock.send_to(boost::asio::buffer(data), m_ep, 0, ec);
+        }
+
+    private:
+        boost::asio::io_context m_ioc;
+        boost::asio::ip::udp::socket m_sock;
+        boost::asio::ip::udp::endpoint m_ep;
+    };
+
+    static void sendUdp(const std::string& data, uint16_t port) { UdpSender(port).send(data); }
+
+    // Start the io_context on `n` background threads. An exception out of a
+    // handler is kept for shutdown() to report: escaping the thread, it would
+    // abort the test program and say nothing of what it was.
     std::vector<std::thread> startIoc(int n = 1)
     {
         std::vector<std::thread> threads;
         threads.reserve(static_cast<std::size_t>(n));
         for (int i = 0; i < n; ++i)
         {
-            threads.emplace_back([this]() { ioc.run(); });
+            threads.emplace_back(
+                [this]()
+                {
+                    try
+                    {
+                        ioc.run();
+                    }
+                    catch (const std::exception& e)
+                    {
+                        const std::lock_guard lock(m_threadErrorMutex);
+                        m_threadError = e.what();
+                    }
+                    catch (...)
+                    {
+                        const std::lock_guard lock(m_threadErrorMutex);
+                        m_threadError = "unknown exception";
+                    }
+                });
         }
         return threads;
     }
+
+    std::mutex m_threadErrorMutex;
+    std::string m_threadError;
 
     // Drain all pending work: stop the server, join all threads.
     //
@@ -122,6 +165,9 @@ struct Fixture
         {
             t.join();
         }
+        const std::lock_guard lock(m_threadErrorMutex);
+        BOOST_CHECK_MESSAGE(m_threadError.empty(),
+                            "a handler on the io_context threw: " << m_threadError);
     }
 
     static int countLines(const fs::path& p)
@@ -222,11 +268,13 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         senders.emplace_back(
             [t, port]()
             {
+                // One socket per thread, as a sending program would have:
+                // eight threads opening one per datagram ask a lot of the OS.
+                UdpSender sender(port);
                 for (int i = 0; i < N_PER_THREAD; ++i)
                 {
-                    sendUdp("<34>Oct 11 22:14:15 host app[" + std::to_string(t) + "]: t" +
-                                std::to_string(t) + "m" + std::to_string(i),
-                            port);
+                    sender.send("<34>Oct 11 22:14:15 host app[" + std::to_string(t) + "]: t" +
+                                std::to_string(t) + "m" + std::to_string(i));
                 }
             });
     }
@@ -949,16 +997,12 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         senders.emplace_back(
             [t, port]()
             {
-                boost::asio::io_context senderIoc;
-                boost::asio::ip::udp::socket sock(senderIoc, boost::asio::ip::udp::v4());
-                const boost::asio::ip::udp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"),
-                                                        port);
+                UdpSender sender(port);
                 const auto deadline = std::chrono::steady_clock::now() + SOAK_DURATION;
                 for (int i = 0; std::chrono::steady_clock::now() < deadline; ++i)
                 {
-                    const std::string msg = "<34>Oct 11 22:14:15 host app[" + std::to_string(t) +
-                                            "]: t" + std::to_string(t) + "m" + std::to_string(i);
-                    sock.send_to(boost::asio::buffer(msg), ep);
+                    sender.send("<34>Oct 11 22:14:15 host app[" + std::to_string(t) + "]: t" +
+                                std::to_string(t) + "m" + std::to_string(i));
                     // Throttle to ~10k msg/s — see soak_flood for rationale.
                     std::this_thread::sleep_for(std::chrono::microseconds(100));
                 }
