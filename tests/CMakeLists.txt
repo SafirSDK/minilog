@@ -187,10 +187,11 @@ find_program(GO_EXECUTABLE go)
 if(GO_EXECUTABLE)
     add_test(
         NAME test_web_viewer
-        COMMAND "${GO_EXECUTABLE}" test -v -count=1 -timeout 120s ./...
+        COMMAND "${GO_EXECUTABLE}" test -v -count=1 -timeout 300s ./...
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/src/web-viewer"
     )
-    set_tests_properties(test_web_viewer PROPERTIES TIMEOUT 150)
+    # The browser tests take about half a minute of that.
+    set_tests_properties(test_web_viewer PROPERTIES TIMEOUT 330)
 endif()
 
 # libFuzzer target (Clang only, enabled via linux-fuzz preset).

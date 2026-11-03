@@ -79,6 +79,8 @@ docs/_build/
 # PyBuilder
 .pybuilder/
 target/
+# ...but not chromedp's vendored DevTools "target" package.
+!/src/web-viewer/vendor/github.com/chromedp/cdproto/target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
