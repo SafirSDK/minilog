@@ -179,8 +179,10 @@ of that ordering and because those values are table-driven (see `matchStringFiel
 - Tests: `tests/cli-viewer/test_cli_viewer.py` (invoked via CTest).
 
 ### web-viewer (`src/web-viewer/`)
-- Language: Go 1.25; single external dep: `golang.org/x/sys` (Windows service and Event Log
-  support only), vendored under `src/web-viewer/vendor/`.
+- Language: Go 1.26 or newer (`go.mod`'s `go` line); release builds use the `toolchain` line,
+  currently Go 1.27.3, which setup-go reads, so moving to a newer Go is that one line. Single
+  runtime dep: `golang.org/x/sys` (Windows service and Event Log support only); chromedp is
+  test-only (`browser_test.go`). All vendored under `src/web-viewer/vendor/`.
 - Entry point: `main.go`. This directory is its own Go module (`go.mod` lives here, not at the
   repo root), so every `go` command must run from inside it: `cd src/web-viewer && go build .`.
 - Serves an embedded SPA (`assets/`) over HTTP (default `:9514`).

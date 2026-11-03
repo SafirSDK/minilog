@@ -60,8 +60,8 @@ class minilogConan(ConanFile):
         # libboost-all-dev, zlib1g-dev). Conan only manages them on Windows.
         # zlib gzips rotated generations ([output.*] compress).
         if self.settings.os == "Windows":
-            self.requires("boost/1.87.0")
-            self.requires("zlib/1.3.1")
+            self.requires("boost/1.91.0")
+            self.requires("zlib/1.3.2")
 
     def configure(self):
         if self.settings.os == "Windows":

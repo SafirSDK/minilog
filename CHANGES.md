@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.4.1 — 2026-11-02
+## v1.5.0 — unreleased
 
 ### New
 
@@ -27,6 +27,10 @@
 
 ### Changed
 
+- **Built with current dependencies.** The release is built with Go 1.27.3 — the 1.4.x web viewer
+  was built with Go 1.25.0, a version that no longer receives security fixes — and on Windows with
+  Boost 1.91.0 (was 1.87.0) and zlib 1.3.2. Building the web viewer from source now needs Go 1.26
+  or newer.
 - **The web viewer's toolbar is reordered.** Left to right: the sink, the severity, facility and
   pattern filters with Reset, and the search box; then, at the far right, Follow, Clear Screen,
   Columns and Export. The connection status dot is now the dot inside the Follow button — green

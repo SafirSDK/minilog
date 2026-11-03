@@ -922,7 +922,7 @@ own colour codes are unaffected — they are chosen from a table, never taken fr
 
 ### web-viewer
 
-`src/web-viewer/` — Go 1.25 HTTP server with an embedded single-page app. Reads JSONL files
+`src/web-viewer/` — Go HTTP server (Go 1.26 or newer to build) with an embedded single-page app. Reads JSONL files
 (including the full rotation chain) and exposes them via a REST API; the browser UI handles
 paging, filtering, and search without a database.
 

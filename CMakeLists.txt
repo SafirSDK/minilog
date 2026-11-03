@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(minilog VERSION 1.4.1 LANGUAGES CXX)
+project(minilog VERSION 1.5.0 LANGUAGES CXX)
 
 # What the packages are called and what the web viewer reports as its version.
 # project(VERSION) takes numbers only, so a prerelease marker such as "-beta2"
