@@ -486,9 +486,11 @@ func TestBrowser_TheBottomOfASearchResultIsNotTheTail(t *testing.T) {
 	p.waitUntil("the tail is shown", 10*time.Second, p.showsLast("L599"))
 
 	p.run(chromedp.SendKeys(chromedp.ID("search"), "needle\r"))
+	// The rows from the match on, and possibly a few older ones loaded above
+	// it: the match is near the top of the screen, which loads older rows.
 	p.waitUntil("the match is shown", 10*time.Second, func() bool {
 		m := p.messages()
-		return len(m) > 0 && m[0] == "needle"
+		return containsAll(m, []string{"needle"}) && !containsAll(m, []string{"L599"})
 	})
 	time.Sleep(time.Second) // the smooth scroll to the match has finished
 	p.wheel(100000)         // down, to the bottom, as a person would
