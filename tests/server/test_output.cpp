@@ -2136,6 +2136,44 @@ BOOST_AUTO_TEST_CASE(a_retried_rotation_shifts_only_the_chain_that_failed)
     ioc.poll();
 }
 
+BOOST_AUTO_TEST_CASE(a_half_done_rotation_is_retried_though_no_file_is_over_max_size)
+{
+    // The text file is the one over max_size, its shift goes through and the
+    // jsonl one fails. The text file is then fresh and the jsonl file was never
+    // full, but the jsonl chain still owes its shift, and the retry makes it.
+    OutputConfig cfg;
+    cfg.name             = "main";
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.jsonlFile        = (dir / "syslog.jsonl").string();
+    cfg.maxSize          = 4000;
+    cfg.maxFiles         = 2;
+    cfg.includeMalformed = true;
+    std::ofstream(cfg.textFile, std::ios::binary) << std::string(5000, 'x') << "\n";
+    std::ofstream(dir / "syslog.1.jsonl", std::ios::binary) << "{}\n";
+    // Expiring jsonl .2 is the step that fails: a non-empty directory.
+    fs::create_directories(dir / "syslog.2.jsonl" / "occupied");
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, messageWith("m0"));
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.jsonl"), "{}\n"); // not shifted yet
+
+    fs::remove_all(dir / "syslog.2.jsonl");
+    std::this_thread::sleep_for(kTestRetry * 3); // past the retry interval
+    writeSync(lf, messageWith("m1"));
+
+    BOOST_CHECK(readAll(dir / "syslog.1.jsonl").find("m0") != std::string::npos);
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.2.jsonl"), "{}\n");
+    BOOST_CHECK(readAll(cfg.jsonlFile).find("m0") == std::string::npos);
+    BOOST_CHECK(readAll(cfg.jsonlFile).find("m1") != std::string::npos);
+    // The text chain is not shifted a second time.
+    BOOST_CHECK(readAll(cfg.textFile).find("m0") != std::string::npos);
+    BOOST_CHECK(!fs::exists(dir / "syslog.2.log"));
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
 BOOST_AUTO_TEST_CASE(a_resumed_shift_keeps_the_generation_above_its_gap)
 {
     // An abandoned shift that had moved .3 to .4 and then failed to move .2
@@ -2172,6 +2210,64 @@ BOOST_AUTO_TEST_CASE(a_resumed_shift_keeps_the_generation_above_its_gap)
     ioc.restart();
     ioc.poll();
 }
+
+BOOST_AUTO_TEST_CASE(any_other_file_name_in_the_directory_leaves_rotation_alone)
+{
+    // Rotation lists the directory, and on Windows a name outside the ANSI code
+    // page cannot be converted to a narrow string. A file of someone else's
+    // with such a name must not stop the rotation, let alone the process.
+    OutputConfig cfg;
+    cfg.name             = "main";
+    cfg.textFile         = (dir / "syslog.log").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 3;
+    cfg.includeMalformed = true;
+    std::ofstream(fs::path(dir / u8"日志.txt")) << "not ours\n";
+    std::ofstream(dir / "syslog.1.log", std::ios::binary) << "old\n";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, rfc3164Msg("a"));
+    writeSync(lf, rfc3164Msg("b"));
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.2.log"), "old\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "a\n");
+    BOOST_CHECK_EQUAL(readAll(cfg.textFile), "b\n");
+    BOOST_CHECK(fs::exists(dir / u8"日志.txt"));
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+
+#ifdef _WIN32
+BOOST_AUTO_TEST_CASE(generations_are_found_whatever_the_case_of_their_names)
+{
+    // NTFS matches names regardless of case. A generation whose name differs
+    // from the configured one only in case is still that generation: missing
+    // it would rename the current file over it.
+    OutputConfig cfg;
+    cfg.name             = "main";
+    cfg.textFile         = (dir / "Syslog.Log").string();
+    cfg.maxSize          = 1;
+    cfg.maxFiles         = 4;
+    cfg.includeMalformed = true;
+    std::ofstream(dir / "syslog.2.log", std::ios::binary) << "older\n";
+    std::ofstream(dir / "SYSLOG.1.LOG", std::ios::binary) << "old\n";
+    std::ofstream(dir / "syslog.log", std::ios::binary) << "current\n";
+
+    LogFile lf(ioc, cfg, kTestRetry);
+    writeSync(lf, rfc3164Msg("new"));
+
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.3.log"), "older\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.2.log"), "old\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "current\n");
+    BOOST_CHECK_EQUAL(readAll(cfg.textFile), "new\n");
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+#endif
 
 #ifdef _WIN32
 // The real failure of #50: on Windows a file another program has open without

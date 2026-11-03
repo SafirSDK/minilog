@@ -310,11 +310,14 @@ jobs:
             $name, $value = $Matches[1], $Matches[2]
             if ($before[$name] -eq $value) { continue }
             if ($name -eq 'Path') {
-              # The directories vcvars added, in its order, through GITHUB_PATH,
-              # which is how a step adds to the PATH of the steps after it.
-              $old = $before['Path'] -split ';'
-              $value -split ';' | Where-Object { $_ -and $_ -notin $old } |
-                Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+              # The directories vcvars added, through GITHUB_PATH, which is how a
+              # step adds to the PATH of the steps after it. Each line written
+              # there goes in front of the ones before it, so they are written
+              # last first, to come out in vcvars' order.
+              $old   = $before['Path'] -split ';'
+              $added = @($value -split ';' | Where-Object { $_ -and $_ -notin $old })
+              [array]::Reverse($added)
+              $added | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
             } else {
               "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             }
@@ -324,6 +327,7 @@ jobs:
         shell: pwsh
         run: |
           Get-Command cl, link, rc | Format-Table Name, Source -AutoSize
+          $env:Path -split ';' | Select-Object -First 8
           if (-not $env:INCLUDE -or -not $env:LIB) { throw 'INCLUDE or LIB is not set' }
 
       # A tag v1.4.0-beta2 names the packages minilog-1.4.0-beta2-*; a tag

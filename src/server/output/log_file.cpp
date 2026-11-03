@@ -61,6 +61,28 @@ std::string formatInterval(std::chrono::milliseconds interval)
     return std::to_string(interval.count()) + " ms";
 }
 
+// A file name as UTF-8, for matching a directory listing against the names the
+// sink writes. Not path::string(): on Windows that converts to the ANSI code
+// page and throws for a name it cannot hold, which any other file in the log
+// directory may have. Folded to lower case on Windows, where NTFS matches names
+// regardless of case: a generation missed for its case would be overwritten by
+// the rename onto its name.
+std::string comparableName(const std::filesystem::path& name)
+{
+    const std::u8string utf8 = name.u8string();
+    std::string s(utf8.begin(), utf8.end());
+#ifdef _WIN32
+    for (char& c : s)
+    {
+        if (c >= 'A' && c <= 'Z')
+        {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+#endif
+    return s;
+}
+
 // Which rotated generations of `base` exist, in either form: present[n][0] for
 // the plain "<stem>.<n><ext>", present[n][1] for its .gz, for every n from 1 to
 // present.size() - 1. One pass over the directory rather than two probes per
@@ -71,15 +93,15 @@ std::string findGenerations(const std::filesystem::path& base,
 {
     namespace fs = std::filesystem;
 
-    const std::string prefix = base.stem().string() + ".";
-    const std::string ext    = base.extension().string();
+    const std::string prefix = comparableName(base.stem()) + ".";
+    const std::string ext    = comparableName(base.extension());
     const fs::path dir       = base.parent_path().empty() ? fs::path(".") : base.parent_path();
 
     std::error_code ec;
     fs::directory_iterator it(dir, ec);
     for (; !ec && it != fs::directory_iterator(); it.increment(ec))
     {
-        const std::string name = it->path().filename().string();
+        const std::string name = comparableName(it->path().filename());
         if (!name.starts_with(prefix))
         {
             continue;
@@ -606,7 +628,11 @@ void LogFile::rotateIfNeeded()
     {
         return;
     }
-    if (m_textSize >= m_cfg.maxSize || m_jsonlSize >= m_cfg.maxSize)
+    // A rotation that shifted one chain and not the other is finished whatever
+    // the sizes say: the chain it shifted has a fresh file, and the other may
+    // never have been over max_size — the rotation was for the first.
+    if (m_textSize >= m_cfg.maxSize || m_jsonlSize >= m_cfg.maxSize || m_textShifted ||
+        m_jsonlShifted)
     {
         rotate();
     }
@@ -914,14 +940,14 @@ void LogFile::removeStaleCompressions()
             continue;
         }
         const fs::path base(file);
-        const std::string prefix = base.stem().string() + ".";
-        const std::string suffix = base.extension().string() + ".gz.tmp";
+        const std::string prefix = comparableName(base.stem()) + ".";
+        const std::string suffix = comparableName(base.extension()) + ".gz.tmp";
 
         std::error_code ec;
         fs::directory_iterator it(base.parent_path(), ec);
         for (; !ec && it != fs::directory_iterator(); it.increment(ec))
         {
-            const std::string name = it->path().filename().string();
+            const std::string name = comparableName(it->path().filename());
             if (name.size() <= prefix.size() + suffix.size() || !name.starts_with(prefix) ||
                 !name.ends_with(suffix))
             {
