@@ -232,6 +232,11 @@ of that ordering and because those values are table-driven (see `matchStringFiel
 - Filter params on `/lines` and `/search`: `sev` (severity names), `fac` (facility names),
   `inc` (include substrings), `exc` (exclude substrings).
 - Tests: `*_test.go` files in `src/web-viewer/`; run with `cd src/web-viewer && go test ./...`.
+  `browser_test.go` drives the real page in headless Chrome via chromedp (vendored, test-only)
+  against the real handlers and log files, for what only the page's own polling and state show.
+  They skip with `-short` or when no Chrome or Chromium is found; `MINILOG_TEST_CHROME` names the
+  binary. CI runs them in the Linux (Coverage) job. A Nix shell whose `LD_LIBRARY_PATH` holds a
+  newer glibc's libraries stops Chromium starting; run them with `env -u LD_LIBRARY_PATH`.
 
 ## CI flakes to watch — not to chase
 

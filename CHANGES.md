@@ -61,7 +61,9 @@
   are added, so the lines being read are no longer pushed out of the view within seconds; scrolling
   back to the bottom carries on from where it stopped, unless the log rotated meanwhile, in which
   case Follow or "Jump to tail" reloads the newest lines. A filtered view whose few rows do not fill
-  the screen keeps following. (#49)
+  the screen keeps following, and no longer repeats an empty request for older rows in a tight
+  loop — over a hundred every two seconds — when there were none to load, as after Clear Screen
+  and a filter. (#49)
 - **The web viewer no longer makes a rotation fail on Windows.** It opened log files without
   `FILE_SHARE_DELETE`, and while one was open the server could not rename it, so a rotation that
   coincided with a viewer read took the sink out of service until its next retry. Every read now

@@ -417,6 +417,11 @@ async function loadOlder() {
     topOffset = data.first_offset ?? topOffset;
     updateEmptyState();
   }
+  // Nothing came back, so nothing older is there to load: everything before
+  // topOffset is filtered out or hidden by Clear Screen. Re-attaching the
+  // observer to the same first row, still on screen, would fire it again at
+  // once and repeat this request in a tight loop.
+  if (lines.length === 0) topOffset = 0;
   olderHistory = Boolean(data.older_history);
   updateOlderNote();
 

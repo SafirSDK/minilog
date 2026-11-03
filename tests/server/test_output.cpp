@@ -1133,6 +1133,35 @@ BOOST_AUTO_TEST_CASE(a_full_disk_mid_compression_keeps_the_plain_file)
 }
 #endif
 
+#ifndef _WIN32
+// Only .2 is ever compressed, so a rotation has to schedule it even when it
+// ends with the sink closed: the next rotation makes it .3, and it would stay
+// plain for good. Here the text chain shifts and the jsonl one then fails,
+// because its directory has gone, which is also why reopening the files
+// fails. POSIX only: Windows will not remove a directory with the sink's
+// jsonl file open in it.
+BOOST_AUTO_TEST_CASE(a_rotation_that_closes_the_sink_still_compresses_the_new_two)
+{
+    fs::create_directories(dir / "jsonl");
+    OutputConfig cfg = compressedConfig(dir);
+    cfg.jsonlFile    = (dir / "jsonl" / "syslog.jsonl").string();
+    LogFile lf(ioc, cfg, std::chrono::seconds(30));
+    writeSync(lf, rfc3164Msg("A"));
+    writeSync(lf, rfc3164Msg("B")); // A → .1
+
+    fs::remove_all(dir / "jsonl");
+    writeSync(lf, rfc3164Msg("C")); // text: A → .2, B → .1; jsonl: fails, then the sink closes
+
+    BOOST_REQUIRE(waitForFile(dir / "syslog.2.log.gz"));
+    BOOST_CHECK_EQUAL(gunzip(dir / "syslog.2.log.gz"), "A\n");
+    BOOST_CHECK_EQUAL(readAll(dir / "syslog.1.log"), "B\n");
+
+    lf.close();
+    ioc.restart();
+    ioc.poll();
+}
+#endif
+
 BOOST_AUTO_TEST_CASE(a_cancelled_compression_leaves_only_the_plain_file)
 {
     const auto plain = dir / "data.2.log";
