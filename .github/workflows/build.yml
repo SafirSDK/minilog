@@ -192,10 +192,15 @@ jobs:
             END { printf "%-45s %6.1f%%  %5d/%d\n", "Total", tlf ? 100 * tlh / tlf : 0, tlh, tlf }
           ' coverage.info
 
+      # The browser tests also record the coverage of the page's JavaScript,
+      # which Go's coverage cannot see. Writing it fails the step if no browser
+      # test ran, as it would here without Chrome.
       - name: Generate web-viewer coverage report
         run: |
           go test -coverprofile=web-viewer-coverage.out -covermode=atomic ./...
         working-directory: src/web-viewer
+        env:
+          MINILOG_JS_COVERAGE: web-ui-coverage.info
 
       - name: Upload server coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -209,6 +214,13 @@ jobs:
         with:
           files: src/web-viewer/web-viewer-coverage.out
           flags: web-viewer
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload web UI coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: src/web-viewer/web-ui-coverage.info
+          flags: web-ui
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # ─── Linux (Clang, TSan) ────────────────────────────────────────────────────

@@ -91,6 +91,7 @@ func openViewer(t *testing.T, sinks []Sink) *browserPage {
 		t.Fatalf("starting the browser: %v", err)
 	}
 	p.ctx = ctx
+	startJSCoverage(t, ctx)
 	p.run(chromedp.Navigate(ts.URL))
 	return p
 }

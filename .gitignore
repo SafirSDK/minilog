@@ -50,6 +50,9 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+# The web viewer's Go and JavaScript coverage (see README, Coverage)
+/src/web-viewer/web-viewer-coverage.out
+/src/web-viewer/web-ui-coverage.info
 *.cover
 *.py.cover
 .hypothesis/

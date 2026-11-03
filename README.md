@@ -195,6 +195,15 @@ ctest --preset linux-coverage
 gcovr -r . --html-details build/linux-coverage/coverage.html
 ```
 
+The web viewer's Go coverage comes from `go test -coverprofile` in `src/web-viewer`. Its
+JavaScript (`app.js`) is covered by the browser tests, which record it in Chrome when asked:
+
+```
+cd src/web-viewer && MINILOG_JS_COVERAGE=web-ui-coverage.info go test ./...
+```
+
+That writes an lcov report of `app.js`, and fails if no browser test could run.
+
 ### Fuzz testing
 
 ```

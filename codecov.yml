@@ -17,6 +17,10 @@ flags:
     paths:
       - src/web-viewer/
     carryforward: true
+  web-ui:
+    paths:
+      - src/web-viewer/assets/
+    carryforward: true
 
 component_management:
   individual_components:
@@ -28,3 +32,7 @@ component_management:
       name: Go Web Viewer
       flag_regexes:
         - web-viewer
+    - component_id: web-ui
+      name: Web UI (JavaScript)
+      flag_regexes:
+        - web-ui

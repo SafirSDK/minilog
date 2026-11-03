@@ -241,6 +241,9 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   shown twice, #49's wheel step, resuming after a rotation or a search); about 30 s in all. CI runs
   them wherever ctest runs `test_web_viewer`, Windows included. A Nix shell whose `LD_LIBRARY_PATH` holds a
   newer glibc's libraries stops Chromium starting; run them with `env -u LD_LIBRARY_PATH`.
+  `js_coverage_test.go` records V8's block coverage of `app.js` during them when
+  `MINILOG_JS_COVERAGE` names a file, and writes it there as lcov; the CI coverage job uploads it
+  to Codecov as the `web-ui` flag, and fails if no browser test ran.
 
 ## CI flakes to watch — not to chase
 
@@ -271,7 +274,7 @@ Before tagging a release, verify all of the following:
 3. **CI green** — all GitHub Actions jobs pass on the `develop` branch (or the release branch):
    - clang-format, header check, ruff lint, gofmt
    - Linux GCC, Clang ASan+UBSan, Clang TSan
-   - Linux coverage (C++ and Go)
+   - Linux coverage (C++, Go, and the web viewer's JavaScript)
    - Windows MSVC (build, tests, installer, zip)
    - Docker build
    - libFuzzer
