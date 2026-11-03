@@ -14,6 +14,10 @@ class minilogConan(ConanFile):
         "container",  # required by json
         "exception",  # required by test
         "program_options",  # CLI argument parsing
+        # Not used by minilog, but Boost 1.91's build compiles it for one of
+        # the libraries above even when told not to, and the recipe then
+        # refuses a library it did not expect.
+        "regex",
     }
 
     # All compiled Boost libraries that have a without_* option in the recipe
