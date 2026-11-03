@@ -238,7 +238,9 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   against the real handlers and log files, for what only the page's own polling and state show.
   They skip with `-short` or when no Chrome or Chromium is found; `MINILOG_TEST_CHROME` names the
   binary. Each guards a bug that happened or would be serious (script in a record field, a burst
-  shown twice, #49's wheel step, resuming after a rotation or a search); about 30 s in all. CI runs
+  shown twice, #49's wheel step, resuming after a rotation or a search, older rows after the
+  2000-row limit, recovering from an outage, column resizing); about a minute in all. Keys go
+  through `press` with chromedp's `kb` constants: `KeyEvent("Escape")` types the letters. CI runs
   them wherever ctest runs `test_web_viewer`, Windows included. A Nix shell whose `LD_LIBRARY_PATH` holds a
   newer glibc's libraries stops Chromium starting; run them with `env -u LD_LIBRARY_PATH`.
   `js_coverage_test.go` records V8's block coverage of `app.js` during them when

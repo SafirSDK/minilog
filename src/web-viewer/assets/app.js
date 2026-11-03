@@ -39,6 +39,7 @@ let atTail          = true;
 let lastScrollTop   = 0;   // to tell which way the last scroll went
 let tailResumable   = true; // the rows on screen end where the cursor is
 let chainMoved      = false; // a rotation since the rows on screen were read
+let tailStale       = false; // the last loadTail() failed: the screen holds nothing to poll on from
 let pollTimer       = 0;
 let loadingUp       = false;
 let polling         = false;
@@ -154,7 +155,10 @@ async function loadSinks() {
     const res = await fetch('/sinks');
     sinks = await res.json();
   } catch {
+    // Nothing else retries this: no sink, no tail, no poll. A server that was
+    // briefly out of reach as the page loaded would leave it empty for good.
     setStatus('disconnected');
+    setTimeout(loadSinks, POLL_MS * 4);
     return;
   }
 
@@ -227,12 +231,17 @@ async function loadTail() {
     const res = await fetch('/lines?' + p);
     data = await res.json();
   } catch {
+    // The screen is cleared and the cursor is from before, perhaps for other
+    // filters: polling on from it would show only what arrives from now on,
+    // never the rows this was to load. The next poll loads the tail instead.
     setStatus('disconnected');
+    tailStale = true;
     startPoll();
     return;
   }
 
   setStatus('connected');
+  tailStale  = false;
   tailOffset = data.tail_offset ?? 0;
   chainEnd   = tailOffset;
   topOffset  = data.first_offset ?? 0;
@@ -273,7 +282,7 @@ async function pollTail() {
   if (polling) return;
   polling = true;
   try {
-    await (atTail ? pollTailOnce() : watchWhilePaused());
+    await (tailStale ? loadTail() : atTail ? pollTailOnce() : watchWhilePaused());
   } finally {
     polling = false;
   }
@@ -511,6 +520,7 @@ function buildRow(entry, isNew, offset, rawLine) {
 }
 
 function pruneTop() {
+  if (logBody.children.length <= MAX_ROWS) return;
   while (logBody.children.length > MAX_ROWS) {
     const removed = logBody.removeChild(logBody.firstChild);
     // Advance topOffset by the byte size of the removed line — we don't know
@@ -520,6 +530,10 @@ function pruneTop() {
       topOffset = parseInt(next.dataset.offset, 10);
     }
   }
+  // The observer that loads older rows watches the first row, which has just
+  // gone: left on it, it would never fire again, and scrolling to the top
+  // would not load the rows dropped here.
+  attachTopObserver();
   updateOlderNote(); // the chain's start may just have been dropped from view
 }
 
@@ -1382,9 +1396,11 @@ function initColumnResize() {
       startW = th.offsetWidth;
       handle.classList.add('active');
 
+      // All three: the stylesheet fixes each column's width with min-width
+      // and max-width as well, and width alone could never get past them.
       const onMove = ev => {
-        const w = Math.max(40, startW + ev.clientX - startX);
-        th.style.width = w + 'px';
+        const w = Math.max(40, startW + ev.clientX - startX) + 'px';
+        th.style.width = th.style.minWidth = th.style.maxWidth = w;
       };
       const onUp = () => {
         handle.classList.remove('active');

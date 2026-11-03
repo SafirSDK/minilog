@@ -76,6 +76,15 @@
   is shown with the lines around it, and scrolling to the bottom of those lines used to start
   following from the newest line, with everything in between silently missing. It now stays
   paused there, and Follow or "Jump to tail" goes to the newest lines.
+- **The web viewer's columns can be resized.** Dragging a column's edge did nothing: the
+  stylesheet fixed each column's width, and the drag changed only part of it.
+- **Older lines load again after the web viewer has dropped some.** The viewer keeps 2000 lines on
+  screen and drops the oldest as new ones arrive. Once it had, scrolling to the top no longer
+  loaded the older lines above, until the view was reloaded.
+- **The web viewer recovers on its own when the server comes back.** A filter or sink change made
+  while the server could not be reached left an empty screen that then showed only lines arriving
+  afterwards, never the matching lines already there; and a page that could not reach the server
+  as it loaded stayed empty until reloaded by hand. Both now load once the server answers again.
 
 ## v1.4.0 — 2026-09-23
 

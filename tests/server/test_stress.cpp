@@ -268,13 +268,14 @@ BOOST_AUTO_TEST_CASE(eight_threads_no_torn_lines)
         senders.emplace_back(
             [t, port]()
             {
-                // One socket per thread, as a sending program would have:
-                // eight threads opening one per datagram ask a lot of the OS.
-                UdpSender sender(port);
+                // A socket per datagram, as the test always had: it paces the
+                // senders to what the receiver keeps up with, where one socket
+                // each sends fast enough to drop more than the half allowed.
                 for (int i = 0; i < N_PER_THREAD; ++i)
                 {
-                    sender.send("<34>Oct 11 22:14:15 host app[" + std::to_string(t) + "]: t" +
-                                std::to_string(t) + "m" + std::to_string(i));
+                    sendUdp("<34>Oct 11 22:14:15 host app[" + std::to_string(t) + "]: t" +
+                                std::to_string(t) + "m" + std::to_string(i),
+                            port);
                 }
             });
     }
