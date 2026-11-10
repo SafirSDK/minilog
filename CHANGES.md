@@ -100,7 +100,15 @@
 - **The web viewer recovers on its own when the server comes back.** A filter or sink change made
   while the server could not be reached left an empty screen that then showed only lines arriving
   afterwards, never the matching lines already there; and a page that could not reach the server
-  as it loaded stayed empty until reloaded by hand. Both now load once the server answers again.
+  as it loaded stayed empty until reloaded by hand. Both now load once the server answers again,
+  and so does stepping to a search match that is not on screen, which used to leave the page
+  empty, unpolled and still showing itself as connected. Recovering no longer resumes following
+  either: a view paused while the screen was empty — which is when one would be — stays paused
+  when the lines arrive, and a jump to a match comes back where the jump left it.
+- **The web viewer says that older history is compressed as soon as it has lines to say it above.**
+  The note above the first line appears when the oldest generations are gzipped and so outside
+  what can be scrolled. It stayed hidden when the first line arrived into an empty view — a
+  filter that had matched nothing until then — until something else reloaded the view.
 
 ## v1.4.0 — 2026-09-23
 

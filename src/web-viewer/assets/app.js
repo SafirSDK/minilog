@@ -282,7 +282,20 @@ async function pollTail() {
   if (polling) return;
   polling = true;
   try {
-    await (tailStale ? loadTail() : atTail ? pollTailOnce() : watchWhilePaused());
+    if (tailStale) {
+      // The reload that brings the rows back after one that failed. It must not
+      // also resume following: loadTail() sets atTail unconditionally, and the
+      // user may have paused meanwhile — with an empty screen in front of them,
+      // which is exactly when they would. Pausing is theirs to undo, so it is
+      // put back afterwards.
+      const paused = !atTail;
+      await loadTail();
+      if (paused) setAtTail(false);
+    } else if (atTail) {
+      await pollTailOnce();
+    } else {
+      await watchWhilePaused();
+    }
   } finally {
     polling = false;
   }
@@ -520,21 +533,27 @@ function buildRow(entry, isNew, offset, rawLine) {
 }
 
 function pruneTop() {
-  if (logBody.children.length <= MAX_ROWS) return;
-  while (logBody.children.length > MAX_ROWS) {
-    const removed = logBody.removeChild(logBody.firstChild);
-    // Advance topOffset by the byte size of the removed line — we don't know
-    // the exact size, so re-read topOffset from the next row's offset dataset.
-    const next = logBody.firstChild;
-    if (next && next.dataset && next.dataset.offset) {
-      topOffset = parseInt(next.dataset.offset, 10);
+  if (logBody.children.length > MAX_ROWS) {
+    while (logBody.children.length > MAX_ROWS) {
+      const removed = logBody.removeChild(logBody.firstChild);
+      // Advance topOffset by the byte size of the removed line — we don't know
+      // the exact size, so re-read topOffset from the next row's offset dataset.
+      const next = logBody.firstChild;
+      if (next && next.dataset && next.dataset.offset) {
+        topOffset = parseInt(next.dataset.offset, 10);
+      }
     }
+    // The observer that loads older rows watches the first row, which has just
+    // gone: left on it, it would never fire again, and scrolling to the top
+    // would not load the rows dropped here.
+    attachTopObserver();
   }
-  // The observer that loads older rows watches the first row, which has just
-  // gone: left on it, it would never fire again, and scrolling to the top
-  // would not load the rows dropped here.
-  attachTopObserver();
-  updateOlderNote(); // the chain's start may just have been dropped from view
+  // Outside the branch above, because this runs after rows were added whether
+  // or not any had to be dropped, and the note's conditions include there being
+  // rows at all. Behind an early return it stayed hidden when the first row
+  // arrived into an empty view — a filtered sink with compressed generations —
+  // until the next full loadTail happened to run.
+  updateOlderNote(); // the chain's start may also just have been dropped
 }
 
 // ── Server search ─────────────────────────────────────────────────────────────
@@ -621,7 +640,17 @@ async function jumpToMatch(idx) {
   try {
     const res = await fetch('/lines?' + p);
     data = await res.json();
-  } catch { return; }
+  } catch {
+    // The same recovery loadTail does, for the same reason: the screen has
+    // just been cleared and the poll stopped, so returning here would leave an
+    // empty page that never refills, with the dot still saying connected.
+    // The pause set above survives the reload, so the view comes back where
+    // the user left it rather than following the tail.
+    setStatus('disconnected');
+    tailStale = true;
+    startPoll();
+    return;
+  }
 
   tailOffset = data.tail_offset ?? tailOffset;
   chainEnd   = tailOffset;

@@ -959,3 +959,125 @@ func TestBrowser_PatternChipsRemoveAndRowsExpandOneAtATime(t *testing.T) {
 		t.Errorf("%d rows expanded after clicking the expanded one again", n)
 	}
 }
+
+// The note that says there is compressed history above appears as soon as rows
+// are there to put it above, not only when the page happens to reload.
+//
+// pruneTop both drops rows over the limit and refreshes the note, and the note
+// is hidden while the view has no rows. With the refresh behind pruneTop's
+// early return, a view that started empty — a filter matching nothing in a
+// sink whose older generations are gzipped — left the note hidden when its
+// first matching row arrived, since nothing had to be dropped.
+func TestBrowser_TheCompressedHistoryNoteAppearsWithTheFirstRow(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "syslog.jsonl")
+	appendRecords(t, filepath.Join(dir, "syslog.1.jsonl"), "one")
+	if err := os.WriteFile(filepath.Join(dir, "syslog.2.jsonl.gz"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appendRecords(t, active, "aaa")
+	p := openViewer(t, []Sink{{Name: "main", Path: active, MaxFiles: 5, Compress: true}})
+	p.waitUntil("the tail is shown", 10*time.Second, p.showsLast("aaa"))
+
+	// A filter nothing matches: the view empties and the note goes with it.
+	p.click("filter-btn")
+	p.run(chromedp.SendKeys(chromedp.ID("inc-input"), "zzz"))
+	p.click("inc-add")
+	p.waitUntil("the view is empty", 10*time.Second, func() bool { return len(p.messages()) == 0 })
+	p.waitUntil("the note is hidden with no rows", 5*time.Second,
+		func() bool { return p.hidden("older-note") })
+
+	// One matching record arrives. It is appended by the poll, not by a
+	// reload, and far too few rows are on screen for any to be dropped.
+	appendRecords(t, active, "zzz-1")
+	p.waitUntil("the matching row arrives", 10*time.Second, p.showsLast("zzz-1"))
+	p.waitUntil("the note is shown again", 5*time.Second,
+		func() bool { return !p.hidden("older-note") })
+}
+
+// Pausing while the screen is empty and the server unreachable stays paused
+// once it answers again.
+//
+// A failed loadTail leaves tailStale set, and the next poll reloads to bring
+// the rows back. loadTail follows the tail unconditionally, so that reload used
+// to undo a pause the user had made in between — the one control action on the
+// page that says "stop changing what I am looking at".
+func TestBrowser_PausingWhileTheScreenIsEmptyOutlastsTheReload(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "syslog.jsonl")
+	appendRecords(t, active, numbered("L", 6)...)
+	p := openViewer(t, []Sink{{Name: "main", Path: active, MaxFiles: 5}})
+	p.waitUntil("the tail is shown", 10*time.Second, p.showsLast("L05"))
+
+	// A filter change while the server is unreachable: the reload fails, so the
+	// screen is cleared and nothing refills it.
+	p.down.Store(true)
+	p.waitUntil("disconnected", 10*time.Second, p.statusIs("disconnected"))
+	p.click("filter-btn")
+	p.run(chromedp.SendKeys(chromedp.ID("inc-input"), "L0"))
+	p.click("inc-add")
+	p.waitUntil("the screen is empty", 10*time.Second, func() bool { return len(p.messages()) == 0 })
+
+	// The user pauses, looking at an empty screen.
+	if !p.following() {
+		t.Fatalf("the page was not following before the pause")
+	}
+	p.click("follow-btn")
+	p.waitUntil("paused", 5*time.Second, func() bool { return !p.following() })
+
+	// The server comes back. The rows have to arrive — an empty screen that
+	// stays empty is the other half of this bug — and the pause has to hold.
+	p.down.Store(false)
+	p.waitUntil("the rows are loaded", 15*time.Second, func() bool { return len(p.messages()) == 6 })
+	if p.following() {
+		t.Error("the reload resumed following; the pause was the user's to undo")
+	}
+}
+
+// Stepping to a search match that is not on screen, when the server cannot be
+// reached, leaves a page that recovers rather than one that is simply dead.
+//
+// jumpToMatch stops the poll and clears the view before fetching the window
+// around the match. Returning from the failed fetch left no rows, no poll timer
+// and a status dot still claiming to be connected, so nothing short of a
+// reload or a filter change brought the page back.
+func TestBrowser_AFailedJumpToAMatchStillRecovers(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "syslog.jsonl")
+	// Two needles, both older than the batch the tail loads, and far enough
+	// apart that the window around the first does not contain the second.
+	lines := numbered("L", 600)
+	lines[5] = "needle one"
+	lines[400] = "needle two"
+	appendRecords(t, active, lines...)
+	p := openViewer(t, []Sink{{Name: "main", Path: active, MaxFiles: 5}})
+	p.waitUntil("the tail is shown", 15*time.Second, p.showsLast("L599"))
+
+	// The first jump happens while the server is reachable and works.
+	p.run(chromedp.SendKeys(chromedp.ID("search"), "needle\r"))
+	p.waitUntil("the first match is shown", 15*time.Second, func() bool {
+		return containsAll(p.messages(), []string{"needle one"})
+	})
+
+	// The second is not in the DOM, so stepping to it fetches — and cannot.
+	p.down.Store(true)
+	p.waitUntil("disconnected", 10*time.Second, p.statusIs("disconnected"))
+	p.click("match-next")
+	p.waitUntil("the jump cleared the view", 10*time.Second,
+		func() bool { return len(p.messages()) == 0 })
+
+	// The dot has to say so, where it used to go on claiming connected.
+	if p.status() != "disconnected" {
+		t.Errorf("status %q after a failed jump, want disconnected", p.status())
+	}
+
+	// And a poll has to be scheduled, so the page refills by itself. It comes
+	// back paused: the jump left the tail deliberately, and recovering from a
+	// failure is not a reason to start following again.
+	p.down.Store(false)
+	p.waitUntil("the page refills once the server is back", 15*time.Second,
+		func() bool { return len(p.messages()) > 0 })
+	if p.following() {
+		t.Error("recovering from the failed jump resumed following")
+	}
+}
