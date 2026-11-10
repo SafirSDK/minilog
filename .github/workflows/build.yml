@@ -164,7 +164,10 @@ jobs:
   linux-coverage:
     name: Linux (Coverage)
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # 12: it ran 6.0 of its old 8 on the 26.04 image, and it does the most of
+    # any Linux job — the suite, then the Go tests again for their coverage,
+    # then the browser tests for the JavaScript.
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7
 
@@ -278,7 +281,9 @@ jobs:
   windows:
     name: Windows (MSVC)
     runs-on: windows-latest
-    timeout-minutes: 20
+    # 25: it ran 13.9 of its old 20, and it is the one job whose timing out
+    # also means no installer and no zip on a release tag.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -443,7 +448,8 @@ jobs:
   linux-fuzz:
     name: Linux (libFuzzer)
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # 12: it ran 6.1 of its old 8 on the 26.04 image.
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7
 
