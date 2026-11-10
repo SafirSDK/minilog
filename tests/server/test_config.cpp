@@ -1088,7 +1088,8 @@ BOOST_AUTO_TEST_CASE(forwarding_exclude_facility_rejects_the_wildcard)
                  "[forwarding]\nexclude_facility=*\n");
     BOOST_CHECK_EXCEPTION(loadConfig(tmp.path),
                           std::runtime_error,
-                          [](const std::runtime_error& e) {
+                          [](const std::runtime_error& e)
+                          {
                               return std::string(e.what()).find("[forwarding] exclude_facility") !=
                                      std::string::npos;
                           });

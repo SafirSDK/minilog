@@ -456,7 +456,7 @@ BOOST_AUTO_TEST_CASE(rfc5424_field_length_limits)
     // over is refused, the limit itself is fine.
     struct Limit
     {
-        std::string SyslogFields::*field;
+        std::string SyslogFields::* field;
         std::size_t max;
     };
     for (const auto& [field, max] :

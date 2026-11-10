@@ -42,6 +42,11 @@ Formatting enforced by `.clang-format` (Allman braces, 100-col limit, include gr
 The clang-format and header checks cover `src/server`, `src/send`, `tests/server` and `tests/send`;
 a new C++ directory has to be added to the CI `find` in `build.yml` and to `tests/check_headers.py`.
 The local `clang-format-check` target already scans all of `src/` and `tests/` (and only warns).
+CI pins **clang-format 21.1.6**, installed from PyPI (`pip install clang-format==21.1.6`) rather
+than from apt, which followed the runner image and changed the gate under us. The local target
+takes whatever `clang-format` is on `PATH`, so install that same version to agree with CI — the
+PyPI package is a binary and needs no particular distribution. Versions differ in what they accept
+(21 puts a lambda's brace on its own line, where 18 did not), so a bump is its own commit.
 - Naming: `camelCase` functions/vars/params; `m_camelCase` private members; `PascalCase` types;
   plain `camelCase` for public struct fields (e.g. `appName`, `maxSize`)
 - File headers: MIT licence block at the top of every `.cpp`/`.hpp`; interior lines use ` *`

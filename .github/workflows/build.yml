@@ -27,10 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Pinned, and from PyPI rather than apt, because the version decides what
+      # the gate accepts: `apt-get install clang-format` follows whatever the
+      # runner image ships, and when ubuntu-latest moved from 24.04 to 26.04 it
+      # went from 18 to 21 and failed two files that no commit had touched. The
+      # PyPI package is LLVM's own binary and installs on any distribution, so
+      # a contributor on an older Ubuntu can match this exactly:
+      #     pip install clang-format==21.1.6
+      # Moving to a newer clang-format is then this line plus whatever it
+      # reformats, in one commit of its own.
       - name: Install clang-format
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y clang-format
+        run: pip install clang-format==21.1.6
 
       - name: Check formatting
         run: |
@@ -177,10 +184,17 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          lcov --capture --directory build/linux-coverage --output-file coverage.info --ignore-errors mismatch
-          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
-          # Not lcov --list or --summary: lcov 2.0 (the Ubuntu 24.04 package)
-          # prints nonsense rates from a correct tracefile. Read LF/LH instead.
+          # `inconsistent` alongside `mismatch` since ubuntu-latest moved to
+          # 26.04 and gcov 15: it reports a mismatched end line for a function
+          # (a Boost.Test case macro, as it happens) and lcov makes that an
+          # error, which failed the capture on a tracefile that was otherwise
+          # complete and a test run where all thirteen tests passed.
+          lcov --capture --directory build/linux-coverage --output-file coverage.info \
+            --ignore-errors mismatch,inconsistent
+          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info \
+            --ignore-errors inconsistent
+          # Not lcov --list or --summary: lcov 2.x prints nonsense rates from a
+          # correct tracefile. Read LF/LH instead.
           awk -F: -v root="$PWD/" '
             /^SF:/ { f = substr($0, 4); sub("^" root, "", f) }
             /^LF:/ { lf = $2 }
