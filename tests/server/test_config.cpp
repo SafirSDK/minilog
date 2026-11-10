@@ -274,6 +274,24 @@ BOOST_AUTO_TEST_CASE(zero_size_means_no_rotation)
     }
 }
 
+BOOST_AUTO_TEST_CASE(empty_max_size_is_silently_no_rotation)
+{
+    // Documenting what happens rather than what should: `max_size =` with
+    // nothing after it is read as absent, and the default for absent is 0,
+    // which means never rotate. So a line that looks like it asks for the
+    // default turns rotation off instead, and nothing says so.
+    //
+    // parseSize has an "Empty size value" error for this, but PropertyTree
+    // yields no value at all for the key, so the guard is never reached and
+    // the default is taken. If that is ever made a startup error — which is
+    // what AGENTS.md's "a value that cannot be read is a startup error" would
+    // suggest — this test is the one that has to change.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_size=\n");
+    Config cfg;
+    BOOST_REQUIRE_NO_THROW(cfg = loadConfig(tmp.path));
+    BOOST_TEST(cfg.outputs[0].maxSize == 0u);
+}
+
 BOOST_AUTO_TEST_CASE(zero_max_queue_bytes_still_throws)
 {
     // The other user of the same parser. There is deliberately no "unlimited"
@@ -643,6 +661,21 @@ BOOST_AUTO_TEST_SUITE_END()
 // ─── Output file uniqueness ───────────────────────────────────────────────────
 
 BOOST_AUTO_TEST_SUITE(output_file_uniqueness)
+
+BOOST_AUTO_TEST_CASE(duplicate_output_section_name_throws_naming_it)
+{
+    // Two [output.main] sections are refused, so one of them cannot silently
+    // win on iteration order. config.cpp has its own duplicate-name check, but
+    // it is PropertyTree's INI parser that rejects this first, naming the line
+    // rather than the section — hence matching on neither. The guarantee worth
+    // holding is that the config does not load, whichever layer refuses it.
+    TempFile tmp("[output.main]\n"
+                 "text_file=" ABS "/tmp/first.log\n"
+                 "\n"
+                 "[output.main]\n"
+                 "text_file=" ABS "/tmp/second.log\n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
 
 BOOST_AUTO_TEST_CASE(same_path_for_text_and_jsonl_throws_naming_section)
 {
