@@ -268,9 +268,15 @@ Two jobs measure it, and between them they decide what is knowable:
 Codecov merges two reports of one file as the union of their hits (`codecov.yml` gives the Windows
 flags the same paths), so a line counts as covered if either platform reaches it, and the
 platform-specific files are reported by the only job that can compile them. OpenCppCoverage writes
-absolute build-machine paths, which Codecov cannot match against the repository;
-`.github/scripts/summarise_cobertura.py` rewrites them to repo-relative and prints the per-file
-table, so a run's log shows what is uncovered without opening Codecov.
+its filenames relative to a `<source>` root (`a/minilog/minilog/src/...` under a source of `D:\`),
+which Codecov cannot match against the repository;
+`.github/scripts/summarise_cobertura.py` resolves them against that root, rewrites them to
+repo-relative, and prints the per-file table, so a run's log shows what is uncovered without
+opening Codecov. It also **drops every entry not under `src/`**, which is what keeps the report
+ours: `--sources src` matches the "src" in the middle of the UCRT's own
+`minkernel/crts/ucrt/src/...`, and the first run that worked was two thirds Microsoft's C runtime
+(a 24.8% total over 37455 lines). The script exits non-zero if nothing is left, since an empty
+report uploads as "nothing is covered" rather than failing.
 
 **What Windows coverage cannot reach.** A service process is started by `services.exe`, so it is
 not a child of ctest and `--cover_children` never sees it. That leaves these unmeasured however

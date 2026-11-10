@@ -538,7 +538,7 @@ jobs:
           "OCC=$occ" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           & $occ --quiet --cover_children --modules minilog --sources src `
-            --excluded_sources tests `
+            --excluded_sources tests --excluded_sources minkernel `
             --export_type "binary:ctest.cov" `
             -- ctest --preset windows-coverage
           if ($LASTEXITCODE -ne 0) { throw "ctest failed with exit code $LASTEXITCODE" }
@@ -555,7 +555,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $zip = Get-Item "build/windows-coverage/minilog-*-win64.zip" | Select-Object -First 1
           & $env:OCC --quiet --cover_children --modules minilog --sources src `
-            --excluded_sources tests `
+            --excluded_sources tests --excluded_sources minkernel `
             "--input_coverage=ctest.cov" `
             --export_type "cobertura:windows-coverage.xml" `
             -- python tests/installer/test_zip_install.py $zip.FullName
