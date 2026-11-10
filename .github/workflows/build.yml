@@ -434,7 +434,16 @@ jobs:
       # MINILOG_JS_COVERAGE is deliberately not set — the browser tests drive
       # the same app.js through the same Chrome as on Linux, so a second
       # measurement of it would only restate the Linux one.
+      # bash, not the pwsh a Windows runner defaults to. Under pwsh this exact
+      # line reached go as -coverprofile=web-viewer-coverage plus a separate
+      # `.out`, which it read as a package to test and failed on; quoting the
+      # argument also fixes it, but bash makes the line identical to the Linux
+      # coverage job's, which is the version that is known to work.
+      # (Which token pwsh breaks on is not obvious — the windows job passes
+      # --settings=compiler.runtime=static through unquoted without trouble —
+      # so the rule is not worth encoding here, only the avoidance.)
       - name: Generate web-viewer coverage report
+        shell: bash
         run: go test -coverprofile=web-viewer-coverage.out -covermode=atomic ./...
         working-directory: src/web-viewer
 
@@ -547,7 +556,7 @@ jobs:
           $zip = Get-Item "build/windows-coverage/minilog-*-win64.zip" | Select-Object -First 1
           & $env:OCC --quiet --cover_children --modules minilog --sources src `
             --excluded_sources tests `
-            --input_coverage=ctest.cov `
+            "--input_coverage=ctest.cov" `
             --export_type "cobertura:windows-coverage.xml" `
             -- python tests/installer/test_zip_install.py $zip.FullName
           if ($LASTEXITCODE -ne 0) { throw "the zip install test failed with exit code $LASTEXITCODE" }
