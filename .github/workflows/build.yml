@@ -128,7 +128,14 @@ jobs:
   linux-sanitizers:
     name: Linux (Clang ASan+UBSan)
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # 15, not the 8 this and linux-tsan had: they are the two jobs that run the
+    # suite with MINILOG_STRESS_MULTIPLIER=10 under a sanitizer, and on the
+    # 26.04 image they take 5 to 8.5 minutes where on 24.04 they took 5 to 6.5.
+    # At 8 they timed out about half the time — and a timed-out job is reported
+    # as `cancelled`, which reads like someone stopped it rather than a job
+    # that needs longer. The number is headroom, not a measured requirement; a
+    # real hang is caught by the suite's own per-test timeouts long before it.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -241,7 +248,8 @@ jobs:
   linux-tsan:
     name: Linux (Clang TSan)
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # 15 for the reason given on linux-sanitizers above.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
