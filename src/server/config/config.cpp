@@ -478,17 +478,23 @@ OutputConfig parseOutput(const std::string& name, const boost::property_tree::pt
                                  outCfg.textFile + "'");
     }
 
-    const auto sizeStr = sec.get<std::string>("max_size", "");
-    if (!sizeStr.empty())
+    // get_optional, not get with a default: `max_size =` with nothing after it
+    // is a key that is present with an empty value, and that has to be an
+    // error, where a key that is absent keeps the default. get<std::string>
+    // with a "" default cannot tell those two apart, so an empty value used to
+    // be read as "not set" and take the default — which for max_size is 0,
+    // meaning never rotate. A line that looked like it asked for the default
+    // turned rotation off instead, and nothing said so.
+    if (const auto sizeStr = sec.get_optional<std::string>("max_size"))
     {
         try
         {
             // 0 is accepted here: it is the documented way to disable rotation.
-            outCfg.maxSize = parseSize(sizeStr, /*allowZero=*/true);
+            outCfg.maxSize = parseSize(*sizeStr, /*allowZero=*/true);
         }
         catch (const std::runtime_error& e)
         {
-            throw std::runtime_error("[output." + name + "] " + e.what());
+            throw std::runtime_error("[output." + name + "] max_size: " + e.what());
         }
     }
 

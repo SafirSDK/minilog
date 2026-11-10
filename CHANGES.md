@@ -27,6 +27,13 @@
 
 ### Changed
 
+- **`max_size` with no value is now a config error.** `max_size =` with nothing after it used to
+  load, and meant the same as leaving the key out — which is `0`, "never rotate". So a line that
+  looked like it asked for the default turned rotation off instead, and the sink then grew until
+  the disk filled with nothing saying why. It is refused at startup now, naming the section and the
+  key. Write `max_size = 0` to disable rotation deliberately, or leave the key out. A config that
+  relied on the old reading will fail to start; nothing minilog ships was written that way. This
+  applies to `max_size` alone — `[web_viewer] host =` still means every interface, as documented.
 - **Built with current dependencies.** The release is built with Go 1.27.3 — the 1.4.x web viewer
   was built with Go 1.25.0, a version that no longer receives security fixes — and on Windows with
   Boost 1.91.0 (was 1.87.0) and zlib 1.3.2. Building the web viewer from source now needs Go 1.26

@@ -274,22 +274,44 @@ BOOST_AUTO_TEST_CASE(zero_size_means_no_rotation)
     }
 }
 
-BOOST_AUTO_TEST_CASE(empty_max_size_is_silently_no_rotation)
+BOOST_AUTO_TEST_CASE(empty_max_size_is_an_error)
 {
-    // Documenting what happens rather than what should: `max_size =` with
-    // nothing after it is read as absent, and the default for absent is 0,
-    // which means never rotate. So a line that looks like it asks for the
-    // default turns rotation off instead, and nothing says so.
-    //
-    // parseSize has an "Empty size value" error for this, but PropertyTree
-    // yields no value at all for the key, so the guard is never reached and
-    // the default is taken. If that is ever made a startup error — which is
-    // what AGENTS.md's "a value that cannot be read is a startup error" would
-    // suggest — this test is the one that has to change.
+    // `max_size =` with nothing after it used to load, and took the default
+    // for an absent key — which is 0, meaning never rotate. So a line that
+    // looked like it asked for the default turned rotation off instead, and
+    // the sink then grew until the disk filled. An empty value is now refused,
+    // naming the section and the key; an absent max_size is still the default.
     TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_size=\n");
+    try
+    {
+        loadConfig(tmp.path);
+        BOOST_FAIL("expected std::runtime_error for max_size with no value");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string what = e.what();
+        BOOST_TEST(what.find("[output.m]") != std::string::npos, "message: " << what);
+        BOOST_TEST(what.find("max_size") != std::string::npos, "message: " << what);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(max_size_with_only_whitespace_is_an_error)
+{
+    // PropertyTree trims the value, so this arrives as empty too rather than
+    // as a string of spaces that parseSize would reject for another reason.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_size =   \n");
+    BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE(absent_max_size_still_takes_the_default)
+{
+    // The other half of the change: only a present-but-empty value is an
+    // error. Leaving the key out entirely is still how a sink says it does not
+    // rotate.
+    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\n");
     Config cfg;
     BOOST_REQUIRE_NO_THROW(cfg = loadConfig(tmp.path));
-    BOOST_TEST(cfg.outputs[0].maxSize == 0u);
+    BOOST_TEST(cfg.outputs[0].maxSize == OutputConfig{}.maxSize);
 }
 
 BOOST_AUTO_TEST_CASE(zero_max_queue_bytes_still_throws)
@@ -345,14 +367,9 @@ BOOST_AUTO_TEST_CASE(no_numeric_part_throws)
     BOOST_CHECK_THROW(loadConfig(tmp.path), std::runtime_error);
 }
 
-BOOST_AUTO_TEST_CASE(empty_size_value_no_rotation)
-{
-    // An empty max_size value (key present but no value) is treated as "not set"
-    // by Boost PropertyTree, so maxSize stays at the default (0 = unlimited).
-    TempFile tmp("[output.m]\ntext_file=" ABS "/tmp/f\nmax_size=\n");
-    Config cfg = loadConfig(tmp.path);
-    BOOST_TEST(cfg.outputs[0].maxSize == 0u);
-}
+// An empty max_size used to be accepted here as "not set", which this suite
+// asserted deliberately. It is an error now — see empty_max_size_is_an_error
+// above, and the three cases around it.
 
 BOOST_AUTO_TEST_SUITE_END()
 

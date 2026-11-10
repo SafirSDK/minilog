@@ -378,6 +378,11 @@ startup errors naming the section, the key and the value. The booleans — `incl
 `True` are errors rather than guesses. Sections minilog does not know are ignored, so another
 tool can keep its own settings in this file.
 
+`max_size =` with nothing after it is an error too, rather than the same thing as leaving the key
+out. The two used to be identical, which made a line that looked like it asked for the default turn
+rotation off instead — the default for an absent `max_size` being `0`. Note that an empty value is
+not wrong everywhere: `[web_viewer] host =` means every interface, and says so.
+
 **Comments start a line; values run to the end of one.** `;` and `#` introduce a comment only as
 the first character of a line. After a `=` they are ordinary characters, so
 `jsonl_file = C:\logs\build#3.jsonl` names a file with a `#` in it, and
@@ -413,7 +418,7 @@ a path needs a drive or a UNC share (`C:\logs\syslog.log`, `\\server\share\logs\
 |-----|---------|-------------|
 | `text_file` | — | Absolute path. Raw UDP payload bytes + `\n`, one line per message ([control characters escaped](#text-file)) |
 | `jsonl_file` | — | Absolute path. One JSON object per line (see [JSONL format](#jsonl-format)) |
-| `max_size` | `0` (no rotation) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB`. `0` disables rotation; a value that overflows 64 bits is a config error rather than silently becoming `0` |
+| `max_size` | `0` (no rotation) | Rotate when either file exceeds this. Units: `B`, `KB`, `MB`, `GB`. `0` disables rotation; a value that overflows 64 bits is a config error rather than silently becoming `0`, and so is `max_size =` with no value — write `0` to mean no rotation, or leave the key out |
 | `max_files` | `10` | Rotated generations to keep, 0–1000. `0` = keep them all, up to that limit |
 | `facility` | `*` | Comma-separated facility names to accept. `*` = all |
 | `exclude_facility` | — | Comma-separated facility names to leave out of whatever `facility` accepts. `facility = *` with `exclude_facility = local3` is "everything except local3". `*` is not allowed here |
