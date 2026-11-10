@@ -317,6 +317,25 @@ func TestRunMainRejectsAnUnknownFlag(t *testing.T) {
 	}
 }
 
+func TestRunMainTreatsHelpAsSuccess(t *testing.T) {
+	// --help is not a usage error. The FlagSet this function now uses returns
+	// flag.ErrHelp from Parse like any other error, where the package-level
+	// flag's ExitOnError exited 0 for it — so without the special case the
+	// switch to a FlagSet silently turned `--help` into a failure. The
+	// installer test runs --help on the other two executables precisely to
+	// prove they are runnable, and checks the exit code is 0.
+	for _, arg := range []string{"--help", "-h"} {
+		var stderr strings.Builder
+		if code := runMain([]string{arg}, &stderr); code != 0 {
+			t.Errorf("runMain(%s) = %d, want 0", arg, code)
+		}
+		// The usage still has to be written, or --help tells nobody anything.
+		if !strings.Contains(stderr.String(), "-config") {
+			t.Errorf("runMain(%s) stderr = %q, want the usage", arg, stderr.String())
+		}
+	}
+}
+
 func TestRunMainRejectsATimeoutOfZero(t *testing.T) {
 	// Zero would mean "wait no time at all for the service to go away", and the
 	// caller of --stop is usually about to overwrite the executable.

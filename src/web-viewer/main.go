@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -71,7 +72,16 @@ func runMain(args []string, stderr io.Writer) int {
 	timeout := fs.Int("timeout", defaultStopTimeoutSeconds,
 		"seconds to wait for --stop and --uninstall")
 	if err := fs.Parse(args); err != nil {
-		// Parse has already written the error and the usage to stderr.
+		// Parse has already written the error, or the usage, to stderr.
+		//
+		// --help is not an error: ExitOnError, which this FlagSet replaced,
+		// special-cases flag.ErrHelp and exits 0, and the installer test
+		// requires exactly that of the other two executables — running --help
+		// is how it proves they are runnable at all. Returning 2 here would
+		// make this the one that fails such a check.
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 

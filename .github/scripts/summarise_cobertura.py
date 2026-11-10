@@ -93,6 +93,17 @@ def main(argv: list[str]) -> int:
                 count = int(line.get("hits", "0"))
                 lines[number] = max(lines.get(number, 0), count)
 
+    # Write the merged counts back, so that the report says what the table
+    # above says. Without this the table merged the duplicates and the file
+    # kept them, Codecov applied its own rule to the conflict, and the log —
+    # whose whole point is to show what is uncovered without opening Codecov —
+    # could disagree with it for exactly the files the comment above names.
+    for classes in tree.iter("classes"):
+        for cls in classes:
+            merged = hits[cls.get("filename")]
+            for line in cls.iter("line"):
+                line.set("hits", str(merged[int(line.get("number", "0"))]))
+
     # Every filename is now relative to the repository root, so that is what
     # the single source has to say for Codecov to resolve them.
     for source in tree.iter("source"):
