@@ -6,7 +6,7 @@ FROM debian:trixie AS build
 
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
-        g++ cmake ninja-build libboost-all-dev zlib1g-dev && \
+        g++ cmake ninja-build zlib1g-dev libboost-dev libboost-json-dev libboost-program-options-dev libboost-test-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
