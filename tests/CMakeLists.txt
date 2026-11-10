@@ -148,6 +148,21 @@ target_sources(test_send PRIVATE
 target_include_directories(test_send PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/send)
 target_link_libraries(test_send PRIVATE Boost::program_options)
 
+# A run under a tracing profiler — OpenCppCoverage, in the windows-coverage
+# preset — is several times slower than an ordinary one, and the timeouts below
+# are each set for the latter. The scale multiplies every one of them, so that
+# such a preset sets it once instead of every test loosening its own timeout
+# (which would also loosen it for the runs that are not instrumented). A
+# TIMEOUT property beats the test preset's `execution.timeout`, so the preset
+# cannot raise these on its own.
+set(MINILOG_TEST_TIMEOUT_SCALE "1" CACHE STRING
+    "Multiplier applied to every test timeout, for slow instrumented runs")
+
+function(minilog_test_timeout name seconds)
+    math(EXPR scaled "${seconds} * ${MINILOG_TEST_TIMEOUT_SCALE}")
+    set_tests_properties(${name} PROPERTIES TIMEOUT ${scaled})
+endfunction()
+
 # Binary-level tests — require the minilog executable.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
@@ -158,7 +173,7 @@ if(Python3_FOUND)
             $<TARGET_FILE:minilog>
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(test_binary PROPERTIES TIMEOUT 120)
+    minilog_test_timeout(test_binary 120)
 
     # The built minilog-send against a running minilog: what lands in the JSONL,
     # and the exit codes only the real executable can show.
@@ -170,7 +185,7 @@ if(Python3_FOUND)
             $<TARGET_FILE:minilog-send>
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(test_send_binary PROPERTIES TIMEOUT 120)
+    minilog_test_timeout(test_send_binary 120)
 
     add_test(
         NAME test_cli_viewer
@@ -179,7 +194,7 @@ if(Python3_FOUND)
             ${CMAKE_SOURCE_DIR}/src/cli-viewer/minilog-cli-viewer.py
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(test_cli_viewer PROPERTIES TIMEOUT 60)
+    minilog_test_timeout(test_cli_viewer 60)
 endif()
 
 # Go tests for the web-viewer.
@@ -191,7 +206,7 @@ if(GO_EXECUTABLE)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/src/web-viewer"
     )
     # The browser tests take about half a minute of that.
-    set_tests_properties(test_web_viewer PROPERTIES TIMEOUT 330)
+    minilog_test_timeout(test_web_viewer 330)
 endif()
 
 # libFuzzer target (Clang only, enabled via linux-fuzz preset).

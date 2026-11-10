@@ -252,6 +252,48 @@ of that ordering and because those values are table-driven (see `matchStringFiel
   `MINILOG_JS_COVERAGE` names a file, and writes it there as lcov; the CI coverage job uploads it
   to Codecov as the `web-ui` flag, and fails if no browser test ran.
 
+## Coverage
+
+Two jobs measure it, and between them they decide what is knowable:
+
+- **`linux-coverage`** — GCC `--coverage -fno-inline`, lcov, plus `go test -coverprofile` and the
+  browser tests' V8 block coverage of `app.js`. Uploads the `server`, `web-viewer` and `web-ui`
+  flags.
+- **`windows-coverage`** — the `windows-coverage` preset (RelWithDebInfo with `/Od /Ob0` in place
+  of `/O2 /Ob1`, so lines are not attributed to the function they were inlined into; `/Zi` for the
+  PDBs) under OpenCppCoverage, plus `go test` on Windows. Uploads `server-windows` and
+  `web-viewer-windows`. Separate from the `windows` job because that one publishes the release and
+  runs no third-party code, and is the workflow's critical path.
+
+Codecov merges two reports of one file as the union of their hits (`codecov.yml` gives the Windows
+flags the same paths), so a line counts as covered if either platform reaches it, and the
+platform-specific files are reported by the only job that can compile them. OpenCppCoverage writes
+absolute build-machine paths, which Codecov cannot match against the repository;
+`.github/scripts/summarise_cobertura.py` rewrites them to repo-relative and prints the per-file
+table, so a run's log shows what is uncovered without opening Codecov.
+
+**What Windows coverage cannot reach.** A service process is started by `services.exe`, so it is
+not a child of ctest and `--cover_children` never sees it. That leaves these unmeasured however
+thoroughly they are tested, and `test_installer.py`/`test_zip_install.py` do test them:
+
+- `service_win.cpp` — `reportStatus`, `serviceCtrlHandler`, `serviceMsgMain`, `reportServiceStarted`,
+  `tryRunAsService` (~150 of its 676 lines)
+- `service_windows.go` — `(*windowsService).Execute`, `tryRunAsService` (~90 of its 433)
+
+Everything else in both files — `installService`, `uninstallService`, `stopService`, `stopAndWait`,
+`requestStop`, `queryServiceState`, `updateService`, `serviceCommandLine` — runs as an ordinary
+process that the test launches, and **is** measured: the `windows-coverage` job runs
+`test_zip_install.py` under OpenCppCoverage for exactly that reason, which is why it builds the zip.
+Do not read a gap in the five functions above as an untested path; read the installer tests.
+The Go half of this is reachable in principle, with `go build -cover` and a machine-wide
+`GOCOVERDIR` the SCM passes to the service — not done, and worth it only if that code starts
+changing.
+
+`MINILOG_TEST_TIMEOUT_SCALE` (`tests/CMakeLists.txt`) multiplies every test timeout; the
+`windows-coverage` preset sets 5 because a tracing profiler is several times slower, and a
+per-test `TIMEOUT` property beats a test preset's `execution.timeout`, so the preset cannot raise
+them on its own.
+
 ## CI flakes to watch — not to chase
 
 Noted as they turn up. A flake seen once is noise; the same one twice is a defect, and this list
@@ -283,6 +325,7 @@ Before tagging a release, verify all of the following:
    - Linux GCC, Clang ASan+UBSan, Clang TSan
    - Linux coverage (C++, Go, and the web viewer's JavaScript)
    - Windows MSVC (build, tests, installer, zip)
+   - Windows coverage (C++ under OpenCppCoverage, Go)
    - Docker build
    - libFuzzer
 

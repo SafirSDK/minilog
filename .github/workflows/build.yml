@@ -314,45 +314,12 @@ jobs:
             --settings=compiler.runtime=static `
             -c tools.cmake.cmaketoolchain:generator=Ninja
 
-      # What a Developer Command Prompt sets — cl, link and the SDK on the PATH,
-      # INCLUDE, LIB and the rest — which Ninja needs and the runner does not
-      # provide: vcvars64.bat of the newest Visual Studio with the C++ tools,
-      # and every variable it sets or changes carried into the later steps.
-      # Written out here rather than taken from an action so that no
-      # third-party code runs in the job that builds and publishes the release
-      # (ilammy/msvc-dev-cmd did this until it stopped being maintained).
+      # cl, link, the SDK, INCLUDE and LIB, which Ninja needs and the runner
+      # does not provide. The script is this repository's own, so that no
+      # third-party code runs in the job that builds and publishes the release.
       - name: Set up MSVC environment
         shell: pwsh
-        run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $vs = & $vswhere -latest -products * `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $vs) { throw 'no Visual Studio with the C++ tools found' }
-          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
-
-          # Environment names are case-insensitive on Windows, and so is @{}.
-          $before = @{}
-          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
-          $after = cmd /c "`"$vcvars`" >nul && set"
-          if ($LASTEXITCODE -ne 0) { throw "vcvars64.bat failed with exit code $LASTEXITCODE" }
-
-          foreach ($line in $after) {
-            if ($line -notmatch '^([^=]+)=(.*)$') { continue }
-            $name, $value = $Matches[1], $Matches[2]
-            if ($before[$name] -eq $value) { continue }
-            if ($name -eq 'Path') {
-              # The directories vcvars added, through GITHUB_PATH, which is how a
-              # step adds to the PATH of the steps after it. Each line written
-              # there goes in front of the ones before it, so they are written
-              # last first, to come out in vcvars' order.
-              $old   = $before['Path'] -split ';'
-              $added = @($value -split ';' | Where-Object { $_ -and $_ -notin $old })
-              [array]::Reverse($added)
-              $added | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-            } else {
-              "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            }
-          }
+        run: .github/scripts/msvc-env.ps1
 
       - name: Check the MSVC environment
         shell: pwsh
@@ -435,6 +402,170 @@ jobs:
             build/windows-release/minilog-*-setup.exe
             build/windows-release/minilog-*-win64.zip
           prerelease: ${{ contains(github.ref, '-') }}
+
+  # ─── Windows (MSVC, coverage) ───────────────────────────────────────────────
+  # A job of its own rather than steps added to the one above, for two reasons:
+  # that job publishes the release and deliberately runs no third-party code,
+  # where this one needs OpenCppCoverage and the Codecov action; and that job is
+  # the workflow's critical path at thirteen minutes, which an uninlined build
+  # and a tracing profiler would roughly double.
+  #
+  # What it measures that the Linux coverage job cannot is every Windows-only
+  # path: platform/service_win.cpp and os_log_win.cpp, the web viewer's
+  # service_windows.go, os_log_windows.go and open_windows.go, and the
+  # `#ifdef _WIN32` blocks of retry_in_use.hpp, log_file.cpp, compress.cpp,
+  # udp_server.cpp, preflight.cpp and both main.cpp. On Linux those files are
+  # absent from the report altogether and their `*_other.go` stubs read as 0%,
+  # which says nothing about the code that actually ships to Windows users.
+  windows-coverage:
+    name: Windows (Coverage)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: src/web-viewer/go.mod
+          cache: false
+
+      # The Go coverage first: it needs none of the MSVC scaffolding below and
+      # takes about two minutes, so it reports even if the C++ half fails.
+      # MINILOG_JS_COVERAGE is deliberately not set — the browser tests drive
+      # the same app.js through the same Chrome as on Linux, so a second
+      # measurement of it would only restate the Linux one.
+      - name: Generate web-viewer coverage report
+        run: go test -coverprofile=web-viewer-coverage.out -covermode=atomic ./...
+        working-directory: src/web-viewer
+
+      - name: Upload web-viewer coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: src/web-viewer/web-viewer-coverage.out
+          flags: web-viewer-windows
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Install Conan
+        run: pip install conan
+
+      - name: Detect Conan profile
+        run: conan profile detect --force
+
+      # The windows job's own key: the Conan settings below are that job's, so
+      # the packages are the same and the two share one cache entry. Only the
+      # compiler flags differ, and those are CMake's, not Conan's. Restore and
+      # not cache, so that the two jobs do not both try to save the same key —
+      # the windows job is the one that writes it.
+      - name: Restore Conan packages
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.conan2/p
+            ~/.conan2/cache.sqlite3
+          key: conan-windows-relwithdebinfo-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-windows-relwithdebinfo-
+
+      - name: Install Ninja
+        run: choco install ninja --no-progress
+
+      - name: Install OpenCppCoverage
+        run: choco install opencppcoverage --no-progress
+
+      - name: Conan install
+        run: |
+          conan install . `
+            --output-folder=build/windows-coverage `
+            --build=missing `
+            --settings=build_type=RelWithDebInfo `
+            --settings=compiler.runtime=static `
+            -c tools.cmake.cmaketoolchain:generator=Ninja
+
+      - name: Set up MSVC environment
+        shell: pwsh
+        run: .github/scripts/msvc-env.ps1
+
+      # RelWithDebInfo with /Od /Ob0 in place of /O2 /Ob1 (see the preset): the
+      # PDBs OpenCppCoverage reads come from /Zi, and the inlining is what would
+      # otherwise attribute a line to the function it was inlined into. The
+      # equivalent on the Linux job is -fno-inline.
+      - name: Configure
+        run: cmake --preset windows-coverage
+
+      - name: Build
+        run: cmake --build --preset windows-coverage
+
+      # The service tests below install from the zip, so it has to be built.
+      # The Inno Setup installer is not, which is why this job does not install
+      # Inno Setup: test_installer.py covers the same service commands through
+      # a second path, and the zip test calls --install, --stop and --uninstall
+      # on the executables directly.
+      - name: Build zip archive
+        run: cmake --build --preset windows-coverage --target package-zip
+
+      # Two runs. The first exports OpenCppCoverage's own binary format; the
+      # second reads that back with --input_coverage and exports the two
+      # together, which merges them without a separate merge-only invocation.
+      #
+      # --cover_children because every test is a child process: the Boost.Test
+      # executables, Python driving minilog, and Python driving the installed
+      # service commands. --modules minilog restricts tracing to our own
+      # binaries wherever they are loaded from (the build tree here, and
+      # C:\minilog-zip-test\bin in the second run) so that python.exe, go.exe
+      # and Chrome are not single-stepped. --sources src keeps the report to
+      # this repository's code: Boost and SDK headers live under no path
+      # containing "src", and our test sources are under tests/.
+      #
+      # test_web_viewer and test_cli_viewer are excluded by the test preset:
+      # they exercise Go and Python, reach no C++ at all, and cost two minutes
+      # of profiled runtime to prove it.
+      - name: Test with coverage
+        shell: pwsh
+        env:
+          BOOST_TEST_LOG_LEVEL: test_suite
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $occ = Join-Path $env:ProgramFiles 'OpenCppCoverage\OpenCppCoverage.exe'
+          if (-not (Test-Path $occ)) { throw "OpenCppCoverage is not at $occ" }
+          "OCC=$occ" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          & $occ --quiet --cover_children --modules minilog --sources src `
+            --excluded_sources tests `
+            --export_type "binary:ctest.cov" `
+            -- ctest --preset windows-coverage
+          if ($LASTEXITCODE -ne 0) { throw "ctest failed with exit code $LASTEXITCODE" }
+
+      # What the Linux job has no way to reach: installService, uninstallService,
+      # stopService, requestStop, stopAndWait and queryServiceState, all of
+      # which run as an ordinary process that the test launches. The service
+      # process the SCM starts is not a child of this one, so serviceMsgMain,
+      # serviceCtrlHandler, reportStatus and tryRunAsService stay unmeasured —
+      # see the Windows coverage section of AGENTS.md.
+      - name: Test the service commands with coverage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Get-Item "build/windows-coverage/minilog-*-win64.zip" | Select-Object -First 1
+          & $env:OCC --quiet --cover_children --modules minilog --sources src `
+            --excluded_sources tests `
+            --input_coverage=ctest.cov `
+            --export_type "cobertura:windows-coverage.xml" `
+            -- python tests/installer/test_zip_install.py $zip.FullName
+          if ($LASTEXITCODE -ne 0) { throw "the zip install test failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path 'windows-coverage.xml')) { throw 'no coverage report was written' }
+
+      # Rewrites the absolute build-machine paths OpenCppCoverage writes into
+      # repo-relative ones, which is what lets Codecov line this report up with
+      # the Linux one, and prints the per-file table into the log.
+      - name: Summarise the coverage report
+        shell: pwsh
+        run: python .github/scripts/summarise_cobertura.py windows-coverage.xml
+
+      - name: Upload server coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: windows-coverage.xml
+          flags: server-windows
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # ─── Linux (Clang, libFuzzer) ────────────────────────────────────────────
   linux-fuzz:

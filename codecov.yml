@@ -13,7 +13,21 @@ flags:
       - src/server/
       - src/send/
     carryforward: true
+  # The same paths as `server`, uploaded by the Windows coverage job. Codecov
+  # merges two reports of one file as the union of their hits, which is what is
+  # wanted here: a line is covered if either platform's tests reach it, and the
+  # files that exist on only one platform — service_win.cpp, service_windows.go
+  # and the rest — are reported by the only job that can compile them.
+  server-windows:
+    paths:
+      - src/server/
+      - src/send/
+    carryforward: true
   web-viewer:
+    paths:
+      - src/web-viewer/
+    carryforward: true
+  web-viewer-windows:
     paths:
       - src/web-viewer/
     carryforward: true
@@ -28,10 +42,12 @@ component_management:
       name: C++ Server
       flag_regexes:
         - server
+        - server-windows
     - component_id: web-viewer
       name: Go Web Viewer
       flag_regexes:
         - web-viewer
+        - web-viewer-windows
     - component_id: web-ui
       name: Web UI (JavaScript)
       flag_regexes:

@@ -43,6 +43,15 @@
   Columns and Export. The connection status dot is now the dot inside the Follow button — green
   when connected, red when the viewer cannot be reached. On a narrow window the search box
   narrows and the version label hides, so every control stays on screen down to 1024 px.
+- **Test coverage is now measured on Windows as well as Linux.** A new CI job builds with MSVC
+  without inlining and runs the test suite, and the zip's service commands, under
+  OpenCppCoverage, uploading both the C++ and the Go coverage to Codecov under their own flags.
+  Until now coverage came only from Linux, where the Windows-only sources — the service
+  registration and control in `service_win.cpp` and `service_windows.go`, the Event Log writers,
+  the rotation's sharing-violation retries and the viewer's `FILE_SHARE_DELETE` opens — are not
+  compiled at all, so nothing measured the code that most deployments actually run. The service
+  process the SCM starts is still not measurable; AGENTS.md lists the five functions that leaves
+  out, so a gap there is not read as an untested path.
 - **minilog logs a line once it is receiving.** After binding its UDP socket it writes
   `minilog: listening on UDP <address>:<port>` as an informational message — to stderr, and to
   syslog on Linux or the Event Log on Windows — so one more entry appears per start. It names the

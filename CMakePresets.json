@@ -122,6 +122,19 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+    {
+      "name": "windows-coverage",
+      "displayName": "Windows Coverage (MSVC + Ninja, for OpenCppCoverage)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-coverage",
+      "toolchainFile": "${sourceDir}/build/windows-coverage/conan_toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "/Zi /Od /Ob0 /DNDEBUG",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO": "/Zi /Od /Ob0 /DNDEBUG",
+        "MINILOG_TEST_TIMEOUT_SCALE": "5"
+      }
     }
   ],
   "buildPresets": [
@@ -164,6 +177,10 @@
     {
       "name": "windows-release",
       "configurePreset": "windows-release"
+    },
+    {
+      "name": "windows-coverage",
+      "configurePreset": "windows-coverage"
     }
   ],
   "testPresets": [
@@ -212,6 +229,17 @@
       "configurePreset": "windows-release",
       "output": { "outputOnFailure": true },
       "execution": { "timeout": 120 }
+    },
+    {
+      "name": "windows-coverage",
+      "configurePreset": "windows-coverage",
+      "output": { "outputOnFailure": true },
+      "execution": { "timeout": 600 },
+      "filter": {
+        "exclude": {
+          "name": "test_web_viewer|test_cli_viewer"
+        }
+      }
     }
   ]
 }
