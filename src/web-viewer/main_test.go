@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -291,5 +292,115 @@ func TestServeUsesNonZeroTimeouts(t *testing.T) {
 	if srv.WriteTimeout != 0 {
 		t.Errorf("WriteTimeout is %v; it is left at 0 deliberately so that a slow "+
 			"full-chain /search cannot be truncated", srv.WriteTimeout)
+	}
+}
+
+// ── runMain ──────────────────────────────────────────────────────────────────
+//
+// The argument dispatch, which decides what the executable does and what it
+// exits with. On this platform installService, stopService and uninstallService
+// are the no-ops in service_other.go, so what is under test here is which of
+// them is chosen and what comes back — not the Windows service work itself,
+// which the installer tests cover against a real SCM.
+//
+// Not covered here: the tail of runMain, which serves HTTP until stopped.
+
+// captureLog redirects the log package, which is where service_other.go's
+// stubs say which of them ran, and returns what was written.
+func captureLog(t *testing.T) func() string {
+	t.Helper()
+	var buf strings.Builder
+	flags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(os.Stderr)
+		log.SetFlags(flags)
+	})
+	return buf.String
+}
+
+func TestRunMainRejectsAnUnknownFlag(t *testing.T) {
+	var stderr strings.Builder
+
+	// 2, as flag's own ExitOnError would have exited: a usage error is not the
+	// same as a failure to do what was asked, and scripts tell them apart.
+	if code := runMain([]string{"--bogus"}, &stderr); code != 2 {
+		t.Errorf("runMain(--bogus) = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "bogus") {
+		t.Errorf("stderr = %q, want it to name the offending flag", stderr.String())
+	}
+}
+
+func TestRunMainRejectsATimeoutOfZero(t *testing.T) {
+	// Zero would mean "wait no time at all for the service to go away", and the
+	// caller of --stop is usually about to overwrite the executable.
+	for _, args := range [][]string{
+		{"--stop", "--timeout=0"},
+		{"--uninstall", "--timeout=0"},
+		{"--stop", "--timeout=-3"},
+	} {
+		var stderr strings.Builder
+		if code := runMain(args, &stderr); code != 1 {
+			t.Errorf("runMain(%v) = %d, want 1", args, code)
+		}
+		if !strings.Contains(stderr.String(), "--timeout must be at least 1 second") {
+			t.Errorf("runMain(%v) stderr = %q, want it to say why", args, stderr.String())
+		}
+	}
+}
+
+func TestRunMainTimeoutIsOnlyCheckedWhenItIsUsed(t *testing.T) {
+	// --timeout applies to --stop and --uninstall. A nonsensical one passed
+	// without either must not fail a plain --install, which never waits.
+	defer captureLog(t)()
+	var stderr strings.Builder
+
+	if code := runMain([]string{"--install", "--timeout=0"}, &stderr); code != 0 {
+		t.Errorf("runMain(--install --timeout=0) = %d, want 0 (stderr: %q)", code, stderr.String())
+	}
+}
+
+func TestRunMainStopChoosesStopService(t *testing.T) {
+	logged := captureLog(t)
+	var stderr strings.Builder
+
+	if code := runMain([]string{"--stop"}, &stderr); code != 0 {
+		t.Errorf("runMain(--stop) = %d, want 0 (stderr: %q)", code, stderr.String())
+	}
+	if !strings.Contains(logged(), "--stop") {
+		t.Errorf("log = %q, want the --stop stub to have run", logged())
+	}
+}
+
+func TestRunMainUninstallWinsOverStop(t *testing.T) {
+	// Both given: --uninstall stops the service on its way to removing it, so
+	// doing both is what was asked for either way. Picking stopService would
+	// leave the registration behind and the caller none the wiser.
+	logged := captureLog(t)
+	var stderr strings.Builder
+
+	if code := runMain([]string{"--stop", "--uninstall"}, &stderr); code != 0 {
+		t.Errorf("runMain(--stop --uninstall) = %d, want 0 (stderr: %q)", code, stderr.String())
+	}
+	if !strings.Contains(logged(), "--uninstall") {
+		t.Errorf("log = %q, want the --uninstall stub to have run", logged())
+	}
+	if strings.Contains(logged(), "--stop is only") {
+		t.Errorf("log = %q, want --uninstall to have been chosen instead of --stop", logged())
+	}
+}
+
+func TestRunMainInstallSucceedsWithARelativeConfig(t *testing.T) {
+	// The path is made absolute before it is registered, because the SCM starts
+	// the service with a working directory of its own. The stub cannot show the
+	// resolved path, so this asserts only that a relative one is accepted —
+	// filepath.Abs fails on no input a test can supply.
+	defer captureLog(t)()
+	var stderr strings.Builder
+
+	if code := runMain([]string{"--install", "--config", "minilog.conf"}, &stderr); code != 0 {
+		t.Errorf("runMain(--install) = %d, want 0 (stderr: %q)", code, stderr.String())
 	}
 }

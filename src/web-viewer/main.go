@@ -8,6 +8,7 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -36,6 +37,19 @@ const defaultStopTimeoutSeconds = 30
 var globalStop = make(chan struct{})
 
 func main() {
+	os.Exit(runMain(os.Args[1:], os.Stderr))
+}
+
+// runMain is main with the two things that make main untestable taken out: the
+// arguments come in rather than off os.Args, and the exit code goes out rather
+// than into os.Exit. Everything that decides which of --stop, --uninstall and
+// --install happens, and what the exit code is, is therefore reachable from a
+// test; what is not is the tail below, which serves HTTP until it is stopped.
+//
+// Exit codes: 2 for a usage error, which is what flag's own ExitOnError would
+// have produced, and 1 for anything that failed after the arguments were
+// understood.
+func runMain(args []string, stderr io.Writer) int {
 	// Default config path: same directory as the executable.
 	exe, err := os.Executable()
 	if err != nil {
@@ -43,47 +57,60 @@ func main() {
 	}
 	defaultConfig := filepath.Join(filepath.Dir(exe), "minilog.conf")
 
-	configPath := flag.String("config", defaultConfig, "path to minilog.conf")
-	doInstall := flag.Bool("install", false, "install as a Windows service (Windows only)")
-	doStop := flag.Bool("stop", false,
+	// Its own FlagSet, not the package-level one: that one is global state, so
+	// a second parse in the same process — which is every test after the first
+	// — would redefine flags and panic. ContinueOnError for the same reason
+	// ExitOnError is wrong here, that it would take the process down.
+	fs := flag.NewFlagSet("minilog-web-viewer", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	configPath := fs.String("config", defaultConfig, "path to minilog.conf")
+	doInstall := fs.Bool("install", false, "install as a Windows service (Windows only)")
+	doStop := fs.Bool("stop", false,
 		"stop the Windows service and wait for its process to exit (Windows only)")
-	doUninstall := flag.Bool("uninstall", false, "remove the Windows service (Windows only)")
-	timeout := flag.Int("timeout", defaultStopTimeoutSeconds,
+	doUninstall := fs.Bool("uninstall", false, "remove the Windows service (Windows only)")
+	timeout := fs.Int("timeout", defaultStopTimeoutSeconds,
 		"seconds to wait for --stop and --uninstall")
-	flag.Parse()
+	if err := fs.Parse(args); err != nil {
+		// Parse has already written the error and the usage to stderr.
+		return 2
+	}
 
 	if *doStop || *doUninstall {
 		if *timeout <= 0 {
-			fmt.Fprintln(os.Stderr, "minilog-web-viewer: --timeout must be at least 1 second")
-			os.Exit(1)
+			fmt.Fprintln(stderr, "minilog-web-viewer: --timeout must be at least 1 second")
+			return 1
 		}
+		// --uninstall wins when both are given: it stops the service on its way
+		// to removing it, so doing both is what was asked for either way.
 		stop := uninstallService
 		if !*doUninstall {
 			stop = stopService
 		}
 		if err := stop(time.Duration(*timeout) * time.Second); err != nil {
-			fmt.Fprintf(os.Stderr, "minilog-web-viewer: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "minilog-web-viewer: %v\n", err)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	if *doInstall {
 		exePath, err := os.Executable()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "minilog-web-viewer: cannot determine executable path: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "minilog-web-viewer: cannot determine executable path: %v\n", err)
+			return 1
 		}
+		// Absolute, because the service is started by the SCM with a working
+		// directory of its own that has nothing to do with this one.
 		absConfig, err := filepath.Abs(*configPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "minilog-web-viewer: cannot resolve config path: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "minilog-web-viewer: cannot resolve config path: %v\n", err)
+			return 1
 		}
 		if err := installService(exePath, absConfig); err != nil {
-			fmt.Fprintf(os.Stderr, "minilog-web-viewer: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "minilog-web-viewer: %v\n", err)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	// ready is called once the config has loaded and the listen address is
@@ -101,18 +128,19 @@ func main() {
 	// returns false immediately, so we fall through to interactive mode.
 	if ok, err := tryRunAsService(run); ok {
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "minilog-web-viewer: service error: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "minilog-web-viewer: service error: %v\n", err)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	// Interactive mode (Linux or Windows console).
 	setupShutdown()
 	if err := run(func() {}); err != nil {
 		osLogError(fmt.Sprintf("minilog-web-viewer: %v", err))
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // Connection timeouts for the HTTP server.
