@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace minilog
 {
@@ -136,5 +137,34 @@ private:
     // interval to have elapsed — on a host up for less than a minute it has not.
     std::optional<std::chrono::steady_clock::time_point> m_lastReport;
 };
+
+// The two lines a Decision turns into, here rather than inline in UdpServer for
+// the same reason the policy itself is: what they claim is worth pinning, and
+// provoking a real receive error to read them back is not something a test can
+// do. They take the error's text rather than an error_code, so this header
+// stays free of Asio and the test does not need a socket to name an error.
+//
+// The line names the most recent error; the count says only how many receive
+// errors there were since the last report, not that they were all this one or
+// that nothing got through in between. Saying "N errors: <message>" would claim
+// the first of those, which is why the count is a parenthesised aside.
+inline std::string receiveErrorMessage(const std::string& errorText, uint64_t suppressed)
+{
+    std::string message = "minilog: receive error: " + errorText;
+    if (suppressed != 0)
+    {
+        message +=
+            " (" + std::to_string(suppressed) + " further receive error(s) since the last report)";
+    }
+    return message;
+}
+
+// Only a streak that was reported gets one of these, so it always follows a
+// line somebody was told about. The count is of errors, not of seconds.
+inline std::string receivingAgainMessage(uint64_t consecutiveErrors)
+{
+    return "minilog: receiving again after " + std::to_string(consecutiveErrors) +
+           " consecutive receive error(s)";
+}
 
 } // namespace minilog

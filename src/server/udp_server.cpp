@@ -141,16 +141,7 @@ void UdpServer::handleReceiveError(const boost::system::error_code& ec)
 
     if (decision.report)
     {
-        std::string message = "minilog: receive error: " + ec.message();
-        if (decision.suppressed != 0)
-        {
-            // The line names the most recent error; the count says only how many
-            // receive errors there were since the last report, not that they
-            // were all this one or that nothing got through in between.
-            message += " (" + std::to_string(decision.suppressed) +
-                       " further receive error(s) since the last report)";
-        }
-        osLogError(message);
+        osLogError(receiveErrorMessage(ec.message(), decision.suppressed));
     }
 
     m_rearmTimer.expires_after(decision.delay);
@@ -182,8 +173,7 @@ void UdpServer::onReceive(const boost::system::error_code& ec, std::size_t bytes
 
     if (const uint64_t ended = m_backoff.onSuccess(); ended != 0)
     {
-        osLogInfo("minilog: receiving again after " + std::to_string(ended) +
-                  " consecutive receive error(s)");
+        osLogInfo(receivingAgainMessage(ended));
     }
 
     // Admission control, before the first copy: nothing downstream of here

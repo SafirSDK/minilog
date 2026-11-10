@@ -87,6 +87,32 @@ func TestExitStatusReportsNoFailureWhenRunSucceeded(t *testing.T) {
 	}
 }
 
+// ── tryRunAsService ──────────────────────────────────────────────────────────
+//
+// The branch that decides whether this process serves HTTP or hands itself to
+// the SCM. Only the interactive side is reachable here — a test binary is not
+// a service — but that is the side that must not be got wrong on a developer's
+// machine or in a container, where svc.Run would have nothing to talk to.
+
+func TestTryRunAsServiceReportsInteractiveWhenNotStartedByTheSCM(t *testing.T) {
+	called := false
+
+	isService, err := tryRunAsService(func(ready func()) error {
+		called = true
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("tryRunAsService: %v", err)
+	}
+	if isService {
+		t.Error("tryRunAsService reported a service; `go test` is not one")
+	}
+	if called {
+		t.Error("tryRunAsService ran the server; interactively that is main's job, not its")
+	}
+}
+
 func TestExitStatusReportsAFailureWhenRunFailed(t *testing.T) {
 	// Also reaches osLogError, which is how such a failure leaves any trace at
 	// all on a machine where the viewer never runs interactively. It writes to

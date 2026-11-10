@@ -823,6 +823,41 @@ BOOST_AUTO_TEST_CASE(success_without_a_streak_reports_nothing)
     BOOST_TEST(backoff.onSuccess() == 0u);
 }
 
+// ─── The lines a Decision turns into ─────────────────────────────────────────
+//
+// These are what an operator actually sees, and the only part of
+// handleReceiveError that is logic rather than Asio plumbing. Reading them back
+// off a real socket error is not something a test can arrange, which is why
+// they are free functions beside the policy.
+
+BOOST_AUTO_TEST_CASE(a_first_error_is_reported_without_a_count)
+{
+    // suppressed is 0 on the first report, which has nothing to summarise. A
+    // bare "(0 further ...)" would read as if something had been hidden.
+    const auto message = receiveErrorMessage("Connection reset by peer", 0);
+    BOOST_TEST(message == "minilog: receive error: Connection reset by peer");
+}
+
+BOOST_AUTO_TEST_CASE(a_summary_names_the_latest_error_and_counts_the_rest)
+{
+    const auto message = receiveErrorMessage("No buffer space available", 11);
+    BOOST_TEST(message.find("No buffer space available") != std::string::npos,
+               "message: " << message);
+    BOOST_TEST(message.find("11 further receive error(s) since the last report") !=
+                   std::string::npos,
+               "message: " << message);
+    // The count must stay an aside rather than a prefix: "11 errors: <message>"
+    // would claim all eleven were this one, which the policy does not know.
+    BOOST_TEST(message.find("minilog: receive error: No buffer space available") == 0u,
+               "message: " << message);
+}
+
+BOOST_AUTO_TEST_CASE(recovery_counts_errors_and_not_seconds)
+{
+    const auto message = receivingAgainMessage(7);
+    BOOST_TEST(message == "minilog: receiving again after 7 consecutive receive error(s)");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ─── Admission control under flood ───────────────────────────────────────────

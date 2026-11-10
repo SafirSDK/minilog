@@ -194,6 +194,43 @@ def test_install(archive: Path, top: str) -> None:
         f"--check passes once the directory exists (stdout: {result.stdout.strip()[:200]})",
     )
 
+    # --stop and --uninstall before anything has ever been registered. Both are
+    # documented as succeeding on such a machine — "an upgrade script should not
+    # have to know whether this machine has minilog on it yet" — and this is the
+    # only moment that can be tested, since every later step has a service
+    # installed. Each executable has its own copy of the decision, C++ in
+    # service_win.cpp and Go in service_windows.go, so both are run.
+    for exe, name in ((EXE_PATH, "minilog"), (WEB_EXE, "minilog-web-viewer")):
+        result = service_cmd(exe, "--stop")
+        output = result.stdout + result.stderr
+        check(
+            result.returncode == 0,
+            f"`{name} --stop` succeeds with nothing registered "
+            f"(rc={result.returncode}, output: {output.strip()[:200]})",
+        )
+        check(
+            "nothing to stop" in output,
+            f"`{name} --stop` says there was nothing to stop (output: {output.strip()[:200]})",
+        )
+
+        result = service_cmd(exe, "--uninstall")
+        output = result.stdout + result.stderr
+        check(
+            result.returncode == 0,
+            f"`{name} --uninstall` succeeds with nothing registered "
+            f"(rc={result.returncode}, output: {output.strip()[:200]})",
+        )
+        check(
+            "nothing to remove" in output,
+            f"`{name} --uninstall` says there was nothing to remove "
+            f"(output: {output.strip()[:200]})",
+        )
+
+    check(
+        not service_exists(ti.SERVICE_NAME) and not service_exists(ti.WEB_SERVICE),
+        "neither service was registered by --stop or --uninstall",
+    )
+
     result = service_cmd(EXE_PATH, "--install", str(CONFIG))
     check(result.returncode == 0, f"`minilog --install` succeeds (stderr: {result.stderr.strip()})")
     result = service_cmd(WEB_EXE, "--install", "--config", str(CONFIG))
