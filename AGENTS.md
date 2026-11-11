@@ -306,6 +306,20 @@ Noted as they turn up. A flake seen once is noise; the same one twice is a defec
 exists to tell the difference across context resets rather than re-diagnosing it each time. Remove
 an entry once its cause is found and fixed, or once it has gone a few releases without recurring.
 
+- **`TestNoLineLoss/concurrent_poll`, web viewer.** Failed on develop as `MISSING 1 lines present
+  in final chain (first 1): [1950]` (run 42900813735, 2026-11-10, in the TSan job; the same tree had
+  passed 12/12 on its branch minutes earlier). The second sighting of this message: the first was a
+  real bug, a chain built from a half-seen rotation, fixed in 989f941 — whose test
+  `TestAChainIsNotBuiltFromARotationHalfSeen` records it. So treat a third as a defect, not noise.
+  What was found while looking, and fixed, is two things that could produce it and one that could
+  not: `NewFileChain` used to return a chain that had failed its own validation once it ran out of
+  attempts, and the poller in this test moved its cursor past the rotation before reading the tail,
+  so a failed read lost those lines. Neither is confirmed as the cause — the loss of line 1950
+  specifically is still unexplained, and the at-`max_files` rotation case validates correctly. What
+  was ruled out is the deadline: the subtest ran 7.35 s of its 60 s, so the poller had finished
+  reading. The test now says which of the two it is, so a recurrence does not need this worked out
+  again — "ran out of time" and "read to the end and never saw them" are separate messages.
+
 - **`test_binary.py::test_inflight_messages_complete_before_exit`, Windows.** Failed once as
   `17 != 20` (run 35359400495, 2026-09-18, on the #35 commit, which touches nothing but the
   installer and its test). Three of twenty datagrams sent in a tight loop never reached the log

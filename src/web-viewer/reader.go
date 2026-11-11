@@ -230,16 +230,34 @@ type FileChain struct {
 // would otherwise drop a generation — the listing has none at the name it was
 // renamed to, and the name it had now holds the next newer one — and a read
 // from that chain would skip its lines. Rotation takes milliseconds, so a
-// rebuild almost always gets a still directory; the third build is taken
-// whatever it found.
+// rebuild almost always gets a still directory.
+//
+// If it never does, this fails rather than returning the chain it could not
+// check. It used to take the third build whatever it found, which is a chain
+// already known to be inconsistent: a generation short, every offset after it
+// moved, and nothing to say so. The caller turns an error into a 500 and the
+// page retries on its next poll, a second later and almost certainly into a
+// still directory — where serving a chain built from a half-seen rotation
+// hands the client offsets that point at the wrong lines, which is the one
+// outcome a log viewer must not have. Giving up is also rare enough to be
+// worth it: on a loaded four-core machine the second build already succeeds
+// all but about once per two thousand polls, and five in a row failing means
+// the directory was rewritten five times inside a few hundred microseconds.
+const chainBuildAttempts = 5
+
 func NewFileChain(sink Sink) (*FileChain, error) {
 	dir := filepath.Dir(sink.Path)
 	before := listDir(dir)
 	for attempt := 1; ; attempt++ {
 		fc, infos := buildFileChain(sink, before)
 		after := listDir(dir)
-		if attempt == 3 || (after.same(before) && unchanged(fc, infos)) {
+		if after.same(before) && unchanged(fc, infos) {
 			return fc, nil
+		}
+		if attempt == chainBuildAttempts {
+			return nil, fmt.Errorf(
+				"the rotation chain of sink %q changed under every one of %d attempts to read it",
+				sink.Name, chainBuildAttempts)
 		}
 		before = after
 	}

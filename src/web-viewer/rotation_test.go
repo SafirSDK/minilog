@@ -274,9 +274,17 @@ func TestNoLineLoss(t *testing.T) {
 		// cursor lags behind the end while a burst drains, so only chainEnd can
 		// tell a rotation from ordinary catching up.
 		var tailOffset, chainEnd int64
-		deadline := time.Now().Add(60 * time.Second)
+		deadline := time.Now().Add(120 * time.Second)
 		writerFinished := false
 		drainPasses := 0
+		// Whether the loop below read to the end of the chain, rather than
+		// being cut off by the deadline. A line unseen is the viewer's fault
+		// only if the poller had the chance to see it; without this the two
+		// came out as the same message, and "MISSING 1 lines present in final
+		// chain" reads like line loss when it can mean the test ran out of
+		// time. 120 s because one run on a contended four-core machine
+		// measured 34 s of the 60 s this had.
+		drained := false
 
 		for time.Now().Before(deadline) {
 			r, err := doGet(fmt.Sprintf("/lines?sink=main&offset=%d&dir=forward&count=200", tailOffset))
@@ -288,19 +296,27 @@ func TestNoLineLoss(t *testing.T) {
 			if r.TailOffset < chainEnd {
 				// Rotation shrank the chain: mirror loadTail().
 				// Read the last batch to pick up lines written just before rotation.
-				tailOffset, chainEnd = r.TailOffset, r.TailOffset
+				//
+				// The cursor moves only once that read has returned. Setting it
+				// to the post-rotation end first — which this did — and then
+				// finding the read had failed left it past lines nothing had
+				// read, so they were never seen again and came out as line
+				// loss. loadTail() in the browser does not have the problem:
+				// it sets tailStale on a failure and the next poll reloads.
 				rt, err := doGet("/lines?sink=main&tail=true&count=200")
-				if err == nil {
-					for _, line := range rt.Lines {
-						var rec struct {
-							N int `json:"n"`
-						}
-						if json.Unmarshal([]byte(line), &rec) == nil {
-							seenN[rec.N] = true
-						}
-					}
-					tailOffset, chainEnd = rt.TailOffset, rt.TailOffset
+				if err != nil {
+					time.Sleep(pollInterval)
+					continue
 				}
+				for _, line := range rt.Lines {
+					var rec struct {
+						N int `json:"n"`
+					}
+					if json.Unmarshal([]byte(line), &rec) == nil {
+						seenN[rec.N] = true
+					}
+				}
+				tailOffset, chainEnd = rt.TailOffset, rt.TailOffset
 				continue
 			}
 
@@ -327,6 +343,7 @@ func TestNoLineLoss(t *testing.T) {
 			if writerFinished {
 				drainPasses++
 				if drainPasses >= 20 && len(r.Lines) == 0 {
+					drained = true
 					break
 				}
 			}
@@ -365,10 +382,18 @@ func TestNoLineLoss(t *testing.T) {
 			if len(show) > 20 {
 				show = show[:20]
 			}
-			t.Errorf("concurrent poll MISSING %d lines present in final chain (first %d): %v",
-				len(missing), len(show), show)
+			if !drained {
+				t.Errorf("the poller ran out of time with %d of %d final-chain lines still "+
+					"unread (first %d: %v) — the deadline, not line loss; give it longer or "+
+					"give the runner less to do", len(missing), len(inFinalChain), len(show), show)
+			} else {
+				t.Errorf("concurrent poll MISSING %d lines present in final chain (first %d): %v "+
+					"— the poller read to the end of the chain and never saw them, which is "+
+					"line loss", len(missing), len(show), show)
+			}
 		} else {
-			t.Logf("OK: all %d final-chain lines received by poller", len(inFinalChain))
+			t.Logf("OK: all %d final-chain lines received by poller (drained=%v)",
+				len(inFinalChain), drained)
 		}
 	})
 }
@@ -598,5 +623,56 @@ func TestPollTail_RotationDetected_WhileCursorLagsBehind(t *testing.T) {
 	p.poll()
 	if !p.rotated {
 		t.Error("tail_offset regressed but the poll did not reload")
+	}
+}
+
+// A directory that keeps changing under every attempt is an error, not a chain
+// built from a listing known to be stale.
+//
+// The retry above gives up eventually, and what it used to do then was return
+// the chain anyway: a generation short, every offset after it moved, and
+// nothing to say so. A client reading at those offsets gets the wrong lines —
+// silently, which for a log viewer is the worst way to be wrong. The caller
+// turns this error into a 500 and the page retries a second later.
+func TestAChainIsNotBuiltFromADirectoryThatNeverSettles(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "syslog.jsonl")
+	sink := Sink{Name: "main", Path: active, MaxFiles: 5}
+	// Two generations and an active file, so that a rotation adds a name and
+	// the listing really does change — the case the check is there to catch.
+	for i, path := range []string{rotatedPath(active, 2), rotatedPath(active, 1), active} {
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("{\"n\":%d}\n", i+1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Each attempt sees the directory change: a rotation once the chain is at
+	// max_files leaves the name set alone, which validates, so what is
+	// simulated here is the listing itself moving — a generation appearing or
+	// going, which is what a rotation does to a chain below max_files and what
+	// the check exists to catch.
+	builds := 0
+	testHookAfterListing = func() {
+		builds++
+		stirred := filepath.Join(dir, fmt.Sprintf("syslog.%d.jsonl", builds+2))
+		if err := os.WriteFile(stirred, []byte("{\"n\":0}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { testHookAfterListing = nil })
+
+	fc, err := NewFileChain(sink)
+	if err == nil {
+		t.Fatalf("a chain was returned from a directory that never settled: %+v", fc.files)
+	}
+	if fc != nil {
+		t.Errorf("a chain was returned alongside the error: %+v", fc.files)
+	}
+	if builds != chainBuildAttempts {
+		t.Errorf("the directory was disturbed %d times, want %d — one per attempt",
+			builds, chainBuildAttempts)
+	}
+	if !strings.Contains(err.Error(), "main") {
+		t.Errorf("error %q does not name the sink", err)
 	}
 }
